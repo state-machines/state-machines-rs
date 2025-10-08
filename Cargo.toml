@@ -1,7 +1,7 @@
 [workspace]
 members = [
-    "state_machines",
-    "state_machines_core",
-    "state_machines_macro",
+    "state-machines",
+    "state-machines-core",
+    "state-machines-macro",
 ]
 resolver = "2"

@@ -100,6 +100,7 @@ fn metadata_reflects_flight_deck_machine() {
     let request_clearance = &definition.events[0];
     assert_eq!(request_clearance.name, "request_clearance");
     assert!(request_clearance.guards.is_empty());
+    assert!(request_clearance.payload.is_none());
     assert_eq!(request_clearance.transitions.len(), 1);
     let request_transition = &request_clearance.transitions[0];
     assert_eq!(request_transition.sources, &[FlightStatus::Docked]);
@@ -110,6 +111,7 @@ fn metadata_reflects_flight_deck_machine() {
     let launch = &definition.events[1];
     assert_eq!(launch.name, "launch");
     assert!(launch.guards.is_empty());
+    assert!(launch.payload.is_none());
     let launch_transition = &launch.transitions[0];
     assert_eq!(launch_transition.sources, &[FlightStatus::ClearanceGranted]);
     assert_eq!(launch_transition.target, FlightStatus::Launching);
@@ -119,6 +121,7 @@ fn metadata_reflects_flight_deck_machine() {
     let abort = &definition.events[3];
     assert_eq!(abort.name, "abort_mission");
     assert_eq!(abort.transitions.len(), 1);
+    assert!(abort.payload.is_none());
     let abort_transition = &abort.transitions[0];
     assert_eq!(
         abort_transition.sources,

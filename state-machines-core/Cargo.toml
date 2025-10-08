@@ -1,0 +1,15 @@
+[package]
+name = "state-machines-core"
+version = "0.1.0"
+edition = "2024"
+authors = ["Abdelkader Boudih <terminale@gmail.com>"]
+description = "Core types and traits for the state-machines library"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/state-machines/state-machines-rs"
+homepage = "https://github.com/state-machines/state-machines-rs"
+documentation = "https://docs.rs/state-machines-core"
+keywords = ["state-machine", "fsm", "no-std"]
+categories = ["rust-patterns", "no-std"]
+include = ["src/**/*", "Cargo.toml", "../README.md", "LICENSE-MIT", "LICENSE-APACHE"]
+
+[dependencies]

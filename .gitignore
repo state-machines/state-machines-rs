@@ -11,5 +11,8 @@ target/
 coverage/
 doc/
 
+# scratch workspace
+.tmp/
+
 # Rust Analyzer
 .rust-analyzer

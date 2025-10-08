@@ -129,6 +129,7 @@ fn metadata_reflects_hyperdrive_machine() {
     assert_eq!(engage.guards, &["bridge_authorized"]);
     assert_eq!(engage.before, &["log_pre_engage"]);
     assert_eq!(engage.after, &["log_post_engage"]);
+    assert!(engage.payload.is_none());
     assert_eq!(engage.transitions.len(), 1);
     let engage_transition = &engage.transitions[0];
     assert_eq!(engage_transition.sources, &[HyperdriveStatus::Spooling]);

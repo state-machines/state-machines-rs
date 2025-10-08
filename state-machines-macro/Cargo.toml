@@ -1,0 +1,22 @@
+[package]
+name = "state-machines-macro"
+version = "0.1.0"
+edition = "2024"
+authors = ["Abdelkader Boudih <terminale@gmail.com>"]
+description = "Procedural macros for the state-machines library"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/state-machines/state-machines-rs"
+homepage = "https://github.com/state-machines/state-machines-rs"
+documentation = "https://docs.rs/state-machines-macro"
+keywords = ["state-machine", "macro", "fsm"]
+categories = ["rust-patterns"]
+include = ["src/**/*", "Cargo.toml", "../README.md", "LICENSE-MIT", "LICENSE-APACHE"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }
+state-machines-core = { version = "0.1.0", path = "../state-machines-core" }

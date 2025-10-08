@@ -141,6 +141,7 @@ fn metadata_reflects_navigation_computer() {
     let lock_course = &definition.events[1];
     assert_eq!(lock_course.name, "lock_course");
     assert_eq!(lock_course.guards, &["captain_on_bridge"]);
+    assert!(lock_course.payload.is_none());
     assert_eq!(lock_course.transitions.len(), 1);
     let lock_transition = &lock_course.transitions[0];
     assert_eq!(lock_transition.sources, &[NavState::Plotting]);
@@ -150,6 +151,7 @@ fn metadata_reflects_navigation_computer() {
 
     let plot_course = &definition.events[0];
     assert_eq!(plot_course.transitions.len(), 2);
+    assert!(plot_course.payload.is_none());
     let sources_sets: Vec<&[NavState]> = plot_course
         .transitions
         .iter()

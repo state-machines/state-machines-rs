@@ -57,6 +57,7 @@ fn metadata_reflects_unless_filters() {
     let cycle = &definition.events[0];
     assert_eq!(cycle.name, "cycle");
     assert_eq!(cycle.guards, &["sealed"]);
+    assert!(cycle.payload.is_none());
     assert_eq!(cycle.transitions.len(), 1);
     let transition = &cycle.transitions[0];
     assert_eq!(transition.unless, &["door_open"]);
