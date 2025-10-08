@@ -1,0 +1,15 @@
+target/
+# Cargo/Build
+**/Cargo.lock
+
+# Editor / tooling
+**/*.rs.bk
+**/*.swp
+.DS_Store
+
+# Generated docs / coverage
+coverage/
+doc/
+
+# Rust Analyzer
+.rust-analyzer
