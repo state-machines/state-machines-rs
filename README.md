@@ -393,9 +393,6 @@ fn main() -> ! {
 ## Documentation
 
 - **[API Docs](https://docs.rs/state-machines)** – Full API reference
-- **[Examples](examples/)** – More complex usage patterns
-- **[Design Docs](docs/)** – Architecture decisions and roadmap
-- **[Comparative Analysis](docs/competitive_analysis.md)** – How this stacks up against other Rust state machine crates
 
 ---
 
