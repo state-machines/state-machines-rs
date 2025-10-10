@@ -9,7 +9,7 @@
 //! - Storage specifications for state-associated data
 
 use proc_macro2::TokenStream as TokenStream2;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use syn::{Ident, Type};
 
 /// The main state machine definition parsed from the macro input.
@@ -146,8 +146,7 @@ impl Hierarchy {
         if ancestors.is_empty() {
             return;
         }
-        self.ancestors
-            .insert(leaf.to_string(), ancestors.iter().cloned().collect());
+        self.ancestors.insert(leaf.to_string(), ancestors.to_vec());
     }
 
     /// Expand a state identifier to its leaf states.
@@ -195,26 +194,6 @@ impl Hierarchy {
         } else {
             Some(ident.clone())
         }
-    }
-
-    /// Expand a list of state identifiers to leaf states, removing duplicates.
-    ///
-    /// This is used for filtering conditions in callbacks and guards.
-    pub fn expand_filter_states(&self, idents: &[Ident], leaves: &[Ident]) -> Vec<Ident> {
-        let mut expanded = Vec::new();
-        let mut seen = HashSet::new();
-
-        for ident in idents {
-            let resolved = self.expand_state(ident, leaves);
-            for leaf in resolved {
-                let key = leaf.to_string();
-                if seen.insert(key) {
-                    expanded.push(leaf);
-                }
-            }
-        }
-
-        expanded
     }
 }
 

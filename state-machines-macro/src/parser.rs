@@ -13,9 +13,8 @@ use proc_macro2::Span;
 use quote::format_ident;
 use std::collections::HashSet;
 use syn::{
-    braced, bracketed, parenthesized,
+    Ident, Result, Token, braced, bracketed, parenthesized,
     parse::{Parse, ParseBuffer, ParseStream},
-    Ident, Result, Token,
 };
 
 /// Implementation of syn::Parse for StateMachine.
@@ -377,10 +376,7 @@ pub fn parse_superstate_block(
     let initial_ident = if let Some(initial) = initial_spec {
         let initial_name = initial.to_string();
         // Validate that the initial state is a descendant
-        if !descendants
-            .iter()
-            .any(|leaf| leaf.to_string() == initial_name)
-        {
+        if !descendants.iter().any(|leaf| *leaf == initial_name) {
             return Err(syn::Error::new(
                 initial.span(),
                 "`initial` must reference a descendant state",

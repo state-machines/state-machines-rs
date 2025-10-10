@@ -17,6 +17,12 @@ use quote::{format_ident, quote};
 use std::collections::HashSet;
 use syn::{Ident, Result, Type};
 
+struct TransitionStorageOps {
+    pre_state: TokenStream2,
+    post_state: TokenStream2,
+    rollback: TokenStream2,
+}
+
 impl StateMachine {
     /// Generate the complete state machine code.
     ///
@@ -234,7 +240,7 @@ impl StateMachine {
                 action_method,
                 payload_ty,
                 false,
-            );
+            )?;
             sync_event_methods.push(sync_tokens.event_method);
             sync_can_methods.push(sync_tokens.can_method);
 
@@ -248,7 +254,7 @@ impl StateMachine {
                     action_method,
                     payload_ty,
                     true,
-                );
+                )?;
                 async_event_methods.push(async_tokens.event_method);
                 async_can_methods.push(async_tokens.can_method);
             }
@@ -354,6 +360,7 @@ impl StateMachine {
     ///
     /// The generated code is a match expression on the current state,
     /// with each arm handling transitions from that state.
+    #[allow(clippy::too_many_arguments)]
     pub fn build_event(
         &self,
         state_ident: &Ident,
@@ -363,20 +370,17 @@ impl StateMachine {
         action_method: Option<&Ident>,
         payload_ty: Option<&Type>,
         is_async: bool,
-    ) -> EventTokens {
+    ) -> Result<EventTokens> {
         let core_path = quote!(::state_machines::core);
         let mut state_match_arms = Vec::new();
         let mut can_match_arms = Vec::new();
 
-        // Get helper token generators for storage and superstate updates
-        let storage_clear_tokens = self.build_storage_clear_tokens(state_ident);
-        let storage_init_tokens = self.build_storage_init_tokens(state_ident);
-        let superstate_update_tokens = self.build_superstate_update_tokens(state_ident);
+        // Don't pre-generate storage tokens - we'll generate them inline per-transition
+        // to avoid referencing stale state values during rollback
 
         // Closure to generate guard checking code
         let guard_check = |guard: &Ident| -> TokenStream2 {
-            let guard = guard;
-            if let Some(_) = payload_ty {
+            if payload_ty.is_some() {
                 if is_async {
                     quote! {
                         if !self.#guard(payload_ref).await {
@@ -436,8 +440,7 @@ impl StateMachine {
         // Closure to generate guard checking code for can methods
         // (simpler, doesn't track error details)
         let guard_check_can = |guard: &Ident| -> TokenStream2 {
-            let guard = guard;
-            if let Some(_) = payload_ty {
+            if payload_ty.is_some() {
                 if is_async {
                     quote! {
                         if !self.#guard(payload_ref).await {
@@ -469,8 +472,7 @@ impl StateMachine {
         // Closure to generate unless checking code
         // (inverted guards - if the condition is true, the guard fails)
         let unless_check = |guard: &Ident| -> TokenStream2 {
-            let guard = guard;
-            if let Some(_) = payload_ty {
+            if payload_ty.is_some() {
                 if is_async {
                     quote! {
                         if self.#guard(payload_ref).await {
@@ -529,8 +531,7 @@ impl StateMachine {
 
         // Closure to generate unless checking code for can methods
         let unless_check_can = |guard: &Ident| -> TokenStream2 {
-            let guard = guard;
-            if let Some(_) = payload_ty {
+            if payload_ty.is_some() {
                 if is_async {
                     quote! {
                         if self.#guard(payload_ref).await {
@@ -561,7 +562,7 @@ impl StateMachine {
 
         // Closure to generate callback invocation code
         let call_callback = |callback: &Ident| -> TokenStream2 {
-            if let Some(_) = payload_ty {
+            if payload_ty.is_some() {
                 if is_async {
                     quote! { self.#callback(payload_ref).await; }
                 } else {
@@ -576,12 +577,13 @@ impl StateMachine {
 
         // Closure to generate action method invocation code
         // Actions are special: if they return false, the transition is rolled back
-        let action_call = |action: &Ident| -> TokenStream2 {
-            if let Some(_) = payload_ty {
+        let action_call = |action: &Ident, rollback: &TokenStream2| -> TokenStream2 {
+            if payload_ty.is_some() {
                 if is_async {
                     quote! {
                         if !self.#action(payload_ref).await {
                             let failed_from = __prev_state;
+                            #rollback
                             self.state = __prev_state;
                             return Err(#core_path::TransitionError {
                                 from: failed_from,
@@ -594,6 +596,7 @@ impl StateMachine {
                     quote! {
                         if !self.#action(payload_ref) {
                             let failed_from = __prev_state;
+                            #rollback
                             self.state = __prev_state;
                             return Err(#core_path::TransitionError {
                                 from: failed_from,
@@ -607,6 +610,7 @@ impl StateMachine {
                 quote! {
                     if !self.#action().await {
                         let failed_from = __prev_state;
+                        #rollback
                         self.state = __prev_state;
                         return Err(#core_path::TransitionError {
                             from: failed_from,
@@ -619,6 +623,7 @@ impl StateMachine {
                 quote! {
                     if !self.#action() {
                         let failed_from = __prev_state;
+                        #rollback
                         self.state = __prev_state;
                         return Err(#core_path::TransitionError {
                             from: failed_from,
@@ -695,78 +700,73 @@ impl StateMachine {
                         .collect();
 
                     // Generate callback invocations
-                    let event_before_calls: Vec<_> = event
-                        .before
-                        .iter()
-                        .map(|callback| call_callback(callback))
-                        .collect();
-                    let event_after_calls: Vec<_> = event
-                        .after
-                        .iter()
-                        .map(|callback| call_callback(callback))
-                        .collect();
-                    let transition_before_calls: Vec<_> = transition
-                        .before
-                        .iter()
-                        .map(|callback| call_callback(callback))
-                        .collect();
-                    let transition_after_calls: Vec<_> = transition
-                        .after
-                        .iter()
-                        .map(|callback| call_callback(callback))
-                        .collect();
+                    let event_before_calls: Vec<_> =
+                        event.before.iter().map(&call_callback).collect();
+                    let event_after_calls: Vec<_> =
+                        event.after.iter().map(&call_callback).collect();
+                    let transition_before_calls: Vec<_> =
+                        transition.before.iter().map(&call_callback).collect();
+                    let transition_after_calls: Vec<_> =
+                        transition.after.iter().map(&call_callback).collect();
 
                     // Resolve target (convert superstates to their initial states)
                     let resolved_target = self
                         .resolve_target_ident(&transition.target)
                         .unwrap_or_else(|| transition.target.clone());
 
+                    // Generate storage operations inline for this specific transition
+                    let TransitionStorageOps {
+                        pre_state: storage_pre,
+                        post_state: storage_post,
+                        rollback: storage_rollback,
+                    } = self.build_transition_storage_ops(
+                        state_ident,
+                        state,            // source state
+                        &resolved_target, // target state
+                    );
+
                     // Generate action call if configured
-                    let action_tokens = action_method.map(action_call).unwrap_or_else(|| quote! {});
+                    let action_tokens = action_method
+                        .map(|action| action_call(action, &storage_rollback))
+                        .unwrap_or_else(|| quote! {});
 
                     // Generate global before callbacks (with filtering)
-                    let before_globals: Vec<_> = self
-                        .callbacks
-                        .before
-                        .iter()
-                        .map(|callback| {
-                            let filter = self.callback_filter_expr(
-                                callback,
-                                state_ident,
-                                method_ident,
-                                &quote!(current_state),
-                                &quote!(target_state),
-                            );
-                            let callback_ident = &callback.name;
-                            if is_async {
-                                quote! { if #filter { self.#callback_ident().await; } }
-                            } else {
-                                quote! { if #filter { self.#callback_ident(); } }
-                            }
-                        })
-                        .collect();
+                    let mut before_globals = Vec::new();
+                    for callback in &self.callbacks.before {
+                        let filter = self.callback_filter_expr(
+                            callback,
+                            state_ident,
+                            method_ident,
+                            &quote!(current_state),
+                            &quote!(target_state),
+                        )?;
+                        let callback_ident = &callback.name;
+                        let tokens = if is_async {
+                            quote! { if #filter { self.#callback_ident().await; } }
+                        } else {
+                            quote! { if #filter { self.#callback_ident(); } }
+                        };
+                        before_globals.push(tokens);
+                    }
 
                     // Generate global after callbacks (with filtering)
-                    let after_globals: Vec<_> = self
-                        .callbacks
-                        .after
-                        .iter()
-                        .map(|callback| {
-                            let filter = self.callback_filter_expr(
-                                callback,
-                                state_ident,
-                                method_ident,
-                                &quote!(current_state),
-                                &quote!(target_state),
-                            );
-                            let callback_ident = &callback.name;
-                            if is_async {
-                                quote! { if #filter { self.#callback_ident().await; } }
-                            } else {
-                                quote! { if #filter { self.#callback_ident(); } }
-                            }
-                        })
-                        .collect();
+                    let mut after_globals = Vec::new();
+                    for callback in &self.callbacks.after {
+                        let filter = self.callback_filter_expr(
+                            callback,
+                            state_ident,
+                            method_ident,
+                            &quote!(current_state),
+                            &quote!(target_state),
+                        )?;
+                        let callback_ident = &callback.name;
+                        let tokens = if is_async {
+                            quote! { if #filter { self.#callback_ident().await; } }
+                        } else {
+                            quote! { if #filter { self.#callback_ident(); } }
+                        };
+                        after_globals.push(tokens);
+                    }
 
                     // Generate around callbacks (these can abort transitions)
                     let (context_init, around_before_calls, around_after_calls) = if self
@@ -784,76 +784,69 @@ impl StateMachine {
                             );
                         };
 
-                        let before_calls: Vec<_> = self
-                            .callbacks
-                            .around
-                            .iter()
-                            .map(|callback| {
-                                let filter = self.callback_filter_expr(
-                                    callback,
-                                    state_ident,
-                                    method_ident,
-                                    &quote!(current_state),
-                                    &quote!(target_state),
-                                );
-                                let callback_ident = &callback.name;
-                                if is_async {
-                                    quote! {
-                                        if #filter {
-                                            match self.#callback_ident(&context, #core_path::AroundStage::Before).await {
-                                                #core_path::AroundOutcome::Proceed => {}
-                                                #core_path::AroundOutcome::Abort(error) => return Err(error),
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    quote! {
-                                        if #filter {
-                                            match self.#callback_ident(&context, #core_path::AroundStage::Before) {
-                                                #core_path::AroundOutcome::Proceed => {}
-                                                #core_path::AroundOutcome::Abort(error) => return Err(error),
-                                            }
+                        let mut before_calls = Vec::new();
+                        for callback in &self.callbacks.around {
+                            let filter = self.callback_filter_expr(
+                                callback,
+                                state_ident,
+                                method_ident,
+                                &quote!(current_state),
+                                &quote!(target_state),
+                            )?;
+                            let callback_ident = &callback.name;
+                            let tokens = if is_async {
+                                quote! {
+                                    if #filter {
+                                        match self.#callback_ident(&context, #core_path::AroundStage::Before).await {
+                                            #core_path::AroundOutcome::Proceed => {}
+                                            #core_path::AroundOutcome::Abort(error) => return Err(error),
                                         }
                                     }
                                 }
-                            })
-                            .collect();
+                            } else {
+                                quote! {
+                                    if #filter {
+                                        match self.#callback_ident(&context, #core_path::AroundStage::Before) {
+                                            #core_path::AroundOutcome::Proceed => {}
+                                            #core_path::AroundOutcome::Abort(error) => return Err(error),
+                                        }
+                                    }
+                                }
+                            };
+                            before_calls.push(tokens);
+                        }
 
-                        let after_calls: Vec<_> = self
-                            .callbacks
-                            .around
-                            .iter()
-                            .rev()
-                            .map(|callback| {
-                                let filter = self.callback_filter_expr(
-                                    callback,
-                                    state_ident,
-                                    method_ident,
-                                    &quote!(current_state),
-                                    &quote!(target_state),
-                                );
-                                let callback_ident = &callback.name;
-                                if is_async {
-                                    quote! {
-                                        if #filter {
-                                            match self.#callback_ident(&context, #core_path::AroundStage::AfterSuccess).await {
-                                                #core_path::AroundOutcome::Proceed => {}
-                                                #core_path::AroundOutcome::Abort(error) => return Err(error),
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    quote! {
-                                        if #filter {
-                                            match self.#callback_ident(&context, #core_path::AroundStage::AfterSuccess) {
-                                                #core_path::AroundOutcome::Proceed => {}
-                                                #core_path::AroundOutcome::Abort(error) => return Err(error),
-                                            }
+                        let mut after_calls = Vec::new();
+                        for callback in self.callbacks.around.iter().rev() {
+                            let filter = self.callback_filter_expr(
+                                callback,
+                                state_ident,
+                                method_ident,
+                                &quote!(current_state),
+                                &quote!(target_state),
+                            )?;
+                            let callback_ident = &callback.name;
+                            let tokens = if is_async {
+                                quote! {
+                                    if #filter {
+                                        match self.#callback_ident(&context, #core_path::AroundStage::AfterSuccess).await {
+                                            #core_path::AroundOutcome::Proceed => {}
+                                            #core_path::AroundOutcome::Abort(error) => return Err(error),
                                         }
                                     }
                                 }
-                            })
-                            .collect();
+                            } else {
+                                quote! {
+                                    if #filter {
+                                        match self.#callback_ident(&context, #core_path::AroundStage::AfterSuccess) {
+                                            #core_path::AroundOutcome::Proceed => {}
+                                            #core_path::AroundOutcome::Abort(error) => return Err(error),
+                                        }
+                                    }
+                                }
+                            };
+                            after_calls.push(tokens);
+                        }
 
                         (context_init, before_calls, after_calls)
                     };
@@ -872,10 +865,9 @@ impl StateMachine {
                                 #( #event_before_calls )*
                                 #( #transition_before_calls )*
                                 let __prev_state = self.state;
-                                #storage_clear_tokens
+                                #storage_pre
                                 self.state = target_state;
-                                #storage_init_tokens
-                                #superstate_update_tokens
+                                #storage_post
                                 #action_tokens
                                 #( #transition_after_calls )*
                                 #( #event_after_calls )*
@@ -1034,10 +1026,10 @@ impl StateMachine {
             }
         };
 
-        EventTokens {
+        Ok(EventTokens {
             event_method,
             can_method,
-        }
+        })
     }
 
     /// Generate a boolean expression for filtering global callbacks.
@@ -1055,14 +1047,42 @@ impl StateMachine {
         event_ident: &Ident,
         current_expr: &TokenStream2,
         target_expr: &TokenStream2,
-    ) -> TokenStream2 {
+    ) -> Result<TokenStream2> {
         let leaves = &self.states;
+        let callback_name = callback.name.to_string();
+
+        let expand_filter = |idents: &[Ident], label: &str| -> Result<Vec<Ident>> {
+            let mut expanded = Vec::new();
+            let mut seen = HashSet::new();
+
+            for ident in idents {
+                let resolved = self.hierarchy.expand_state(ident, leaves);
+                if resolved.is_empty() {
+                    return Err(syn::Error::new(
+                        ident.span(),
+                        format!(
+                            "unknown state `{}` in `{}` filter of callback `{}`",
+                            ident, label, callback_name
+                        ),
+                    ));
+                }
+
+                for leaf in resolved {
+                    let key = leaf.to_string();
+                    if seen.insert(key) {
+                        expanded.push(leaf);
+                    }
+                }
+            }
+
+            Ok(expanded)
+        };
 
         // Generate from filter
         let from_tokens = if callback.from.is_empty() {
             quote!(true)
         } else {
-            let expanded = self.hierarchy.expand_filter_states(&callback.from, leaves);
+            let expanded = expand_filter(&callback.from, "from")?;
             if expanded.len() == 1 {
                 let state = &expanded[0];
                 quote!(#current_expr == #state_ident::#state)
@@ -1076,7 +1096,7 @@ impl StateMachine {
         let to_tokens = if callback.to.is_empty() {
             quote!(true)
         } else {
-            let expanded = self.hierarchy.expand_filter_states(&callback.to, leaves);
+            let expanded = expand_filter(&callback.to, "to")?;
             if expanded.len() == 1 {
                 let state = &expanded[0];
                 quote!(#target_expr == #state_ident::#state)
@@ -1095,7 +1115,7 @@ impl StateMachine {
         };
 
         // Combine all filters with &&
-        quote!(#from_tokens && #to_tokens && #event_expr)
+        Ok(quote!(#from_tokens && #to_tokens && #event_expr))
     }
 
     /// Helper function to expand state references to leaf states.
@@ -1127,118 +1147,80 @@ impl StateMachine {
         self.hierarchy.resolve_target(ident)
     }
 
-    /// Generate code to clear storage when exiting a state.
+    /// Generate storage operations for a specific transition.
     ///
-    /// When transitioning away from a state with associated data,
-    /// we need to set its storage field to None.
-    pub fn build_storage_clear_tokens(&self, state_ident: &Ident) -> TokenStream2 {
-        if self.state_storage.is_empty() {
-            return quote! {};
-        }
-
-        let arms: Vec<_> = self
-            .state_storage
-            .iter()
-            .filter(|spec| !spec.is_superstate)
-            .map(|spec| {
-                let state = &spec.owner;
-                let field = &spec.field;
-                quote!(#state_ident::#state => { self.#field = ::core::option::Option::None; })
-            })
-            .collect();
-
-        if arms.is_empty() {
-            return quote! {};
-        }
-
-        quote! {
-            match __prev_state {
-                #( #arms ),*
-                _ => {}
-            };
-        }
-    }
-
-    /// Generate code to initialize storage when entering a state.
+    /// This generates code that:
+    /// 1. Clears storage for the source state (if it has storage)
+    /// 2. Initializes storage for the target state (if it has storage)
+    /// 3. Updates superstate storage as needed
     ///
-    /// When transitioning to a state with associated data,
-    /// we need to initialize its storage field with Default::default().
-    pub fn build_storage_init_tokens(&self, state_ident: &Ident) -> TokenStream2 {
-        if self.state_storage.is_empty() {
-            return quote! {};
-        }
+    /// By generating these operations per-transition with explicit source/target,
+    /// we avoid referencing stale state values during rollback.
+    fn build_transition_storage_ops(
+        &self,
+        _state_ident: &Ident,
+        source: &Ident,
+        target: &Ident,
+    ) -> TransitionStorageOps {
+        let mut pre_ops = Vec::new();
+        let mut post_ops = Vec::new();
+        let mut rollback_ops = Vec::new();
 
-        let arms: Vec<_> = self
-            .state_storage
-            .iter()
-            .filter(|spec| !spec.is_superstate)
-            .map(|spec| {
-                let state = &spec.owner;
-                let field = &spec.field;
-                quote!(#state_ident::#state => {
-                    self.#field = ::core::option::Option::Some(::core::default::Default::default());
-                })
-            })
-            .collect();
+        for spec in &self.state_storage {
+            let field = &spec.field;
+            let backup_ident = format_ident!("__storage_backup_{}", field);
 
-        if arms.is_empty() {
-            return quote! {};
-        }
+            if !spec.is_superstate {
+                let affects_source = &spec.owner == source;
+                let affects_target = &spec.owner == target;
 
-        quote! {
-            match target_state {
-                #( #arms ),*
-                _ => {}
-            };
-        }
-    }
-
-    /// Generate code to update superstate storage.
-    ///
-    /// Superstates have storage that persists across their child states.
-    /// This generates code to:
-    /// - Initialize storage when entering a superstate (from outside)
-    /// - Clear storage when exiting a superstate (to outside)
-    /// - Preserve storage when moving between children
-    pub fn build_superstate_update_tokens(&self, state_ident: &Ident) -> TokenStream2 {
-        let specs: Vec<_> = self
-            .state_storage
-            .iter()
-            .filter(|spec| spec.is_superstate)
-            .collect();
-
-        if specs.is_empty() {
-            return quote! {};
-        }
-
-        let updates: Vec<_> = specs
-            .iter()
-            .map(|spec| {
-                let field = &spec.field;
-                let descendants = self
-                    .hierarchy
-                    .lookup
-                    .get(&spec.owner.to_string())
-                    .cloned()
-                    .unwrap_or_default();
-                let patterns: Vec<_> = descendants
-                    .iter()
-                    .map(|leaf| quote!(#state_ident::#leaf))
-                    .collect();
-                quote! {
-                    let __prev_has = matches!(__prev_state, #( #patterns )|*);
-                    let __next_has = matches!(target_state, #( #patterns )|*);
-                    if __prev_has && !__next_has {
-                        self.#field = ::core::option::Option::None;
-                    } else if !__prev_has && __next_has {
-                        self.#field = ::core::option::Option::Some(::core::default::Default::default());
-                    }
+                if !(affects_source || affects_target) {
+                    continue;
                 }
-            })
-            .collect();
 
-        quote! {
-            #( #updates )*
+                pre_ops.push(quote! {
+                    let #backup_ident = self.#field.take();
+                });
+
+                if affects_target {
+                    post_ops.push(quote! {
+                        self.#field =
+                            ::core::option::Option::Some(::core::default::Default::default());
+                    });
+                }
+
+                rollback_ops.push(quote! {
+                    self.#field = #backup_ident;
+                });
+            } else if let Some(descendants) = self.hierarchy.lookup.get(&spec.owner.to_string()) {
+                let source_in = descendants.iter().any(|leaf| leaf == source);
+                let target_in = descendants.iter().any(|leaf| leaf == target);
+
+                if source_in == target_in {
+                    continue;
+                }
+
+                pre_ops.push(quote! {
+                    let #backup_ident = self.#field.take();
+                });
+
+                if !source_in && target_in {
+                    post_ops.push(quote! {
+                        self.#field =
+                            ::core::option::Option::Some(::core::default::Default::default());
+                    });
+                }
+
+                rollback_ops.push(quote! {
+                    self.#field = #backup_ident;
+                });
+            }
+        }
+
+        TransitionStorageOps {
+            pre_state: quote! { #( #pre_ops )* },
+            post_state: quote! { #( #post_ops )* },
+            rollback: quote! { #( #rollback_ops )* },
         }
     }
 }
