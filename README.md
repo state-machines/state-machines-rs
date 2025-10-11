@@ -35,25 +35,25 @@ While learning Rust, I chose to port something familiar and widely used—so I c
 
 ## Features
 
-✅ **Typestate Pattern** – Compile-time state safety using Rust's type system with zero runtime overhead
+**Typestate Pattern** – Compile-time state safety using Rust's type system with zero runtime overhead
 
-✅ **Guards & Unless** – Conditional transitions at event and transition levels
+**Guards & Unless** – Conditional transitions at event and transition levels
 
-✅ **Callbacks** – `before`/`after` hooks at event level
+**Callbacks** – `before`/`after` hooks at event level
 
-✅ **Async Support** – First-class `async`/`await` for guards and callbacks
+**Around Callbacks** – Wrap transitions with Before/AfterSuccess stages for transaction-like semantics
 
-✅ **Event Payloads** – Pass data through transitions with type-safe payloads
+**Async Support** – First-class `async`/`await` for guards and callbacks
 
-✅ **No-std Compatible** – Works on embedded targets (ESP32, bare metal)
+**Event Payloads** – Pass data through transitions with type-safe payloads
 
-✅ **Type-safe** – Invalid transitions become compile errors, not runtime errors
+**No-std Compatible** – Works on embedded targets (ESP32, bare metal)
 
-✅ **Hierarchical States** – Superstates with polymorphic transitions via SubstateOf trait
+**Type-safe** – Invalid transitions become compile errors, not runtime errors
 
-🚧 **Around Callbacks** – Planned for future release
+**Hierarchical States** – Superstates with polymorphic transitions via SubstateOf trait
 
-🚧 **Dynamic Dispatch** – Event-driven mode planned (see `docs/dual_mode_design.md`)
+_Planned:_ **Dynamic Dispatch** – Event-driven mode (see `docs/dual_mode_design.md`)
 
 ---
 
@@ -375,6 +375,160 @@ Rust's typestate pattern makes this compile-time safe with zero runtime overhead
 
 ---
 
+### Around Callbacks
+
+Around callbacks wrap transitions with **transaction-like semantics**, providing Before and AfterSuccess hooks that bracket the entire transition execution:
+
+```rust
+use state_machines::{state_machine, core::{AroundStage, AroundOutcome}};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+state_machine! {
+    name: Transaction,
+    initial: Idle,
+    states: [Idle, Processing, Complete],
+    events {
+        begin {
+            around: [transaction_wrapper],
+            transition: { from: Idle, to: Processing }
+        }
+        succeed {
+            transition: { from: Processing, to: Complete }
+        }
+    }
+}
+
+impl<C, S> Transaction<C, S> {
+    fn transaction_wrapper(&self, stage: AroundStage) -> AroundOutcome<Idle> {
+        match stage {
+            AroundStage::Before => {
+                println!("Starting transaction...");
+                CALL_COUNT.fetch_add(1, Ordering::SeqCst);
+                AroundOutcome::Proceed
+            }
+            AroundStage::AfterSuccess => {
+                println!("Transaction committed!");
+                CALL_COUNT.fetch_add(10, Ordering::SeqCst);
+                AroundOutcome::Proceed
+            }
+        }
+    }
+}
+
+fn main() {
+    let transaction = Transaction::new(());
+    let transaction = transaction.begin().unwrap();
+
+    // CALL_COUNT is now 11 (Before: +1, AfterSuccess: +10)
+    assert_eq!(CALL_COUNT.load(Ordering::SeqCst), 11);
+}
+```
+
+**Execution Order:**
+
+1. **Around Before** – Runs first, can abort the entire transition
+2. **Guards** – Event/transition guards evaluated
+3. **Before callbacks** – Event-level before hooks
+4. **State transition** – Actual state change occurs
+5. **After callbacks** – Event-level after hooks
+6. **Around AfterSuccess** – Runs last, guaranteed to execute after successful transition
+
+**Aborting Transitions:**
+
+Around callbacks at the Before stage can abort transitions by returning `AroundOutcome::Abort`:
+
+```rust
+use state_machines::{
+    state_machine,
+    core::{AroundStage, AroundOutcome, TransitionError},
+};
+
+state_machine! {
+    name: Guarded,
+    initial: Start,
+    states: [Start, End],
+    events {
+        advance {
+            around: [abort_guard],
+            transition: { from: Start, to: End }
+        }
+    }
+}
+
+impl<C, S> Guarded<C, S> {
+    fn abort_guard(&self, stage: AroundStage) -> AroundOutcome<Start> {
+        match stage {
+            AroundStage::Before => {
+                // Abort at Before stage
+                AroundOutcome::Abort(TransitionError::guard_failed(
+                    Start,
+                    "advance",
+                    "abort_guard",
+                ))
+            }
+            AroundStage::AfterSuccess => {
+                // Won't be called when Before aborts
+                AroundOutcome::Proceed
+            }
+        }
+    }
+}
+
+fn main() {
+    let machine = Guarded::new(());
+    let result = machine.advance();
+
+    assert!(result.is_err());
+    let (_machine, err) = result.unwrap_err();
+    assert_eq!(err.guard, "abort_guard");
+}
+```
+
+**Use Cases:**
+
+- **Database transactions** – Begin/commit semantics
+- **Resource locking** – Acquire before, release after
+- **Logging/tracing** – Instrument transitions
+- **Performance monitoring** – Measure transition duration
+- **Validation** – Pre/post-condition checks
+- **Cleanup** – Ensure resources are released after transition
+
+**Multiple Around Callbacks:**
+
+You can specify multiple around callbacks that all execute in order:
+
+```rust,ignore
+state_machine! {
+    name: Multi,
+    initial: X,
+    states: [X, Y],
+    events {
+        go {
+            around: [logging_wrapper, metrics_wrapper, transaction_wrapper],
+            transition: { from: X, to: Y }
+        }
+    }
+}
+```
+
+All Before stages run in order, then the transition, then all AfterSuccess stages.
+
+**Performance:**
+
+Around callbacks achieve **zero-cost abstraction** when optimized:
+
+| Configuration | Overhead | Notes |
+|--------------|----------|-------|
+| Single around callback | ~411 ps | Same as simple transition |
+| Multiple around callbacks (3) | ~411 ps | Compiler optimizes away empty wrappers |
+| Around + guards + callbacks | ~412 ps | All features combined, negligible overhead |
+
+See `state-machines/benches/typestate_transitions.rs` for detailed benchmarks.
+
+---
+
 ## Comparison to Ruby's state_machines
 
 If you're coming from Ruby, here's how the concepts map:
@@ -492,10 +646,11 @@ This library achieves **true zero-cost abstractions** for guards and callbacks:
 |---------|----------|-------|
 | Guards | ~0 ps | Compiled to inline comparisons |
 | Callbacks | ~0 ps | Compiled to inline function calls |
+| Around callbacks | ~0 ps | Compiled to inline function calls |
 | Hierarchical transitions | ~3-4 ns | Minimal cost for storage lifecycle |
 | State data access | ~1 ns | Direct field access |
 
-Guards and callbacks add **literally zero runtime overhead** - the compiler optimizes them completely. Even hierarchical states with storage management complete in nanoseconds.
+Guards, callbacks, and around callbacks add **literally zero runtime overhead** - the compiler optimizes them completely. Even hierarchical states with storage management complete in nanoseconds.
 
 Run benchmarks yourself:
 ```bash

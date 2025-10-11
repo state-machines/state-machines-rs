@@ -65,19 +65,32 @@ pub enum TransitionErrorKind {
 
 pub type TransitionResult<S> = Result<(), TransitionError<S>>;
 
-/// Error returned when a guard fails in typestate mode.
+/// Error returned when a guard or around callback fails in typestate mode.
 ///
-/// In typestate machines, guards can fail even though the transition is valid.
+/// In typestate machines, guards and around callbacks can fail even though the transition is valid.
 /// The machine is returned along with this error so the caller can retry or handle it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GuardError {
     pub guard: &'static str,
     pub event: &'static str,
+    pub kind: TransitionErrorKind,
 }
 
 impl GuardError {
     pub const fn new(guard: &'static str, event: &'static str) -> Self {
-        Self { guard, event }
+        Self {
+            guard,
+            event,
+            kind: TransitionErrorKind::GuardFailed { guard },
+        }
+    }
+
+    pub const fn with_kind(
+        guard: &'static str,
+        event: &'static str,
+        kind: TransitionErrorKind,
+    ) -> Self {
+        Self { guard, event, kind }
     }
 }
 

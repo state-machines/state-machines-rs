@@ -1,5 +1,8 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use state_machines::state_machine;
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use state_machines::{
+    core::{AroundOutcome, AroundStage},
+    state_machine,
+};
 
 // ============================================================================
 // Baseline: Simple state machine with no guards/callbacks
@@ -237,6 +240,148 @@ fn benchmark_state_data_mutation(c: &mut Criterion) {
     });
 }
 
+// ============================================================================
+// Around Callbacks: Test around callback overhead
+// ============================================================================
+
+state_machine! {
+    name: AroundTransaction,
+    initial: AroundIdle,
+    states: [AroundIdle, AroundProcessing, AroundComplete],
+    events {
+        begin {
+            around: [transaction_wrapper],
+            transition: { from: AroundIdle, to: AroundProcessing }
+        }
+        finish {
+            transition: { from: AroundProcessing, to: AroundComplete }
+        }
+    }
+}
+
+impl<C, S> AroundTransaction<C, S> {
+    fn transaction_wrapper(&self, stage: AroundStage) -> AroundOutcome<AroundIdle> {
+        match stage {
+            AroundStage::Before => AroundOutcome::Proceed,
+            AroundStage::AfterSuccess => AroundOutcome::Proceed,
+        }
+    }
+}
+
+fn benchmark_around_transition(c: &mut Criterion) {
+    c.bench_function("around_transition", |b| {
+        b.iter(|| {
+            let transaction = AroundTransaction::new(());
+            let transaction = black_box(transaction.begin().unwrap());
+            let transaction = black_box(transaction.finish().unwrap());
+            black_box(transaction)
+        });
+    });
+}
+
+// ============================================================================
+// Multiple Around Callbacks: Test multiple wrapper overhead
+// ============================================================================
+
+state_machine! {
+    name: MultiAround,
+    initial: MultiStart,
+    states: [MultiStart, MultiEnd],
+    events {
+        advance {
+            around: [first_wrapper, second_wrapper, third_wrapper],
+            transition: { from: MultiStart, to: MultiEnd }
+        }
+    }
+}
+
+impl<C, S> MultiAround<C, S> {
+    fn first_wrapper(&self, stage: AroundStage) -> AroundOutcome<MultiStart> {
+        match stage {
+            AroundStage::Before => AroundOutcome::Proceed,
+            AroundStage::AfterSuccess => AroundOutcome::Proceed,
+        }
+    }
+
+    fn second_wrapper(&self, stage: AroundStage) -> AroundOutcome<MultiStart> {
+        match stage {
+            AroundStage::Before => AroundOutcome::Proceed,
+            AroundStage::AfterSuccess => AroundOutcome::Proceed,
+        }
+    }
+
+    fn third_wrapper(&self, stage: AroundStage) -> AroundOutcome<MultiStart> {
+        match stage {
+            AroundStage::Before => AroundOutcome::Proceed,
+            AroundStage::AfterSuccess => AroundOutcome::Proceed,
+        }
+    }
+}
+
+fn benchmark_multi_around_transition(c: &mut Criterion) {
+    c.bench_function("multi_around_transition", |b| {
+        b.iter(|| {
+            let machine = MultiAround::new(());
+            let machine = black_box(machine.advance().unwrap());
+            black_box(machine)
+        });
+    });
+}
+
+// ============================================================================
+// All Features Combined: Around + Guards + Callbacks
+// ============================================================================
+
+state_machine! {
+    name: FullStack,
+    initial: StackIdle,
+    states: [StackIdle, StackActive],
+    events {
+        activate {
+            guards: [can_proceed],
+            around: [wrapper],
+            before: [prepare],
+            after: [cleanup],
+            transition: { from: StackIdle, to: StackActive }
+        }
+        deactivate {
+            transition: { from: StackActive, to: StackIdle }
+        }
+    }
+}
+
+impl<C, S> FullStack<C, S> {
+    fn can_proceed(&self, _ctx: &C) -> bool {
+        true
+    }
+
+    fn wrapper(&self, stage: AroundStage) -> AroundOutcome<StackIdle> {
+        match stage {
+            AroundStage::Before => AroundOutcome::Proceed,
+            AroundStage::AfterSuccess => AroundOutcome::Proceed,
+        }
+    }
+
+    fn prepare(&self) {
+        // Minimal work
+    }
+
+    fn cleanup(&self) {
+        // Minimal work
+    }
+}
+
+fn benchmark_full_stack_transition(c: &mut Criterion) {
+    c.bench_function("full_stack_transition", |b| {
+        b.iter(|| {
+            let machine = FullStack::new(());
+            let machine = black_box(machine.activate().unwrap());
+            let machine = black_box(machine.deactivate().unwrap());
+            black_box(machine)
+        });
+    });
+}
+
 criterion_group!(
     benches,
     benchmark_simple_transition,
@@ -247,5 +392,8 @@ criterion_group!(
     benchmark_hierarchical_polymorphic,
     benchmark_state_data_access,
     benchmark_state_data_mutation,
+    benchmark_around_transition,
+    benchmark_multi_around_transition,
+    benchmark_full_stack_transition,
 );
 criterion_main!(benches);

@@ -467,28 +467,160 @@ fn generate_transition_method(
         })
         .collect();
 
+    // Check if we have around callbacks
+    let has_around = !edge.around.is_empty();
+
     // Assemble the complete method
-    Ok(quote! {
-        #method_sig -> #return_type {
-            // Check guards
-            #( #guard_checks )*
+    if has_around {
+        // Generate around callback invocations - Before stage (on self)
+        let around_before_checks: Vec<_> = edge
+            .around
+            .iter()
+            .map(|callback| {
+                if is_async {
+                    quote! {
+                        match self.#callback(#core_path::AroundStage::Before).await {
+                            #core_path::AroundOutcome::Proceed => {},
+                            #core_path::AroundOutcome::Abort(err) => {
+                                // Preserve the full TransitionError kind (GuardFailed, ActionFailed, etc.)
+                                let callback_name = match &err.kind {
+                                    #core_path::TransitionErrorKind::GuardFailed { guard } => *guard,
+                                    #core_path::TransitionErrorKind::ActionFailed { action } => *action,
+                                    #core_path::TransitionErrorKind::InvalidTransition => stringify!(#callback),
+                                };
+                                return ::core::result::Result::Err((
+                                    self,
+                                    #core_path::GuardError::with_kind(callback_name, stringify!(#event_name), err.kind)
+                                ));
+                            }
+                        }
+                    }
+                } else {
+                    quote! {
+                        match self.#callback(#core_path::AroundStage::Before) {
+                            #core_path::AroundOutcome::Proceed => {},
+                            #core_path::AroundOutcome::Abort(err) => {
+                                // Preserve the full TransitionError kind (GuardFailed, ActionFailed, etc.)
+                                let callback_name = match &err.kind {
+                                    #core_path::TransitionErrorKind::GuardFailed { guard } => *guard,
+                                    #core_path::TransitionErrorKind::ActionFailed { action } => *action,
+                                    #core_path::TransitionErrorKind::InvalidTransition => stringify!(#callback),
+                                };
+                                return ::core::result::Result::Err((
+                                    self,
+                                    #core_path::GuardError::with_kind(callback_name, stringify!(#event_name), err.kind)
+                                ));
+                            }
+                        }
+                    }
+                }
+            })
+            .collect();
 
-            // Execute before callbacks on current machine
-            #( #before_calls )*
+        // Generate around callback invocations - AfterSuccess stage (on new_machine)
+        let around_after_checks: Vec<_> = edge
+            .around
+            .iter()
+            .map(|callback| {
+                if is_async {
+                    quote! {
+                        match new_machine.#callback(#core_path::AroundStage::AfterSuccess).await {
+                            #core_path::AroundOutcome::Proceed => {},
+                            #core_path::AroundOutcome::Abort(err) => {
+                                // LIMITATION: AfterSuccess aborts cannot be properly handled with current typestate return type.
+                                // The transition has already occurred, so we can't return the old machine.
+                                // We panic here to make this limitation explicit rather than silently ignoring the error.
+                                let callback_name = match &err.kind {
+                                    #core_path::TransitionErrorKind::GuardFailed { guard } => *guard,
+                                    #core_path::TransitionErrorKind::ActionFailed { action } => *action,
+                                    #core_path::TransitionErrorKind::InvalidTransition => stringify!(#callback),
+                                };
+                                panic!(
+                                    "Around callback '{}' aborted at AfterSuccess stage during event '{}', but typestate machines \
+                                     cannot properly surface this error because the state transition has already occurred. \
+                                     Consider using Before stage aborts instead, or changing your callback to return Proceed.",
+                                    callback_name, stringify!(#event_name)
+                                );
+                            }
+                        }
+                    }
+                } else {
+                    quote! {
+                        match new_machine.#callback(#core_path::AroundStage::AfterSuccess) {
+                            #core_path::AroundOutcome::Proceed => {},
+                            #core_path::AroundOutcome::Abort(err) => {
+                                // LIMITATION: AfterSuccess aborts cannot be properly handled with current typestate return type.
+                                // The transition has already occurred, so we can't return the old machine.
+                                // We panic here to make this limitation explicit rather than silently ignoring the error.
+                                let callback_name = match &err.kind {
+                                    #core_path::TransitionErrorKind::GuardFailed { guard } => *guard,
+                                    #core_path::TransitionErrorKind::ActionFailed { action } => *action,
+                                    #core_path::TransitionErrorKind::InvalidTransition => stringify!(#callback),
+                                };
+                                panic!(
+                                    "Around callback '{}' aborted at AfterSuccess stage during event '{}', but typestate machines \
+                                     cannot properly surface this error because the state transition has already occurred. \
+                                     Consider using Before stage aborts instead, or changing your callback to return Proceed.",
+                                    callback_name, stringify!(#event_name)
+                                );
+                            }
+                        }
+                    }
+                }
+            })
+            .collect();
 
-            // Create new machine with target state
-            let mut new_machine = #machine_name {
-                ctx: self.ctx,
-                _state: ::core::marker::PhantomData,
-                #( #storage_transfers, )*
-            };
+        Ok(quote! {
+            #method_sig -> #return_type {
+                // Around callbacks - Before stage
+                #( #around_before_checks )*
 
-            // Execute after callbacks on new machine
-            #( #after_calls )*
+                // Check guards
+                #( #guard_checks )*
 
-            ::core::result::Result::Ok(new_machine)
-        }
-    })
+                // Execute before callbacks on current machine
+                #( #before_calls )*
+
+                // Create new machine with target state
+                let mut new_machine = #machine_name {
+                    ctx: self.ctx,
+                    _state: ::core::marker::PhantomData,
+                    #( #storage_transfers, )*
+                };
+
+                // Execute after callbacks on new machine
+                #( #after_calls )*
+
+                // Around callbacks - AfterSuccess stage
+                #( #around_after_checks )*
+
+                ::core::result::Result::Ok(new_machine)
+            }
+        })
+    } else {
+        // No around callbacks - generate simpler code
+        Ok(quote! {
+            #method_sig -> #return_type {
+                // Check guards
+                #( #guard_checks )*
+
+                // Execute before callbacks on current machine
+                #( #before_calls )*
+
+                // Create new machine with target state
+                let mut new_machine = #machine_name {
+                    ctx: self.ctx,
+                    _state: ::core::marker::PhantomData,
+                    #( #storage_transfers, )*
+                };
+
+                // Execute after callbacks on new machine
+                #( #after_calls )*
+
+                ::core::result::Result::Ok(new_machine)
+            }
+        })
+    }
 }
 
 /// Generate storage accessor methods for state-local data.
