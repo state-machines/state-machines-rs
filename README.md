@@ -150,6 +150,15 @@ fn main() {
     let err = door.open().expect_err("should fail when obstructed");
     let (_door, guard_err) = err;
     assert_eq!(guard_err.guard, "path_clear");
+
+    // Inspect the error kind
+    use state_machines::core::TransitionErrorKind;
+    match guard_err.kind {
+        TransitionErrorKind::GuardFailed { guard } => {
+            println!("Guard '{}' failed", guard);
+        }
+        _ => unreachable!(),
+    }
 }
 ```
 
@@ -483,6 +492,67 @@ fn main() {
     assert!(result.is_err());
     let (_machine, err) = result.unwrap_err();
     assert_eq!(err.guard, "abort_guard");
+}
+```
+
+**Distinguishing Error Types:**
+
+Around callbacks preserve the full `TransitionErrorKind`, allowing you to distinguish between guard failures and action failures:
+
+```rust
+use state_machines::{
+    state_machine,
+    core::{AroundStage, AroundOutcome, TransitionError, TransitionErrorKind},
+};
+
+state_machine! {
+    name: Workflow,
+    initial: Pending,
+    states: [Pending, Validated, Complete],
+    events {
+        validate {
+            around: [validation_wrapper],
+            transition: { from: Pending, to: Validated }
+        }
+    }
+}
+
+impl<C, S> Workflow<C, S> {
+    fn validation_wrapper(&self, stage: AroundStage) -> AroundOutcome<Pending> {
+        match stage {
+            AroundStage::Before => {
+                // Abort with ActionFailed (not GuardFailed)
+                AroundOutcome::Abort(TransitionError {
+                    from: Pending,
+                    event: "validate",
+                    kind: TransitionErrorKind::ActionFailed {
+                        action: "validation_wrapper",
+                    },
+                })
+            }
+            AroundStage::AfterSuccess => AroundOutcome::Proceed,
+        }
+    }
+}
+
+fn main() {
+    let workflow = Workflow::new(());
+    let result = workflow.validate();
+
+    if let Err((_workflow, err)) = result {
+        // Inspect the error kind to distinguish failure types
+        match err.kind {
+            TransitionErrorKind::GuardFailed { guard } => {
+                println!("Guard '{}' prevented transition", guard);
+            }
+            TransitionErrorKind::ActionFailed { action } => {
+                println!("Action '{}' aborted transition", action);
+            }
+            TransitionErrorKind::InvalidTransition => {
+                println!("Invalid state transition");
+            }
+        }
+    }
 }
 ```
 
