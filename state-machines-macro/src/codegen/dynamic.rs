@@ -5,6 +5,7 @@
 //! - The `dynamic` feature flag is enabled, OR
 //! - The macro explicitly specifies `dynamic: true`
 
+use crate::codegen::utils::{to_snake_case, to_snake_case_ident};
 use crate::types::*;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
@@ -46,22 +47,38 @@ fn generate_event_enum(machine: &StateMachine) -> Result<TokenStream2> {
     let machine_name = &machine.name;
     let event_name = quote::format_ident!("{}Event", machine_name);
 
+    // Convert snake_case event names to PascalCase for enum variants
+    // Example: next → Next, enter_half_open → EnterHalfOpen
+    let to_pascal_case = |s: &str| -> String {
+        s.split('_')
+            .map(|word| {
+                let mut chars = word.chars();
+                match chars.next() {
+                    None => String::new(),
+                    Some(first) => first.to_uppercase().chain(chars).collect(),
+                }
+            })
+            .collect()
+    };
+
     let enum_variants = machine.events.iter().map(|event| {
-        let name = &event.name;
+        let pascal_name =
+            syn::Ident::new(&to_pascal_case(&event.name.to_string()), event.name.span());
         if let Some(payload_ty) = &event.payload {
-            quote! { #name(#payload_ty) }
+            quote! { #pascal_name(#payload_ty) }
         } else {
-            quote! { #name }
+            quote! { #pascal_name }
         }
     });
 
     let match_arms = machine.events.iter().map(|event| {
-        let name = &event.name;
-        let name_str = name.to_string();
+        let pascal_name =
+            syn::Ident::new(&to_pascal_case(&event.name.to_string()), event.name.span());
+        let name_str = event.name.to_string();
         if event.payload.is_some() {
-            quote! { Self::#name(_) => #name_str }
+            quote! { Self::#pascal_name(_) => #name_str }
         } else {
-            quote! { Self::#name => #name_str }
+            quote! { Self::#pascal_name => #name_str }
         }
     });
 
@@ -150,26 +167,46 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
     let initial_state = &machine.initial;
     let is_async = machine.async_mode;
 
+    // Helper to convert snake_case to PascalCase for enum variants
+    let to_pascal_case = |s: &str| -> String {
+        s.split('_')
+            .map(|word| {
+                let mut chars = word.chars();
+                match chars.next() {
+                    None => String::new(),
+                    Some(first) => first.to_uppercase().chain(chars).collect(),
+                }
+            })
+            .collect()
+    };
+
     // Generate match arms for handle() method
     let mut match_arms = Vec::new();
 
     for event in &machine.events {
-        let event_variant = &event.name;
+        let event_snake = &event.name; // snake_case from macro definition
+        let event_pascal = syn::Ident::new(
+            &to_pascal_case(&event_snake.to_string()),
+            event_snake.span(),
+        );
+        let event_method = to_snake_case_ident(event_snake); // method name (already snake_case)
 
         // Get all transitions for this event from the transition graph
         for state in &machine.states {
             if let Some(edges) = machine.transition_graph.outgoing(state) {
                 for edge in edges {
-                    if edge.event == *event_variant {
+                    if edge.event == *event_snake {
                         let source_state = state;
                         let target_state = &edge.target;
 
                         // Generate the match arm for this transition
+                        // Use event_pascal for enum variant matching
+                        // Use event_method for calling the snake_case typestate method
                         let arm = if event.payload.is_some() {
                             if is_async {
                                 quote! {
-                                    (#any_state_name::#source_state(m), #event_name::#event_variant(payload)) => {
-                                        match m.#event_variant(payload).await {
+                                    (#any_state_name::#source_state(m), #event_name::#event_pascal(payload)) => {
+                                        match m.#event_method(payload).await {
                                             Ok(new_machine) => #any_state_name::#target_state(new_machine),
                                             Err((old_machine, err)) => {
                                                 self.inner = ::core::option::Option::Some(#any_state_name::#source_state(old_machine));
@@ -180,8 +217,8 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
                                 }
                             } else {
                                 quote! {
-                                    (#any_state_name::#source_state(m), #event_name::#event_variant(payload)) => {
-                                        match m.#event_variant(payload) {
+                                    (#any_state_name::#source_state(m), #event_name::#event_pascal(payload)) => {
+                                        match m.#event_method(payload) {
                                             Ok(new_machine) => #any_state_name::#target_state(new_machine),
                                             Err((old_machine, err)) => {
                                                 self.inner = ::core::option::Option::Some(#any_state_name::#source_state(old_machine));
@@ -193,8 +230,8 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
                             }
                         } else if is_async {
                             quote! {
-                                (#any_state_name::#source_state(m), #event_name::#event_variant) => {
-                                    match m.#event_variant().await {
+                                (#any_state_name::#source_state(m), #event_name::#event_pascal) => {
+                                    match m.#event_method().await {
                                         Ok(new_machine) => #any_state_name::#target_state(new_machine),
                                         Err((old_machine, err)) => {
                                             self.inner = ::core::option::Option::Some(#any_state_name::#source_state(old_machine));
@@ -205,8 +242,8 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
                             }
                         } else {
                             quote! {
-                                (#any_state_name::#source_state(m), #event_name::#event_variant) => {
-                                    match m.#event_variant() {
+                                (#any_state_name::#source_state(m), #event_name::#event_pascal) => {
+                                    match m.#event_method() {
                                         Ok(new_machine) => #any_state_name::#target_state(new_machine),
                                         Err((old_machine, err)) => {
                                             self.inner = ::core::option::Option::Some(#any_state_name::#source_state(old_machine));
@@ -358,22 +395,4 @@ fn generate_conversions(machine: &StateMachine) -> Result<TokenStream2> {
             #(#extract_methods)*
         }
     })
-}
-
-/// Convert PascalCase to snake_case for method names.
-fn to_snake_case(s: &str) -> String {
-    let mut result = String::new();
-    for (i, ch) in s.chars().enumerate() {
-        if ch.is_uppercase() {
-            if i != 0 {
-                result.push('_');
-            }
-            for lower in ch.to_lowercase() {
-                result.push(lower);
-            }
-        } else {
-            result.push(ch);
-        }
-    }
-    result
 }

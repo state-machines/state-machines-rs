@@ -9,7 +9,7 @@ state_machine! {
     dynamic: true,
     states: [Red, Yellow, Green],
     events {
-        Next {
+        next {
             transition: { from: Red, to: Green }
             transition: { from: Green, to: Yellow }
             transition: { from: Yellow, to: Red }
@@ -63,13 +63,14 @@ fn test_dynamic_to_typestate_conversion() {
     let typed_light = light.into_green().unwrap();
 
     // Now we have compile-time type safety
-    let _ = typed_light.Next();
+    let _ = typed_light.next();
 }
 
 #[test]
 fn test_event_enum() {
+    // Event enum variant is PascalCase (Next), but name() returns snake_case (next)
     let event = TrafficLightEvent::Next;
-    assert_eq!(event.name(), "Next");
+    assert_eq!(event.name(), "next");
 }
 
 // Async dynamic dispatch test
@@ -80,10 +81,10 @@ state_machine! {
     initial: Idle,
     states: [Idle, Processing, Done],
     events {
-        Start {
+        start {
             transition: { from: Idle, to: Processing }
         }
-        Finish {
+        finish {
             transition: { from: Processing, to: Done }
         }
     }
@@ -116,7 +117,7 @@ state_machine! {
     initial: Start,
     states: [Start, End],
     events {
-        Proceed {
+        proceed {
             guards: [is_allowed],
             transition: { from: Start, to: End }
         }
@@ -142,7 +143,7 @@ fn test_guard_failure() {
     match result.unwrap_err() {
         DynamicError::GuardFailed { guard, event } => {
             assert_eq!(guard, "is_allowed");
-            assert_eq!(event, "Proceed");
+            assert_eq!(event, "proceed"); // Event name is snake_case
         }
         _ => panic!("Expected GuardFailed error"),
     }

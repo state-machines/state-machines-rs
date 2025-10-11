@@ -5,6 +5,7 @@
 
 pub mod dynamic;
 pub mod typestate;
+pub mod utils;
 
 use crate::types::*;
 use proc_macro2::TokenStream as TokenStream2;

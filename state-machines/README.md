@@ -655,7 +655,7 @@ state_machine! {
     initial: Red,
     states: [Red, Yellow, Green],
     events {
-        Next {
+        next {
             transition: { from: Red, to: Green }
             transition: { from: Green, to: Yellow }
             transition: { from: Yellow, to: Red }
@@ -728,7 +728,7 @@ let light = TrafficLight::new(());
 // Type: TrafficLight<(), Red>
 
 // Perform type-safe transitions
-let light = light.Next().unwrap();
+let light = light.next().unwrap();
 // Type: TrafficLight<(), Green>
 
 // Convert to dynamic for event loop
@@ -754,7 +754,7 @@ dynamic.handle(TrafficLightEvent::Next).unwrap();
 if let Ok(typed) = dynamic.into_green() {
     // Type: TrafficLight<(), Green>
     // Now have compile-time guarantees again
-    let _ = typed.Next();
+    let _ = typed.next();
 }
 ```
 
@@ -771,16 +771,16 @@ state_machine! {
     initial: Disconnected,
     states: [Disconnected, Connecting, Connected, Failed],
     events {
-        Connect {
+        connect {
             transition: { from: Disconnected, to: Connecting }
         }
-        Established {
+        established {
             transition: { from: Connecting, to: Connected }
         }
-        Timeout {
+        timeout {
             transition: { from: Connecting, to: Failed }
         }
-        Disconnect {
+        disconnect {
             transition: { from: [Connecting, Connected], to: Disconnected }
         }
     }
@@ -810,6 +810,11 @@ fn handle_network_events(conn: &mut DynamicConnection<()>) {
             }
         }
     }
+}
+
+fn main() {
+    let mut conn = DynamicConnection::new(());
+    handle_network_events(&mut conn);
 }
 ```
 

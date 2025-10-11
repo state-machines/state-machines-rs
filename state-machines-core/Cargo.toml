@@ -1,6 +1,6 @@
 [package]
 name = "state-machines-core"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 authors = ["Abdelkader Boudih <terminale@gmail.com>"]
 description = "Core types and traits for the state-machines library"

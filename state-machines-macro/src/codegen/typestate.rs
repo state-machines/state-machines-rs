@@ -38,6 +38,7 @@
 //! }
 //! ```
 
+use crate::codegen::utils::to_snake_case_ident;
 use crate::types::*;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
@@ -282,30 +283,36 @@ fn generate_transition_method(
 ) -> Result<TokenStream2> {
     let machine_name = &machine.name;
     let event_name = &edge.event;
+
+    // Convert event name to snake_case for the method name
+    // Example: Trip → trip, EnterHalfOpen → enter_half_open
+    // This ensures generated methods follow Rust naming conventions
+    let method_name = to_snake_case_ident(event_name);
+
     let target_state = &edge.target;
     let is_async = machine.async_mode;
     let core_path = quote!(::state_machines::core);
 
-    // Build method signature
+    // Build method signature using snake_case method name
     let (method_sig, payload_ref) = if let Some(payload_ty) = &edge.payload {
         let sig = if is_async {
             quote! {
-                pub async fn #event_name(mut self, payload: #payload_ty)
+                pub async fn #method_name(mut self, payload: #payload_ty)
             }
         } else {
             quote! {
-                pub fn #event_name(mut self, payload: #payload_ty)
+                pub fn #method_name(mut self, payload: #payload_ty)
             }
         };
         (sig, quote! { &payload })
     } else {
         let sig = if is_async {
             quote! {
-                pub async fn #event_name(mut self)
+                pub async fn #method_name(mut self)
             }
         } else {
             quote! {
-                pub fn #event_name(mut self)
+                pub fn #method_name(mut self)
             }
         };
         (sig, quote! {})
@@ -812,6 +819,10 @@ fn generate_superstate_transition_method(
     // since we don't have callbacks or guards at the superstate level yet
     let machine_name = &machine.name;
     let event_name = &edge.event;
+
+    // Convert event name to snake_case for the method name
+    let method_name = to_snake_case_ident(event_name);
+
     let target_state = &edge.target;
     let is_async = machine.async_mode;
     let core_path = quote!(::state_machines::core);
@@ -819,11 +830,11 @@ fn generate_superstate_transition_method(
     // Build method signature (no payload support for now)
     let method_sig = if is_async {
         quote! {
-            pub async fn #event_name(self)
+            pub async fn #method_name(self)
         }
     } else {
         quote! {
-            pub fn #event_name(self)
+            pub fn #method_name(self)
         }
     };
 
