@@ -238,6 +238,14 @@ impl Hierarchy {
             Some(ident.clone())
         }
     }
+
+    /// Get all superstate names as identifiers.
+    pub fn all_superstates(&self) -> Vec<Ident> {
+        self.lookup
+            .keys()
+            .map(|k| syn::Ident::new(k, proc_macro2::Span::call_site()))
+            .collect()
+    }
 }
 
 /// Result of parsing the states section.

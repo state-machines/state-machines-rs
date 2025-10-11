@@ -13,9 +13,8 @@ use proc_macro2::Span;
 use quote::format_ident;
 use std::collections::HashSet;
 use syn::{
-    braced, bracketed, parenthesized,
+    Ident, Result, Token, braced, bracketed, parenthesized,
     parse::{Parse, ParseBuffer, ParseStream},
-    Ident, Result, Token,
 };
 
 /// Implementation of syn::Parse for StateMachine.

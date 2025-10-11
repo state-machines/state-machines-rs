@@ -63,6 +63,7 @@ pub fn generate_typestate_machine(machine: &StateMachine) -> Result<TokenStream2
 ///
 /// Each state becomes a zero-sized type used as a phantom type parameter.
 /// These markers serve as compile-time tags to track the current state.
+/// This includes both leaf states and superstates.
 ///
 /// # Example Output
 ///
@@ -70,10 +71,15 @@ pub fn generate_typestate_machine(machine: &StateMachine) -> Result<TokenStream2
 /// pub struct Docked;
 /// pub struct Launching;
 /// pub struct InFlight;
+/// pub struct Flight;  // superstate
 /// ```
 fn generate_state_markers(machine: &StateMachine) -> Result<TokenStream2> {
-    let markers: Vec<_> = machine
-        .states
+    let mut all_states = machine.states.clone();
+
+    // Add superstates to the list
+    all_states.extend(machine.hierarchy.all_superstates());
+
+    let markers: Vec<_> = all_states
         .iter()
         .map(|state| {
             quote! {
@@ -536,13 +542,14 @@ fn generate_storage_accessors(machine: &StateMachine) -> Result<Vec<TokenStream2
 
 /// Generate state-specific guaranteed data accessors.
 ///
-/// For each state with associated data, we generate an impl block like:
+/// For each state with associated data, we generate an impl block with
+/// a uniquely named accessor based on the state name:
 /// ```rust,ignore
 /// impl<C> Machine<C, LaunchPrep> {
-///     pub fn data(&self) -> &PrepData {
+///     pub fn launch_prep_data(&self) -> &PrepData {
 ///         self.__state_data_launch_prep.as_ref().unwrap()
 ///     }
-///     pub fn data_mut(&mut self) -> &mut PrepData {
+///     pub fn launch_prep_data_mut(&mut self) -> &mut PrepData {
 ///         self.__state_data_launch_prep.as_mut().unwrap()
 ///     }
 /// }
@@ -550,6 +557,7 @@ fn generate_storage_accessors(machine: &StateMachine) -> Result<Vec<TokenStream2
 ///
 /// These methods provide guaranteed access to state data without Option,
 /// as we know the data exists when in that specific state.
+/// The method names are unique per state to avoid conflicts.
 fn generate_state_specific_accessors(machine: &StateMachine) -> Result<Vec<TokenStream2>> {
     let mut impls = Vec::new();
     let machine_name = &machine.name;
@@ -559,22 +567,28 @@ fn generate_state_specific_accessors(machine: &StateMachine) -> Result<Vec<Token
         let field = &spec.field;
         let ty = &spec.ty;
 
-        // Generate state-specific impl block with data() and data_mut()
+        // Generate method names from state name: LaunchPrep -> launch_prep_data
+        let state_str = state_name.to_string();
+        let snake = crate::parser::to_snake_case(&state_str);
+        let data_method = syn::Ident::new(&format!("{}_data", snake), state_name.span());
+        let data_mut_method = syn::Ident::new(&format!("{}_data_mut", snake), state_name.span());
+
+        // Generate state-specific impl block
         let impl_block = quote! {
             impl<C> #machine_name<C, #state_name> {
-                /// Access the state-associated data.
+                /// Access the state-associated data for this specific state.
                 ///
                 /// This method is guaranteed to return a reference because
                 /// the data is always present when in this state.
-                pub fn data(&self) -> &#ty {
+                pub fn #data_method(&self) -> &#ty {
                     self.#field.as_ref().unwrap()
                 }
 
-                /// Mutably access the state-associated data.
+                /// Mutably access the state-associated data for this specific state.
                 ///
                 /// This method is guaranteed to return a mutable reference because
                 /// the data is always present when in this state.
-                pub fn data_mut(&mut self) -> &mut #ty {
+                pub fn #data_mut_method(&mut self) -> &mut #ty {
                     self.#field.as_mut().unwrap()
                 }
             }
