@@ -20,6 +20,10 @@ state-machines-macro = { version = "0.1.1", path = "../state-machines-macro" }
 [dev-dependencies]
 pollster = "0.4"
 
+[features]
+default = []
+typestate = []
+
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]

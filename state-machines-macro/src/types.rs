@@ -27,6 +27,66 @@ pub struct StateMachine {
     pub async_mode: bool,
     pub action: Option<Ident>,
     pub callbacks: Callbacks,
+    pub transition_graph: TransitionGraph,
+}
+
+/// Graph of all possible transitions between states.
+///
+/// Maps each state to a list of (target_state, event, transition) tuples.
+/// Used for typestate validation and code generation.
+#[derive(Default)]
+pub struct TransitionGraph {
+    /// Maps source state -> Vec<(target, event_name, transition)>
+    pub edges: HashMap<String, Vec<TransitionEdge>>,
+}
+
+/// A single edge in the transition graph.
+#[derive(Clone)]
+pub struct TransitionEdge {
+    pub target: Ident,
+    pub event: Ident,
+    pub guards: Vec<Ident>,
+    pub unless: Vec<Ident>,
+    pub before: Vec<Ident>,
+    pub after: Vec<Ident>,
+    pub payload: Option<Type>,
+}
+
+impl TransitionGraph {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add a transition edge to the graph.
+    pub fn add_edge(
+        &mut self,
+        source: &Ident,
+        target: Ident,
+        event: Ident,
+        guards: Vec<Ident>,
+        unless: Vec<Ident>,
+        before: Vec<Ident>,
+        after: Vec<Ident>,
+        payload: Option<Type>,
+    ) {
+        self.edges
+            .entry(source.to_string())
+            .or_default()
+            .push(TransitionEdge {
+                target,
+                event,
+                guards,
+                unless,
+                before,
+                after,
+                payload,
+            });
+    }
+
+    /// Get all outgoing transitions from a state.
+    pub fn outgoing(&self, state: &Ident) -> Option<&Vec<TransitionEdge>> {
+        self.edges.get(&state.to_string())
+    }
 }
 
 /// An event definition with its transitions and callbacks.

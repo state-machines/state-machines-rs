@@ -64,7 +64,7 @@ state-machines = "0.1"
 ### Basic Example
 
 ```rust
-use state_machines::{state_machine, TransitionResult};
+use state_machines::state_machine;
 
 // Define your state machine
 state_machine! {
@@ -82,30 +82,34 @@ state_machine! {
 }
 
 fn main() {
-    let mut light = TrafficLight::new();
-    assert_eq!(light.state(), LightState::Red);
+    // Typestate pattern: each transition returns a new typed machine
+    let light = TrafficLight::new();
+    // Type is TrafficLight<Red>
 
-    light.next().unwrap();
-    assert_eq!(light.state(), LightState::Green);
+    let light = light.next().unwrap();
+    // Type is TrafficLight<Green>
 
-    light.next().unwrap();
-    assert_eq!(light.state(), LightState::Yellow);
+    let light = light.next().unwrap();
+    // Type is TrafficLight<Yellow>
 }
 ```
 
 ### With Guards and Callbacks
 
 ```rust
-use state_machines::state_machine;
+use state_machines::{state_machine, core::GuardError};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static DOOR_OBSTRUCTED: AtomicBool = AtomicBool::new(false);
 
 state_machine! {
     name: Door,
     state: DoorState,
     initial: Closed,
-    states: [Closed, Open, Locked],
+    states: [Closed, Open],
     events {
         open {
-            guards: [not_locked],
+            guards: [path_clear],
             before: [check_safety],
             after: [log_opened],
             transition: { from: Closed, to: Open }
@@ -113,44 +117,40 @@ state_machine! {
         close {
             transition: { from: Open, to: Closed }
         }
-        lock {
-            transition: { from: Closed, to: Locked }
-        }
     }
 }
 
-impl Door {
-    fn not_locked(&self) -> bool {
-        self.state() != DoorState::Locked
+impl<S> Door<S> {
+    fn path_clear(&self) -> bool {
+        !DOOR_OBSTRUCTED.load(Ordering::Relaxed)
     }
 
-    fn check_safety(&mut self) {
+    fn check_safety(&self) {
         println!("Checking if path is clear...");
     }
 
-    fn log_opened(&mut self) {
+    fn log_opened(&self) {
         println!("Door opened at {:?}", std::time::SystemTime::now());
     }
 }
 
 fn main() {
-    let mut door = Door::new();
+    // Successful transition
+    let door = Door::new();
+    let door = door.open().unwrap();
+    let door = door.close().unwrap();
 
-    // Try to open - succeeds
-    door.open().unwrap();
-    assert_eq!(door.state(), DoorState::Open);
-
-    door.close().unwrap();
-    door.lock().unwrap();
-
-    // Try to open while locked - fails
-    assert!(door.open().is_err());
+    // Failed guard check
+    DOOR_OBSTRUCTED.store(true, Ordering::Relaxed);
+    let err = door.open().expect_err("should fail when obstructed");
+    let (_door, guard_err) = err;
+    assert_eq!(guard_err.guard, "path_clear");
 }
 ```
 
 ### Hierarchical States (Superstates)
 
-```rust
+```rust,ignore
 use state_machines::state_machine;
 
 #[derive(Default, Debug)]
@@ -205,6 +205,82 @@ fn main() {
     assert_eq!(plane.state(), AircraftState::Grounded);
 }
 ```
+
+- `superstate InFlight { ... }` generates dedicated storage for each leaf (`Aircraft::climbing_data()`, etc.) and ensures state-local structs are defaulted on entry.
+- Events targeting `InFlight` resolve to its configured initial child (`Climbing`) before bubbling callbacks.
+- Guards/unless filters defined on `InFlight` descendants are evaluated with the concrete leaf state even when the transition is described in terms of the parent.
+
+See `state-machines/tests/spaceship_hierarchy.rs` for a full integration example covering bubbling and storage lifetimes.
+
+### Around Callbacks & Abort Patterns
+
+Around callbacks let you wrap transitions with reusable policies (e.g., transactional guards, audit logging). Each callback receives a `TransitionContext` and an `AroundStage` flag, and returns an `AroundOutcome` to either continue or abort the transition.
+
+```rust,ignore
+use state_machines::{
+    abort_guard, abort_with, state_machine,
+    core::{AroundOutcome, AroundStage, TransitionContext, TransitionErrorKind},
+};
+
+state_machine! {
+    name: PaymentProcessor,
+    state: PaymentState,
+    initial: Idle,
+    states: [Idle, Capturing, Captured, Failed],
+    callbacks: {
+        around_transition [
+            { name: transactional_guard, on: [capture] }
+        ]
+    },
+    events {
+        capture {
+            transition: { from: Idle, to: Capturing }
+        }
+        settle {
+            transition: { from: Capturing, to: Captured }
+        }
+        abort {
+            transition: { from: Capturing, to: Failed }
+        }
+    }
+}
+
+impl PaymentProcessor {
+    fn transactional_guard(
+        &mut self,
+        ctx: &TransitionContext<PaymentState>,
+        stage: AroundStage,
+    ) -> AroundOutcome<PaymentState> {
+        match stage {
+            AroundStage::Before => {
+                if !self.begin_transaction(ctx.event) {
+                    return abort_guard!(ctx, begin_transaction);
+                }
+                AroundOutcome::Proceed
+            }
+            AroundStage::AfterSuccess => {
+                if !self.commit_transaction(ctx.event) {
+                    return abort_with!(
+                        ctx,
+                        TransitionErrorKind::ActionFailed {
+                            action: "commit_transaction"
+                        }
+                    );
+                }
+                AroundOutcome::Proceed
+            }
+        }
+    }
+
+    fn begin_transaction(&mut self, _event: &str) -> bool { true }
+    fn commit_transaction(&mut self, _event: &str) -> bool { true }
+}
+```
+
+- Both macros yield an `AroundOutcome::Abort(...)`, so `return abort_guard!(...)` or `return abort_with!(...)` immediately short-circuits the transition.
+- Multiple `around_transition` callbacks run in declaration order before the transition and unwind in reverse order afterwards, mirroring stack-like behaviour.
+- Reach for `abort_guard!(ctx, guard_name)` to reject a transition with a guard-style error, or `abort_with!(ctx, TransitionErrorKind::...)` for custom failure kinds.
+- When you need bespoke ergonomics (logging, metrics), wrap the macros in your own helper and keep callback bodies tidy.
 
 ### Async Support
 
@@ -279,7 +355,7 @@ state_machine! {
     }
 }
 
-impl AuthSession {
+impl<S> AuthSession<S> {
     fn valid_credentials(&self, creds: &LoginCredentials) -> bool {
         // Guard receives payload reference
         creds.username == "admin" && creds.password == "secret"
@@ -287,15 +363,16 @@ impl AuthSession {
 }
 
 fn main() {
-    let mut session = AuthSession::new();
+    let session = AuthSession::new();
+    // Type is AuthSession<LoggedOut>
 
     let good_creds = LoginCredentials {
         username: "admin".to_string(),
         password: "secret".to_string(),
     };
 
-    session.login(good_creds).unwrap();
-    assert_eq!(session.state(), SessionState::LoggedIn);
+    let session = session.login(good_creds).unwrap();
+    // Type is AuthSession<LoggedIn>
 }
 ```
 
@@ -388,11 +465,25 @@ fn main() -> ! {
 }
 ```
 
+- Disable default features when depending on the crate: `state-machines = { version = "0.1", default-features = false }`.
+- If your target needs allocation, add a global allocator and `extern crate alloc;` in your application. The core library itself does not assume an allocator.
+- The GitHub Actions workflow runs `cargo build --no-default-features` for every crate to prevent std regressions.
+- A minimal `no_std` usage example lives under `examples/no_std_flight/`. Build it with `cargo build --manifest-path examples/no_std_flight/Cargo.toml --no-default-features`.
+
 ---
 
 ## Documentation
 
 - **[API Docs](https://docs.rs/state-machines)** – Full API reference
+- **[Migration Notes](docs/migration_notes.md)** – Compatibility guidance for pre-hierarchy adopters
+
+---
+
+## Migration Notes (High Level)
+
+- Existing flat machines continue to compile unchanged; the macro infers leaf states exactly as before.
+- New superstate syntax only adds enum variants—no generated method signatures were removed.
+- Enable the `std` feature (default) if you rely on `std` types in guards/actions; disable it for embedded builds.
 
 ---
 

@@ -107,7 +107,7 @@ impl Parse for StateMachine {
         }
 
         // Build the StateMachine, returning errors for missing required fields
-        Ok(Self {
+        let mut machine = Self {
             name: name.ok_or_else(|| syn::Error::new(Span::call_site(), "missing `name` field"))?,
             state: state
                 .ok_or_else(|| syn::Error::new(Span::call_site(), "missing `state` field"))?,
@@ -121,7 +121,13 @@ impl Parse for StateMachine {
             async_mode,
             action,
             callbacks,
-        })
+            transition_graph: TransitionGraph::default(),
+        };
+
+        // Build the transition graph from events
+        machine.build_transition_graph();
+
+        Ok(machine)
     }
 }
 
@@ -734,4 +740,51 @@ pub fn to_snake_case(input: &str) -> String {
         }
     }
     result
+}
+
+impl StateMachine {
+    /// Build the transition graph from the parsed events.
+    ///
+    /// This populates the transition_graph field by extracting all
+    /// transitions from events and creating edges in the graph.
+    pub fn build_transition_graph(&mut self) {
+        for event in &self.events {
+            for transition in &event.transitions {
+                // Expand source states (handle superstates)
+                for source in &transition.sources {
+                    let expanded_sources = self.hierarchy.expand_state(source, &self.states);
+                    let resolved_target = self
+                        .hierarchy
+                        .resolve_target(&transition.target)
+                        .unwrap_or_else(|| transition.target.clone());
+
+                    for actual_source in expanded_sources {
+                        // Merge event-level and transition-level guards/callbacks
+                        let mut all_guards = event.guards.clone();
+                        all_guards.extend(transition.guards.clone());
+
+                        let mut all_unless = event.unless.clone();
+                        all_unless.extend(transition.unless.clone());
+
+                        let mut all_before = event.before.clone();
+                        all_before.extend(transition.before.clone());
+
+                        let mut all_after = event.after.clone();
+                        all_after.extend(transition.after.clone());
+
+                        self.transition_graph.add_edge(
+                            &actual_source,
+                            resolved_target.clone(),
+                            event.name.clone(),
+                            all_guards,
+                            all_unless,
+                            all_before,
+                            all_after,
+                            event.payload.clone(),
+                        );
+                    }
+                }
+            }
+        }
+    }
 }

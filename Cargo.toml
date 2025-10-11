@@ -3,5 +3,6 @@ members = [
     "state-machines",
     "state-machines-core",
     "state-machines-macro",
+    "examples/no_std_flight",
 ]
 resolver = "2"

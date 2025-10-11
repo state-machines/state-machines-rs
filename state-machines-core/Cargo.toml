@@ -13,3 +13,7 @@ categories = ["rust-patterns", "no-std"]
 include = ["src/**/*", "Cargo.toml", "../README.md", "LICENSE-MIT", "LICENSE-APACHE"]
 
 [dependencies]
+
+[features]
+default = []
+typestate = []
