@@ -7,6 +7,23 @@ pub trait MachineState: Copy + Eq + Debug + Send + Sync + 'static {}
 
 impl<T> MachineState for T where T: Copy + Eq + Debug + Send + Sync + 'static {}
 
+/// Marker trait indicating that a state is a substate of a superstate.
+///
+/// This enables polymorphic transitions from any substate to work as if
+/// they were from the superstate. For example:
+///
+/// ```rust,ignore
+/// // If LaunchPrep and Launching are substates of Flight:
+/// impl SubstateOf<Flight> for LaunchPrep {}
+/// impl SubstateOf<Flight> for Launching {}
+///
+/// // Then a transition "from Flight" can accept any Flight substate:
+/// impl<C, S: SubstateOf<Flight>> Machine<C, S> {
+///     pub fn abort(self) -> Machine<C, Standby> { ... }
+/// }
+/// ```
+pub trait SubstateOf<Super> {}
+
 /// Represents an error that occurred while attempting a transition.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransitionError<S>

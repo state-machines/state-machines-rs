@@ -51,11 +51,15 @@ pub fn generate_typestate_machine(machine: &StateMachine) -> Result<TokenStream2
     let markers = generate_state_markers(machine)?;
     let machine_struct = generate_machine_struct(machine)?;
     let impls = generate_state_impls(machine)?;
+    let substate_impls = generate_substate_impls(machine)?;
+    let superstate_transition_impls = generate_superstate_transition_impls(machine)?;
 
     Ok(quote! {
         #markers
         #machine_struct
         #( #impls )*
+        #( #substate_impls )*
+        #( #superstate_transition_impls )*
     })
 }
 
@@ -598,4 +602,134 @@ fn generate_state_specific_accessors(machine: &StateMachine) -> Result<Vec<Token
     }
 
     Ok(impls)
+}
+
+/// Generate SubstateOf trait implementations for hierarchy relationships.
+///
+/// For each leaf state that has ancestors, we generate:
+/// ```rust,ignore
+/// impl SubstateOf<Flight> for LaunchPrep {}
+/// impl SubstateOf<Flight> for Launching {}
+/// ```
+///
+/// This enables polymorphic transitions from any substate.
+fn generate_substate_impls(machine: &StateMachine) -> Result<Vec<TokenStream2>> {
+    let mut impls = Vec::new();
+
+    // For each leaf state, check if it has ancestors (is in a superstate)
+    for leaf in &machine.states {
+        if let Some(ancestors) = machine.hierarchy.ancestors.get(&leaf.to_string()) {
+            // Generate SubstateOf impl for each ancestor
+            for ancestor in ancestors {
+                impls.push(quote! {
+                    impl ::state_machines::SubstateOf<#ancestor> for #leaf {}
+                });
+            }
+        }
+    }
+
+    Ok(impls)
+}
+
+/// Generate blanket impl blocks for superstate transitions.
+///
+/// For transitions that originate from a superstate, we generate:
+/// ```rust,ignore
+/// impl<C, S: SubstateOf<Flight>> Machine<C, S> {
+///     pub fn abort(self) -> Result<Machine<C, Standby>, (Self, GuardError)> { ... }
+/// }
+/// ```
+///
+/// This allows the transition to be called from any substate of the superstate.
+fn generate_superstate_transition_impls(machine: &StateMachine) -> Result<Vec<TokenStream2>> {
+    let mut impls = Vec::new();
+    let machine_name = &machine.name;
+
+    // Group transitions by superstate
+    for superstate in machine.hierarchy.all_superstates() {
+        // Find all transitions that originate from this superstate
+        if let Some(edges) = machine.transition_graph.outgoing(&superstate) {
+            let methods: Vec<_> = edges
+                .iter()
+                .map(|edge| generate_superstate_transition_method(machine, &superstate, edge))
+                .collect::<Result<Vec<_>>>()?;
+
+            if !methods.is_empty() {
+                let impl_block = quote! {
+                    impl<C, S: ::state_machines::SubstateOf<#superstate>> #machine_name<C, S> {
+                        #( #methods )*
+                    }
+                };
+                impls.push(impl_block);
+            }
+        }
+    }
+
+    Ok(impls)
+}
+
+/// Generate a transition method for a superstate transition.
+///
+/// Similar to generate_transition_method but works with generic substates.
+fn generate_superstate_transition_method(
+    machine: &StateMachine,
+    _superstate: &Ident,
+    edge: &TransitionEdge,
+) -> Result<TokenStream2> {
+    // This is similar to generate_transition_method but simpler
+    // since we don't have callbacks or guards at the superstate level yet
+    let machine_name = &machine.name;
+    let event_name = &edge.event;
+    let target_state = &edge.target;
+    let is_async = machine.async_mode;
+    let core_path = quote!(::state_machines::core);
+
+    // Build method signature (no payload support for now)
+    let method_sig = if is_async {
+        quote! {
+            pub async fn #event_name(self)
+        }
+    } else {
+        quote! {
+            pub fn #event_name(self)
+        }
+    };
+
+    let return_type = quote! {
+        ::core::result::Result<#machine_name<C, #target_state>, (Self, #core_path::GuardError)>
+    };
+
+    // Build storage field transfers for target state
+    let storage_transfers: Vec<_> = machine
+        .state_storage
+        .iter()
+        .map(|spec| {
+            let field = &spec.field;
+            let state_name = &spec.state_name;
+            let ty = &spec.ty;
+
+            if state_name == target_state {
+                quote! {
+                    #field: ::core::option::Option::Some(<#ty as ::core::default::Default>::default())
+                }
+            } else {
+                quote! {
+                    #field: ::core::option::Option::None
+                }
+            }
+        })
+        .collect();
+
+    Ok(quote! {
+        #method_sig -> #return_type {
+            // Create new machine with target state
+            let new_machine = #machine_name {
+                ctx: self.ctx,
+                _state: ::core::marker::PhantomData,
+                #( #storage_transfers, )*
+            };
+
+            ::core::result::Result::Ok(new_machine)
+        }
+    })
 }

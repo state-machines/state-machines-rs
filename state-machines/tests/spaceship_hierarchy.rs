@@ -67,3 +67,46 @@ fn superstate_sources_expand() {
     // Back in Standby
     let _sequence = sequence.ignite().expect("can ignite from Standby");
 }
+
+#[test]
+fn substate_of_trait_is_implemented() {
+    use state_machines::SubstateOf;
+
+    // Verify that substates implement SubstateOf<Superstate>
+    fn assert_substate<T: SubstateOf<Flight>>() {}
+
+    // These should compile because LaunchPrep and Launching are substates of Flight
+    assert_substate::<LaunchPrep>();
+    assert_substate::<Launching>();
+
+    // Standby and InOrbit are NOT substates of Flight, so these would fail to compile:
+    // assert_substate::<Standby>();    // ERROR: Standby doesn't impl SubstateOf<Flight>
+    // assert_substate::<InOrbit>();    // ERROR: InOrbit doesn't impl SubstateOf<Flight>
+}
+
+#[test]
+fn superstate_transitions_work_from_any_substate() {
+    // Start in Standby
+    let sequence = LaunchSequence::new(());
+
+    // Go directly to LaunchPrep (bypassing Flight superstate entry)
+    let sequence = sequence.ignite().expect("ignite works");
+    // Type: LaunchSequence<C, LaunchPrep>
+
+    // abort() is defined on Flight superstate, but works from LaunchPrep
+    let sequence = sequence.abort().expect("abort from LaunchPrep");
+    // Type: LaunchSequence<C, Standby>
+
+    // Go back to Flight via enter_flight (resolves to LaunchPrep)
+    let sequence = sequence.enter_flight().expect("enter flight");
+
+    // Move to Launching within Flight
+    let sequence = sequence.cycle_engines().expect("cycle engines");
+    // Type: LaunchSequence<C, Launching>
+
+    // abort() ALSO works from Launching (different substate, same superstate)
+    let _sequence = sequence.abort().expect("abort from Launching");
+    // Type: LaunchSequence<C, Standby>
+
+    // This demonstrates polymorphism: abort() works from ANY substate of Flight
+}
