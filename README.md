@@ -18,13 +18,14 @@ While learning Rust, I chose to port something familiar and widely used—so I c
 - **Learning Ground First**: Extensive inline comments explain Rust concepts, ownership, trait bounds, and macro magic
 - **Ruby Parallels**: Familiar DSL syntax and callbacks make the transition smoother
 - **Production Ready**: Despite the educational focus, this is a fully functional state machine library with:
-  - Hierarchical states (superstates)
+  - **Typestate pattern** for compile-time state safety
+  - **Zero-cost abstractions** using PhantomData
   - Guards and unless conditions
-  - Before/after/around callbacks
+  - Before/after event callbacks
   - Sync and async support
-  - `no_std` compatibility (I want to use it in my embedded systems)
+  - `no_std` compatibility (for embedded systems)
   - Payload support for event data
-  - Compile-time validation
+  - Move semantics preventing invalid state transitions
 
 ### For the Rust Community
 
@@ -34,21 +35,25 @@ While learning Rust, I chose to port something familiar and widely used—so I c
 
 ## Features
 
-✅ **Hierarchical States** – Superstates with automatic event bubbling and state-local storage
+✅ **Typestate Pattern** – Compile-time state safety using Rust's type system with zero runtime overhead
 
 ✅ **Guards & Unless** – Conditional transitions at event and transition levels
 
-✅ **Callbacks** – `before`/`after`/`around` hooks with flexible filters
+✅ **Callbacks** – `before`/`after` hooks at event level
 
-✅ **Async Support** – First-class `async`/`await` for guards, actions, and callbacks
+✅ **Async Support** – First-class `async`/`await` for guards and callbacks
 
 ✅ **Event Payloads** – Pass data through transitions with type-safe payloads
 
 ✅ **No-std Compatible** – Works on embedded targets (ESP32, bare metal)
 
-✅ **Introspection** – Runtime metadata for debugging and visualization
+✅ **Type-safe** – Invalid transitions become compile errors, not runtime errors
 
-✅ **Type-safe** – Compile-time validation of states, events, and transitions
+🚧 **Hierarchical States** – Planned for future release
+
+🚧 **Around Callbacks** – Planned for future release
+
+🚧 **Dynamic Dispatch** – Event-driven mode planned (see `docs/dual_mode_design.md`)
 
 ---
 
@@ -148,141 +153,9 @@ fn main() {
 }
 ```
 
-### Hierarchical States (Superstates)
-
-```rust,ignore
-use state_machines::state_machine;
-
-#[derive(Default, Debug)]
-struct FlightData {
-    altitude: u32,
-    speed: u32,
-}
-
-state_machine! {
-    name: Aircraft,
-    state: AircraftState,
-    initial: Grounded,
-    states: [
-        Grounded,
-        superstate InFlight {
-            state Climbing(FlightData),
-            state Cruising(FlightData),
-            state Descending(FlightData),
-        },
-    ],
-    events {
-        takeoff {
-            transition: { from: Grounded, to: InFlight }
-        }
-        land {
-            transition: { from: InFlight, to: Grounded }
-        }
-        level_off {
-            transition: { from: Climbing, to: Cruising }
-        }
-    }
-}
-
-fn main() {
-    let mut plane = Aircraft::new();
-
-    plane.takeoff().unwrap();
-    // Enters InFlight superstate's initial child: Climbing
-    assert_eq!(plane.state(), AircraftState::Climbing);
-
-    // Access state-local data
-    if let Some(data) = plane.climbing_data_mut() {
-        data.altitude = 30000;
-        data.speed = 500;
-    }
-
-    plane.level_off().unwrap();
-    assert_eq!(plane.state(), AircraftState::Cruising);
-
-    // Can transition from any child of InFlight
-    plane.land().unwrap();
-    assert_eq!(plane.state(), AircraftState::Grounded);
-}
-```
-
-- `superstate InFlight { ... }` generates dedicated storage for each leaf (`Aircraft::climbing_data()`, etc.) and ensures state-local structs are defaulted on entry.
-- Events targeting `InFlight` resolve to its configured initial child (`Climbing`) before bubbling callbacks.
-- Guards/unless filters defined on `InFlight` descendants are evaluated with the concrete leaf state even when the transition is described in terms of the parent.
-
-See `state-machines/tests/spaceship_hierarchy.rs` for a full integration example covering bubbling and storage lifetimes.
-
-### Around Callbacks & Abort Patterns
-
-Around callbacks let you wrap transitions with reusable policies (e.g., transactional guards, audit logging). Each callback receives a `TransitionContext` and an `AroundStage` flag, and returns an `AroundOutcome` to either continue or abort the transition.
-
-```rust,ignore
-use state_machines::{
-    abort_guard, abort_with, state_machine,
-    core::{AroundOutcome, AroundStage, TransitionContext, TransitionErrorKind},
-};
-
-state_machine! {
-    name: PaymentProcessor,
-    state: PaymentState,
-    initial: Idle,
-    states: [Idle, Capturing, Captured, Failed],
-    callbacks: {
-        around_transition [
-            { name: transactional_guard, on: [capture] }
-        ]
-    },
-    events {
-        capture {
-            transition: { from: Idle, to: Capturing }
-        }
-        settle {
-            transition: { from: Capturing, to: Captured }
-        }
-        abort {
-            transition: { from: Capturing, to: Failed }
-        }
-    }
-}
-
-impl PaymentProcessor {
-    fn transactional_guard(
-        &mut self,
-        ctx: &TransitionContext<PaymentState>,
-        stage: AroundStage,
-    ) -> AroundOutcome<PaymentState> {
-        match stage {
-            AroundStage::Before => {
-                if !self.begin_transaction(ctx.event) {
-                    return abort_guard!(ctx, begin_transaction);
-                }
-                AroundOutcome::Proceed
-            }
-            AroundStage::AfterSuccess => {
-                if !self.commit_transaction(ctx.event) {
-                    return abort_with!(
-                        ctx,
-                        TransitionErrorKind::ActionFailed {
-                            action: "commit_transaction"
-                        }
-                    );
-                }
-                AroundOutcome::Proceed
-            }
-        }
-    }
-
-    fn begin_transaction(&mut self, _event: &str) -> bool { true }
-    fn commit_transaction(&mut self, _event: &str) -> bool { true }
-}
-```
-
-- Both macros yield an `AroundOutcome::Abort(...)`, so `return abort_guard!(...)` or `return abort_with!(...)` immediately short-circuits the transition.
-- Multiple `around_transition` callbacks run in declaration order before the transition and unwind in reverse order afterwards, mirroring stack-like behaviour.
-- Reach for `abort_guard!(ctx, guard_name)` to reject a transition with a guard-style error, or `abort_with!(ctx, TransitionErrorKind::...)` for custom failure kinds.
-- When you need bespoke ergonomics (logging, metrics), wrap the macros in your own helper and keep callback bodies tidy.
-
 ### Async Support
+
+The typestate pattern works seamlessly with async Rust:
 
 ```rust,ignore
 use state_machines::state_machine;
@@ -307,7 +180,7 @@ state_machine! {
     }
 }
 
-impl HttpRequest {
+impl<S> HttpRequest<S> {
     async fn has_network(&self) -> bool {
         // Async guard checks network availability
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
@@ -317,13 +190,14 @@ impl HttpRequest {
 
 #[tokio::main]
 async fn main() {
-    let mut request = HttpRequest::new();
+    // Type: HttpRequest<Idle>
+    let request = HttpRequest::new();
 
-    request.send().await.unwrap();
-    assert_eq!(request.state(), RequestState::Pending);
+    // Type: HttpRequest<Pending>
+    let request = request.send().await.unwrap();
 
-    request.succeed().await.unwrap();
-    assert_eq!(request.state(), RequestState::Success);
+    // Type: HttpRequest<Success>
+    let request = request.succeed().await.unwrap();
 }
 ```
 
@@ -383,7 +257,7 @@ fn main() {
 If you're coming from Ruby, here's how the concepts map:
 
 ### Ruby
-```ruby,ignore
+```ruby
 class Vehicle
   state_machine :state, initial: :parked do
     event :ignite do
@@ -397,10 +271,16 @@ class Vehicle
     puts "Checking fuel..."
   end
 end
+
+# Usage
+vehicle = Vehicle.new
+vehicle.ignite  # Mutates vehicle in place
 ```
 
-### Rust
-```rust,ignore
+### Rust (Typestate)
+```rust
+use state_machines::state_machine;
+
 state_machine! {
     name: Vehicle,
     state: VehicleState,
@@ -411,27 +291,31 @@ state_machine! {
             before: [check_fuel],
             transition: { from: Parked, to: Idling }
         }
-    },
-    callbacks {
-        before_transition [
-            { name: check_fuel, from: Parked, to: Idling }
-        ]
     }
 }
 
-impl Vehicle {
-    fn check_fuel(&mut self) {
+impl<S> Vehicle<S> {
+    fn check_fuel(&self) {
         println!("Checking fuel...");
     }
+}
+
+fn main() {
+    // Type: Vehicle<Parked>
+    let vehicle = Vehicle::new();
+
+    // Type: Vehicle<Idling>
+    let vehicle = vehicle.ignite().unwrap();
 }
 ```
 
 **Key Differences:**
-- Rust uses a **macro DSL** instead of class-level DSL
-- **Ownership matters**: `&mut self` for transitions, `&self` for guards
-- **Type safety**: States are enums, not symbols
-- **No implicit state storage**: Use state-local data syntax explicitly
-- **Compile-time validation**: Invalid transitions fail at compile time
+- **Typestate pattern**: Each state is encoded in the type system (`Vehicle<Parked>` vs `Vehicle<Idling>`)
+- **Move semantics**: Transitions consume the old state and return a new one
+- **Compile-time validation**: Can't call `ignite()` twice - second call won't compile!
+- **Zero overhead**: PhantomData optimizes away completely
+- **Explicit errors**: Guards return `Result<Machine<NewState>, (Machine<OldState>, GuardError)>`
+- **No mutation**: Callbacks take `&self`, not `&mut self` (machine is consumed by transition)
 
 ---
 
@@ -441,7 +325,6 @@ Works on embedded targets like ESP32:
 
 ```rust,ignore
 #![no_std]
-#![no_main]
 
 use state_machines::state_machine;
 
@@ -456,19 +339,25 @@ state_machine! {
     }
 }
 
-#[entry]
-fn main() -> ! {
-    let mut led = LedController::new();
-    led.toggle().unwrap();
+fn embedded_main() {
+    // Type: LedController<Off>
+    let led = LedController::new();
+
+    // Type: LedController<On>
+    let led = led.toggle().unwrap();
+
+    // Type: LedController<Blinking>
+    let led = led.blink().unwrap();
+
     // Wire up to GPIO pins...
-    loop {}
 }
+# fn main() {} // For doctest
 ```
 
-- Disable default features when depending on the crate: `state-machines = { version = "0.1", default-features = false }`.
-- If your target needs allocation, add a global allocator and `extern crate alloc;` in your application. The core library itself does not assume an allocator.
-- The GitHub Actions workflow runs `cargo build --no-default-features` for every crate to prevent std regressions.
-- A minimal `no_std` usage example lives under `examples/no_std_flight/`. Build it with `cargo build --manifest-path examples/no_std_flight/Cargo.toml --no-default-features`.
+- Disable default features: `state-machines = { version = "0.1", default-features = false }`
+- The library uses no allocator - purely stack-based with zero-sized state markers
+- CI runs `cargo build --no-default-features` to prevent std regressions
+- See `examples/no_std_flight/` for a complete embedded example
 
 ---
 
