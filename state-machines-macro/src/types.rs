@@ -142,6 +142,7 @@ pub struct TransitionCallback {
 /// When a state has associated data (e.g., `Active(ConnectionData)`),
 /// this describes how to store and manage that data in the machine struct.
 pub struct StateStorageSpec {
+    pub state_name: Ident,
     pub field: Ident,
     pub ty: Type,
 }

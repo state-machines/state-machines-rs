@@ -46,8 +46,9 @@ fn superstate_sources_expand() {
         .enter_flight()
         .expect("entering Flight resolves to initial child");
 
-    // LaunchPrep storage should be accessible (None initially)
-    assert!(sequence.state_data_launch_prep().is_none());
+    // LaunchPrep storage should be automatically initialized
+    assert!(sequence.state_data_launch_prep().is_some());
+    // Launching state data should be None (not in that state)
     assert!(sequence.state_data_launching().is_none());
 
     // Transition to Launching within Flight superstate
@@ -55,8 +56,9 @@ fn superstate_sources_expand() {
         .cycle_engines()
         .expect("cycle engines advances to Launching");
 
-    // Now in Launching state
-    assert!(sequence.state_data_launching().is_none());
+    // Now in Launching state - its data is initialized
+    assert!(sequence.state_data_launching().is_some());
+    // LaunchPrep data is cleared (not in that state anymore)
     assert!(sequence.state_data_launch_prep().is_none());
 
     // Abort from Flight superstate (works from any child state)

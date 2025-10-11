@@ -177,7 +177,7 @@ fn generate_state_impls(machine: &StateMachine) -> Result<Vec<TokenStream2>> {
         impls.push(impl_block);
     }
 
-    // Generate generic impl block with storage accessors
+    // Generate generic impl block with storage accessors (Option-based)
     if !machine.state_storage.is_empty() {
         let storage_accessors = generate_storage_accessors(machine)?;
         let machine_name = &machine.name;
@@ -187,6 +187,10 @@ fn generate_state_impls(machine: &StateMachine) -> Result<Vec<TokenStream2>> {
             }
         };
         impls.push(generic_impl);
+
+        // Generate state-specific guaranteed accessors
+        let state_specific_accessors = generate_state_specific_accessors(machine)?;
+        impls.extend(state_specific_accessors);
     }
 
     Ok(impls)
@@ -411,14 +415,25 @@ fn generate_transition_method(
         })
         .collect();
 
-    // Build storage field transfers
+    // Build storage field transfers with initialization for target state
     let storage_transfers: Vec<_> = machine
         .state_storage
         .iter()
         .map(|spec| {
             let field = &spec.field;
-            quote! {
-                #field: self.#field
+            let state_name = &spec.state_name;
+            let ty = &spec.ty;
+
+            // If transitioning to this state, initialize with Default
+            // Otherwise, clear the data (set to None) since we're not in that state
+            if state_name == target_state {
+                quote! {
+                    #field: ::core::option::Option::Some(<#ty as ::core::default::Default>::default())
+                }
+            } else {
+                quote! {
+                    #field: ::core::option::Option::None
+                }
             }
         })
         .collect();
@@ -517,4 +532,56 @@ fn generate_storage_accessors(machine: &StateMachine) -> Result<Vec<TokenStream2
     }
 
     Ok(accessors)
+}
+
+/// Generate state-specific guaranteed data accessors.
+///
+/// For each state with associated data, we generate an impl block like:
+/// ```rust,ignore
+/// impl<C> Machine<C, LaunchPrep> {
+///     pub fn data(&self) -> &PrepData {
+///         self.__state_data_launch_prep.as_ref().unwrap()
+///     }
+///     pub fn data_mut(&mut self) -> &mut PrepData {
+///         self.__state_data_launch_prep.as_mut().unwrap()
+///     }
+/// }
+/// ```
+///
+/// These methods provide guaranteed access to state data without Option,
+/// as we know the data exists when in that specific state.
+fn generate_state_specific_accessors(machine: &StateMachine) -> Result<Vec<TokenStream2>> {
+    let mut impls = Vec::new();
+    let machine_name = &machine.name;
+
+    for spec in &machine.state_storage {
+        let state_name = &spec.state_name;
+        let field = &spec.field;
+        let ty = &spec.ty;
+
+        // Generate state-specific impl block with data() and data_mut()
+        let impl_block = quote! {
+            impl<C> #machine_name<C, #state_name> {
+                /// Access the state-associated data.
+                ///
+                /// This method is guaranteed to return a reference because
+                /// the data is always present when in this state.
+                pub fn data(&self) -> &#ty {
+                    self.#field.as_ref().unwrap()
+                }
+
+                /// Mutably access the state-associated data.
+                ///
+                /// This method is guaranteed to return a mutable reference because
+                /// the data is always present when in this state.
+                pub fn data_mut(&mut self) -> &mut #ty {
+                    self.#field.as_mut().unwrap()
+                }
+            }
+        };
+
+        impls.push(impl_block);
+    }
+
+    Ok(impls)
 }

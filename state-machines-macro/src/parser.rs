@@ -13,8 +13,9 @@ use proc_macro2::Span;
 use quote::format_ident;
 use std::collections::HashSet;
 use syn::{
-    Ident, Result, Token, braced, bracketed, parenthesized,
+    braced, bracketed, parenthesized,
     parse::{Parse, ParseBuffer, ParseStream},
+    Ident, Result, Token,
 };
 
 /// Implementation of syn::Parse for StateMachine.
@@ -158,7 +159,11 @@ pub fn parse_states_section(input: &ParseBuffer<'_>) -> Result<ParsedStates> {
             // If the superstate has data, create a storage spec for it
             if let Some(ty) = superstate_ty.clone() {
                 let field = storage_field_ident(&superstate_name);
-                storage_specs.push(StateStorageSpec { field, ty });
+                storage_specs.push(StateStorageSpec {
+                    state_name: superstate_name.clone(),
+                    field,
+                    ty,
+                });
             }
 
             // Parse the superstate's contents
@@ -203,7 +208,11 @@ pub fn parse_states_section(input: &ParseBuffer<'_>) -> Result<ParsedStates> {
             // If the state has data, create a storage spec for it
             if let Some(ty) = data_ty {
                 let field = storage_field_ident(&state_ident);
-                storage_specs.push(StateStorageSpec { field, ty });
+                storage_specs.push(StateStorageSpec {
+                    state_name: state_ident.clone(),
+                    field,
+                    ty,
+                });
             }
         }
 
@@ -275,7 +284,11 @@ pub fn parse_superstate_block(
                 // If the state has data, create a storage spec for it
                 if let Some(ty) = data_ty {
                     let field = storage_field_ident(&state_ident);
-                    storage.push(StateStorageSpec { field, ty });
+                    storage.push(StateStorageSpec {
+                        state_name: state_ident.clone(),
+                        field,
+                        ty,
+                    });
                 }
             }
             "superstate" => {
@@ -294,7 +307,11 @@ pub fn parse_superstate_block(
                 // If the superstate has data, create a storage spec for it
                 if let Some(ty) = super_data_ty.clone() {
                     let field = storage_field_ident(&nested_name);
-                    storage.push(StateStorageSpec { field, ty });
+                    storage.push(StateStorageSpec {
+                        state_name: nested_name.clone(),
+                        field,
+                        ty,
+                    });
                 }
 
                 // Parse the nested superstate's contents
