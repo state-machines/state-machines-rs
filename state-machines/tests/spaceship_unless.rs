@@ -6,7 +6,7 @@ static AIRLOCK_OPEN: AtomicBool = AtomicBool::new(false);
 
 state_machine! {
     name: AirlockController,
-    state: AirlockState,
+
     initial: Closed,
     states: [Closed, Cycling, Open],
     events {
@@ -22,11 +22,11 @@ state_machine! {
     }
 }
 
-impl<S> AirlockController<S> {
-    fn sealed(&self) -> bool {
+impl<C, S> AirlockController<C, S> {
+    fn sealed(&self, _ctx: &C) -> bool {
         true
     }
-    fn door_open(&self) -> bool {
+    fn door_open(&self, _ctx: &C) -> bool {
         AIRLOCK_OPEN.load(Ordering::SeqCst)
     }
 }
@@ -34,7 +34,7 @@ impl<S> AirlockController<S> {
 #[test]
 fn unless_blocks_when_true() {
     AIRLOCK_OPEN.store(true, Ordering::SeqCst);
-    let _a = AirlockController::new();
+    let _a = AirlockController::new(());
     let err = _a.cycle().expect_err("unless should block when true");
     let (_a, guard_err) = err;
     assert_eq!(guard_err.guard, "door_open");
@@ -44,6 +44,6 @@ fn unless_blocks_when_true() {
 #[test]
 fn unless_allows_when_false() {
     AIRLOCK_OPEN.store(false, Ordering::SeqCst);
-    let _a = AirlockController::new();
+    let _a = AirlockController::new(());
     let _a = _a.cycle().expect("unless false allows cycling");
 }

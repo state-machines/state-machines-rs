@@ -88,16 +88,22 @@ fn generate_state_markers(machine: &StateMachine) -> Result<TokenStream2> {
     })
 }
 
-/// Generate the generic Machine<S> struct.
+/// Generate the generic Machine<C, S> struct.
 ///
-/// The struct is parameterized by state type `S` and contains:
+/// The struct is parameterized by context type `C` and state type `S`:
+/// - C: Context type for hardware access or shared state
+/// - S: Current state type (typestate pattern)
+///
+/// Contains:
 /// - A PhantomData marker to track the state type
+/// - A context field for hardware/external dependencies
 /// - Storage fields for state-associated data (if any)
 ///
 /// # Example Output
 ///
 /// ```rust,ignore
-/// pub struct FlightDeck<S> {
+/// pub struct FlightDeck<C, S> {
+///     ctx: C,
 ///     _state: core::marker::PhantomData<S>,
 ///     __docking_data: Option<DockingData>,
 /// }
@@ -120,7 +126,8 @@ fn generate_machine_struct(machine: &StateMachine) -> Result<TokenStream2> {
 
     Ok(quote! {
         #[derive(Debug)]
-        pub struct #machine_name<S> {
+        pub struct #machine_name<C, S> {
+            ctx: C,
             _state: ::core::marker::PhantomData<S>,
             #( #storage_fields, )*
         }
@@ -162,12 +169,24 @@ fn generate_state_impls(machine: &StateMachine) -> Result<Vec<TokenStream2>> {
 
         let machine_name = &machine.name;
         let impl_block = quote! {
-            impl #machine_name<#state> {
+            impl<C> #machine_name<C, #state> {
                 #( #methods )*
             }
         };
 
         impls.push(impl_block);
+    }
+
+    // Generate generic impl block with storage accessors
+    if !machine.state_storage.is_empty() {
+        let storage_accessors = generate_storage_accessors(machine)?;
+        let machine_name = &machine.name;
+        let generic_impl = quote! {
+            impl<C, S> #machine_name<C, S> {
+                #( #storage_accessors )*
+            }
+        };
+        impls.push(generic_impl);
     }
 
     Ok(impls)
@@ -176,13 +195,14 @@ fn generate_state_impls(machine: &StateMachine) -> Result<Vec<TokenStream2>> {
 /// Generate a constructor method for the initial state.
 ///
 /// Creates a new machine instance in the initial state with all storage fields
-/// initialized to None.
+/// initialized to None. Takes a context parameter for hardware/external dependencies.
 ///
 /// # Example Output
 ///
 /// ```rust,ignore
-/// pub fn new() -> Self {
+/// pub fn new(ctx: C) -> Self {
 ///     Self {
+///         ctx,
 ///         _state: core::marker::PhantomData,
 ///         __data_field: None,
 ///     }
@@ -201,8 +221,9 @@ fn generate_constructor(machine: &StateMachine, _state: &Ident) -> Result<TokenS
         .collect();
 
     Ok(quote! {
-        pub fn new() -> Self {
+        pub fn new(ctx: C) -> Self {
             Self {
+                ctx,
                 _state: ::core::marker::PhantomData,
                 #( #storage_inits, )*
             }
@@ -255,29 +276,29 @@ fn generate_transition_method(
     let (method_sig, payload_ref) = if let Some(payload_ty) = &edge.payload {
         let sig = if is_async {
             quote! {
-                pub async fn #event_name(self, payload: #payload_ty)
+                pub async fn #event_name(mut self, payload: #payload_ty)
             }
         } else {
             quote! {
-                pub fn #event_name(self, payload: #payload_ty)
+                pub fn #event_name(mut self, payload: #payload_ty)
             }
         };
         (sig, quote! { &payload })
     } else {
         let sig = if is_async {
             quote! {
-                pub async fn #event_name(self)
+                pub async fn #event_name(mut self)
             }
         } else {
             quote! {
-                pub fn #event_name(self)
+                pub fn #event_name(mut self)
             }
         };
         (sig, quote! {})
     };
 
     let return_type = quote! {
-        ::core::result::Result<#machine_name<#target_state>, (Self, #core_path::GuardError)>
+        ::core::result::Result<#machine_name<C, #target_state>, (Self, #core_path::GuardError)>
     };
 
     // Build guard checks
@@ -288,7 +309,7 @@ fn generate_transition_method(
         let check = if edge.payload.is_some() {
             if is_async {
                 quote! {
-                    if !self.#guard(#payload_ref).await {
+                    if !self.#guard(&self.ctx, #payload_ref).await {
                         return ::core::result::Result::Err((
                             self,
                             #core_path::GuardError::new(stringify!(#guard), stringify!(#event_name))
@@ -297,7 +318,7 @@ fn generate_transition_method(
                 }
             } else {
                 quote! {
-                    if !self.#guard(#payload_ref) {
+                    if !self.#guard(&self.ctx, #payload_ref) {
                         return ::core::result::Result::Err((
                             self,
                             #core_path::GuardError::new(stringify!(#guard), stringify!(#event_name))
@@ -307,7 +328,7 @@ fn generate_transition_method(
             }
         } else if is_async {
             quote! {
-                if !self.#guard().await {
+                if !self.#guard(&self.ctx).await {
                     return ::core::result::Result::Err((
                         self,
                         #core_path::GuardError::new(stringify!(#guard), stringify!(#event_name))
@@ -316,7 +337,7 @@ fn generate_transition_method(
             }
         } else {
             quote! {
-                if !self.#guard() {
+                if !self.#guard(&self.ctx) {
                     return ::core::result::Result::Err((
                         self,
                         #core_path::GuardError::new(stringify!(#guard), stringify!(#event_name))
@@ -332,7 +353,7 @@ fn generate_transition_method(
         let check = if edge.payload.is_some() {
             if is_async {
                 quote! {
-                    if self.#guard(#payload_ref).await {
+                    if self.#guard(&self.ctx, #payload_ref).await {
                         return ::core::result::Result::Err((
                             self,
                             #core_path::GuardError::new(stringify!(#guard), stringify!(#event_name))
@@ -341,7 +362,7 @@ fn generate_transition_method(
                 }
             } else {
                 quote! {
-                    if self.#guard(#payload_ref) {
+                    if self.#guard(&self.ctx, #payload_ref) {
                         return ::core::result::Result::Err((
                             self,
                             #core_path::GuardError::new(stringify!(#guard), stringify!(#event_name))
@@ -351,7 +372,7 @@ fn generate_transition_method(
             }
         } else if is_async {
             quote! {
-                if self.#guard().await {
+                if self.#guard(&self.ctx).await {
                     return ::core::result::Result::Err((
                         self,
                         #core_path::GuardError::new(stringify!(#guard), stringify!(#event_name))
@@ -360,7 +381,7 @@ fn generate_transition_method(
             }
         } else {
             quote! {
-                if self.#guard() {
+                if self.#guard(&self.ctx) {
                     return ::core::result::Result::Err((
                         self,
                         #core_path::GuardError::new(stringify!(#guard), stringify!(#event_name))
@@ -432,6 +453,7 @@ fn generate_transition_method(
 
             // Create new machine with target state
             let mut new_machine = #machine_name {
+                ctx: self.ctx,
                 _state: ::core::marker::PhantomData,
                 #( #storage_transfers, )*
             };
@@ -442,4 +464,57 @@ fn generate_transition_method(
             ::core::result::Result::Ok(new_machine)
         }
     })
+}
+
+/// Generate storage accessor methods for state-local data.
+///
+/// For each state with associated data, we generate:
+/// - `state_data()` - Returns `Option<&T>`
+/// - `state_data_mut()` - Returns `Option<&mut T>`
+///
+/// These methods are available on all states via `impl<S>`, allowing
+/// access to state-local storage from any state in the machine.
+///
+/// # Example Output
+///
+/// ```rust,ignore
+/// pub fn launch_prep_data(&self) -> Option<&PrepData> {
+///     self.__launch_prep_data.as_ref()
+/// }
+///
+/// pub fn launch_prep_data_mut(&mut self) -> Option<&mut PrepData> {
+///     self.__launch_prep_data.as_mut()
+/// }
+/// ```
+fn generate_storage_accessors(machine: &StateMachine) -> Result<Vec<TokenStream2>> {
+    let mut accessors = Vec::new();
+
+    for spec in &machine.state_storage {
+        let field = &spec.field;
+        let ty = &spec.ty;
+
+        // Generate accessor method name from field name
+        // __launch_prep_data -> launch_prep_data
+        let field_str = field.to_string();
+        let accessor_name = field_str.trim_start_matches("__");
+        let accessor_ident = syn::Ident::new(accessor_name, field.span());
+        let mut_accessor_name = format!("{}_mut", accessor_name);
+        let mut_accessor_ident = syn::Ident::new(&mut_accessor_name, field.span());
+
+        // Immutable accessor
+        accessors.push(quote! {
+            pub fn #accessor_ident(&self) -> ::core::option::Option<&#ty> {
+                self.#field.as_ref()
+            }
+        });
+
+        // Mutable accessor
+        accessors.push(quote! {
+            pub fn #mut_accessor_ident(&mut self) -> ::core::option::Option<&mut #ty> {
+                self.#field.as_mut()
+            }
+        });
+    }
+
+    Ok(accessors)
 }

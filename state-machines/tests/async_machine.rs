@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use pollster::block_on;
-use state_machines::{core::GuardError, state_machine};
+use state_machines::state_machine;
 
 static BRIDGE_AUTHORIZED: AtomicBool = AtomicBool::new(false);
 static CORE_STABLE: AtomicBool = AtomicBool::new(false);
@@ -10,7 +10,6 @@ static AFTER_ENGAGE_CALLED: AtomicBool = AtomicBool::new(false);
 
 state_machine! {
     name: HyperdriveController,
-    state: HyperdriveStatus,
     initial: Offline,
     async: true,
     states: [Offline, Charging, Spooling, Online, Failsafe],
@@ -33,7 +32,7 @@ state_machine! {
     }
 }
 
-impl<S> HyperdriveController<S> {
+impl<C, S> HyperdriveController<C, S> {
     fn authorize_bridge(value: bool) {
         BRIDGE_AUTHORIZED.store(value, Ordering::SeqCst);
     }
@@ -42,11 +41,11 @@ impl<S> HyperdriveController<S> {
         CORE_STABLE.store(value, Ordering::SeqCst);
     }
 
-    async fn bridge_authorized(&self) -> bool {
+    async fn bridge_authorized(&self, _ctx: &C) -> bool {
         BRIDGE_AUTHORIZED.load(Ordering::SeqCst)
     }
 
-    async fn core_stable(&self) -> bool {
+    async fn core_stable(&self, _ctx: &C) -> bool {
         CORE_STABLE.load(Ordering::SeqCst)
     }
 
@@ -67,8 +66,8 @@ fn async_engage_sequence_requires_authorization_and_stability() {
     AFTER_ENGAGE_CALLED.store(false, Ordering::SeqCst);
 
     block_on(async {
-        let controller = HyperdriveController::new();
-        // Type is HyperdriveController<Offline>
+        let controller = HyperdriveController::new(());
+        // Type is HyperdriveController<(), Offline>
 
         let controller = controller
             .begin_charge()
@@ -78,7 +77,7 @@ fn async_engage_sequence_requires_authorization_and_stability() {
             .energize()
             .await
             .expect("energize should move to Spooling");
-        // Type is HyperdriveController<Spooling>
+        // Type is HyperdriveController<(), Spooling>
 
         let auth_error = controller
             .engage()
@@ -88,7 +87,7 @@ fn async_engage_sequence_requires_authorization_and_stability() {
         assert_eq!(guard_err.guard, "bridge_authorized");
         assert_eq!(guard_err.event, "engage");
 
-        HyperdriveController::<Spooling>::authorize_bridge(true);
+        HyperdriveController::<(), Spooling>::authorize_bridge(true);
         let core_error = controller
             .engage()
             .await
@@ -97,12 +96,12 @@ fn async_engage_sequence_requires_authorization_and_stability() {
         assert_eq!(guard_err.guard, "core_stable");
         assert_eq!(guard_err.event, "engage");
 
-        HyperdriveController::<Spooling>::stabilize_core(true);
-        let controller = controller
+        HyperdriveController::<(), Spooling>::stabilize_core(true);
+        let _controller = controller
             .engage()
             .await
             .expect("engage should succeed once guards pass");
-        // Type is HyperdriveController<Online>
+        // Type is HyperdriveController<(), Online>
         assert!(BEFORE_ENGAGE_CALLED.load(Ordering::SeqCst));
         assert!(AFTER_ENGAGE_CALLED.load(Ordering::SeqCst));
     });

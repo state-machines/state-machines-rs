@@ -74,7 +74,7 @@ use state_machines::state_machine;
 // Define your state machine
 state_machine! {
     name: TrafficLight,
-    state: LightState,
+
     initial: Red,
     states: [Red, Yellow, Green],
     events {
@@ -88,7 +88,7 @@ state_machine! {
 
 fn main() {
     // Typestate pattern: each transition returns a new typed machine
-    let light = TrafficLight::new();
+    let light = TrafficLight::new(());
     // Type is TrafficLight<Red>
 
     let light = light.next().unwrap();
@@ -109,7 +109,7 @@ static DOOR_OBSTRUCTED: AtomicBool = AtomicBool::new(false);
 
 state_machine! {
     name: Door,
-    state: DoorState,
+
     initial: Closed,
     states: [Closed, Open],
     events {
@@ -125,8 +125,8 @@ state_machine! {
     }
 }
 
-impl<S> Door<S> {
-    fn path_clear(&self) -> bool {
+impl<C, S> Door<C, S> {
+    fn path_clear(&self, _ctx: &C) -> bool {
         !DOOR_OBSTRUCTED.load(Ordering::Relaxed)
     }
 
@@ -141,7 +141,7 @@ impl<S> Door<S> {
 
 fn main() {
     // Successful transition
-    let door = Door::new();
+    let door = Door::new(());
     let door = door.open().unwrap();
     let door = door.close().unwrap();
 
@@ -162,7 +162,7 @@ use state_machines::state_machine;
 
 state_machine! {
     name: HttpRequest,
-    state: RequestState,
+
     initial: Idle,
     async: true,
     states: [Idle, Pending, Success, Failed],
@@ -180,8 +180,8 @@ state_machine! {
     }
 }
 
-impl<S> HttpRequest<S> {
-    async fn has_network(&self) -> bool {
+impl<C, S> HttpRequest<C, S> {
+    async fn has_network(&self, _ctx: &C) -> bool {
         // Async guard checks network availability
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
         true
@@ -191,7 +191,7 @@ impl<S> HttpRequest<S> {
 #[tokio::main]
 async fn main() {
     // Type: HttpRequest<Idle>
-    let request = HttpRequest::new();
+    let request = HttpRequest::new(());
 
     // Type: HttpRequest<Pending>
     let request = request.send().await.unwrap();
@@ -214,7 +214,6 @@ struct LoginCredentials {
 
 state_machine! {
     name: AuthSession,
-    state: SessionState,
     initial: LoggedOut,
     states: [LoggedOut, LoggedIn, Locked],
     events {
@@ -229,16 +228,16 @@ state_machine! {
     }
 }
 
-impl<S> AuthSession<S> {
-    fn valid_credentials(&self, creds: &LoginCredentials) -> bool {
-        // Guard receives payload reference
+impl<C, S> AuthSession<C, S> {
+    fn valid_credentials(&self, _ctx: &C, creds: &LoginCredentials) -> bool {
+        // Guard receives context and payload reference
         creds.username == "admin" && creds.password == "secret"
     }
 }
 
 fn main() {
-    let session = AuthSession::new();
-    // Type is AuthSession<LoggedOut>
+    let session = AuthSession::new(());
+    // Type is AuthSession<(), LoggedOut>
 
     let good_creds = LoginCredentials {
         username: "admin".to_string(),
@@ -283,7 +282,7 @@ use state_machines::state_machine;
 
 state_machine! {
     name: Vehicle,
-    state: VehicleState,
+
     initial: Parked,
     states: [Parked, Idling],
     events {
@@ -294,7 +293,7 @@ state_machine! {
     }
 }
 
-impl<S> Vehicle<S> {
+impl<C, S> Vehicle<C, S> {
     fn check_fuel(&self) {
         println!("Checking fuel...");
     }
@@ -302,7 +301,7 @@ impl<S> Vehicle<S> {
 
 fn main() {
     // Type: Vehicle<Parked>
-    let vehicle = Vehicle::new();
+    let vehicle = Vehicle::new(());
 
     // Type: Vehicle<Idling>
     let vehicle = vehicle.ignite().unwrap();
@@ -330,7 +329,7 @@ use state_machines::state_machine;
 
 state_machine! {
     name: LedController,
-    state: LedState,
+
     initial: Off,
     states: [Off, On, Blinking],
     events {
@@ -341,7 +340,7 @@ state_machine! {
 
 fn embedded_main() {
     // Type: LedController<Off>
-    let led = LedController::new();
+    let led = LedController::new(());
 
     // Type: LedController<On>
     let led = led.toggle().unwrap();

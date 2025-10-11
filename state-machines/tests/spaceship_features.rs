@@ -10,7 +10,6 @@ static NAV_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 state_machine! {
     name: NavigationComputer,
-    state: NavState,
     initial: Idle,
     states: [Idle, Plotting, CourseLocked, Replotting, CriticalFailure],
     events {
@@ -31,7 +30,7 @@ state_machine! {
     }
 }
 
-impl<S> NavigationComputer<S> {
+impl<C, S> NavigationComputer<C, S> {
     fn set_captain_on_bridge(value: bool) {
         CAPTAIN_ON_BRIDGE.store(value, Ordering::SeqCst);
     }
@@ -44,15 +43,15 @@ impl<S> NavigationComputer<S> {
         DIAGNOSTICS_PASSING.store(value, Ordering::SeqCst);
     }
 
-    fn captain_on_bridge(&self) -> bool {
+    fn captain_on_bridge(&self, _ctx: &C) -> bool {
         CAPTAIN_ON_BRIDGE.load(Ordering::SeqCst)
     }
 
-    fn solution_valid(&self) -> bool {
+    fn solution_valid(&self, _ctx: &C) -> bool {
         SOLUTION_VALID.load(Ordering::SeqCst)
     }
 
-    fn diagnostics_passing(&self) -> bool {
+    fn diagnostics_passing(&self, _ctx: &C) -> bool {
         DIAGNOSTICS_PASSING.load(Ordering::SeqCst)
     }
 }
@@ -60,10 +59,10 @@ impl<S> NavigationComputer<S> {
 #[test]
 fn lock_course_requires_event_and_transition_guards() {
     let _guard = NAV_TEST_LOCK.lock().unwrap();
-    NavigationComputer::<Idle>::set_captain_on_bridge(false);
-    NavigationComputer::<Idle>::set_solution_valid(false);
+    NavigationComputer::<(), Idle>::set_captain_on_bridge(false);
+    NavigationComputer::<(), Idle>::set_solution_valid(false);
 
-    let nav = NavigationComputer::new();
+    let nav = NavigationComputer::new(());
     let nav = nav.plot_course().expect("plotting should start from Idle");
     // Type is NavigationComputer<Plotting>
 
@@ -74,7 +73,7 @@ fn lock_course_requires_event_and_transition_guards() {
     assert_eq!(guard_err.guard, "captain_on_bridge");
     assert_eq!(guard_err.event, "lock_course");
 
-    NavigationComputer::<Idle>::set_captain_on_bridge(true);
+    NavigationComputer::<(), Idle>::set_captain_on_bridge(true);
     let solution_error = nav
         .lock_course()
         .expect_err("solution must be valid before locking course");
@@ -82,8 +81,8 @@ fn lock_course_requires_event_and_transition_guards() {
     assert_eq!(guard_err.guard, "solution_valid");
     assert_eq!(guard_err.event, "lock_course");
 
-    NavigationComputer::<Idle>::set_solution_valid(true);
-    let nav = nav
+    NavigationComputer::<(), Idle>::set_solution_valid(true);
+    let _nav = nav
         .lock_course()
         .expect("lock_course should succeed once all guards pass");
     // Type is NavigationComputer<CourseLocked>
@@ -92,11 +91,11 @@ fn lock_course_requires_event_and_transition_guards() {
 #[test]
 fn replot_requires_transition_guard() {
     let _guard = NAV_TEST_LOCK.lock().unwrap();
-    NavigationComputer::<Idle>::set_captain_on_bridge(true);
-    NavigationComputer::<Idle>::set_solution_valid(true);
-    NavigationComputer::<Idle>::set_diagnostics_passing(false);
+    NavigationComputer::<(), Idle>::set_captain_on_bridge(true);
+    NavigationComputer::<(), Idle>::set_solution_valid(true);
+    NavigationComputer::<(), Idle>::set_diagnostics_passing(false);
 
-    let nav = NavigationComputer::new();
+    let nav = NavigationComputer::new(());
     let nav = nav.plot_course().expect("plotting should start from Idle");
     let nav = nav
         .lock_course()
@@ -110,7 +109,7 @@ fn replot_requires_transition_guard() {
     assert_eq!(guard_err.guard, "diagnostics_passing");
     assert_eq!(guard_err.event, "request_replot");
 
-    NavigationComputer::<Idle>::set_diagnostics_passing(true);
+    NavigationComputer::<(), Idle>::set_diagnostics_passing(true);
     let nav = nav
         .request_replot()
         .expect("replot should succeed when diagnostics pass");

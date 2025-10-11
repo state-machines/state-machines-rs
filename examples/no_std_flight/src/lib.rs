@@ -5,17 +5,18 @@ use state_machines::state_machine;
 
 #[derive(Default, Debug)]
 pub struct Checklist {
+    #[allow(dead_code)]
     armed: bool,
 }
 
 #[derive(Default, Debug)]
 pub struct EnginesReady {
+    #[allow(dead_code)]
     thrust_percentage: u8,
 }
 
 state_machine! {
     name: FlightController,
-    state: FlightState,
     initial: Idle,
     states: [
         Idle,
@@ -44,14 +45,14 @@ state_machine! {
 
 static POWER_FLAG: AtomicBool = AtomicBool::new(false);
 
-impl<S> FlightController<S> {
+impl<C, S> FlightController<C, S> {
     /// Pretend to flip a hardware latch that enables power for pre-flight checks.
     pub fn connect_power_supply(&self) {
         POWER_FLAG.store(true, Ordering::Relaxed);
     }
 
     /// Guard used by the `arm` event.
-    fn power_is_present(&self) -> bool {
+    fn power_is_present(&self, _ctx: &C) -> bool {
         POWER_FLAG.load(Ordering::Relaxed)
     }
 }
@@ -79,8 +80,8 @@ impl<S> FlightController<S> {
 //
 // Example usage with typestate:
 //
-//   let controller = FlightController::new();  // Type: FlightController<Idle>
+//   let controller = FlightController::new(());  // Type: FlightController<(), Idle>
 //   controller.connect_power_supply();
-//   let controller = controller.arm().unwrap(); // Type: FlightController<ChecklistComplete>
-//   let controller = controller.verify().unwrap(); // Type: FlightController<EnginesPrimed>
-//   let controller = controller.launch().unwrap(); // Type: FlightController<Ascending>
+//   let controller = controller.arm().unwrap(); // Type: FlightController<(), ChecklistComplete>
+//   let controller = controller.verify().unwrap(); // Type: FlightController<(), EnginesPrimed>
+//   let controller = controller.launch().unwrap(); // Type: FlightController<(), Ascending>

@@ -15,7 +15,6 @@ static AFTER_CALLED_WITH: AtomicU8 = AtomicU8::new(0);
 
 state_machine! {
     name: ThrusterController,
-    state: ThrusterState,
     initial: Idle,
     states: [Idle, Firing, Cooling],
     events {
@@ -32,8 +31,8 @@ state_machine! {
     }
 }
 
-impl<S> ThrusterController<S> {
-    fn fuel_ready(&self, request: &BurnRequest) -> bool {
+impl<C, S> ThrusterController<C, S> {
+    fn fuel_ready(&self, _ctx: &C, request: &BurnRequest) -> bool {
         GUARD_INSPECTED_POWER.store(request.power, Ordering::SeqCst);
         FUEL_AVAILABLE.load(Ordering::SeqCst) && request.power <= 5
     }
@@ -54,7 +53,7 @@ fn sync_payload_event_runs_guards_and_callbacks() {
     BEFORE_CALLED_WITH.store(0, Ordering::SeqCst);
     AFTER_CALLED_WITH.store(0, Ordering::SeqCst);
 
-    let controller = ThrusterController::new();
+    let controller = ThrusterController::new(());
     let request = BurnRequest { power: 6 };
 
     let err = controller
@@ -70,8 +69,8 @@ fn sync_payload_event_runs_guards_and_callbacks() {
 
     FUEL_AVAILABLE.store(true, Ordering::SeqCst);
     let request = BurnRequest { power: 3 };
-    let controller = controller
-        .fire(request.clone())
+    let _controller = controller
+        .fire(request)
         .expect("payload guard should now pass");
     // Type is ThrusterController<Firing>
     assert_eq!(BEFORE_CALLED_WITH.load(Ordering::SeqCst), 3);
@@ -89,7 +88,7 @@ static ASYNC_AFTER_CALLED: AtomicBool = AtomicBool::new(false);
 
 state_machine! {
     name: CargoBayController,
-    state: CargoState,
+
     initial: Awaiting,
     async: true,
     states: [Awaiting, Dispatching, Delivered],
@@ -107,8 +106,8 @@ state_machine! {
     }
 }
 
-impl<S> CargoBayController<S> {
-    async fn route_clear(&self, cargo: &Cargo) -> bool {
+impl<C, S> CargoBayController<C, S> {
+    async fn route_clear(&self, _ctx: &C, cargo: &Cargo) -> bool {
         ROUTE_CLEAR.load(Ordering::SeqCst) && cargo.weight <= 4
     }
 
@@ -128,7 +127,7 @@ fn async_payload_event_obeys_guards() {
     ASYNC_AFTER_CALLED.store(false, Ordering::SeqCst);
 
     block_on(async {
-        let controller = CargoBayController::new();
+        let controller = CargoBayController::new(());
         let cargo = Cargo { weight: 5 };
         let err = controller
             .dispatch(cargo.clone())
@@ -141,8 +140,8 @@ fn async_payload_event_obeys_guards() {
 
         ROUTE_CLEAR.store(true, Ordering::SeqCst);
         let cargo = Cargo { weight: 3 };
-        let controller = controller
-            .dispatch(cargo.clone())
+        let _controller = controller
+            .dispatch(cargo)
             .await
             .expect("dispatch should succeed once guard passes");
         // Type is CargoBayController<Dispatching>

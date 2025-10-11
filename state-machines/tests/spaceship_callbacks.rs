@@ -7,7 +7,6 @@ static AFTER_OPEN_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 state_machine! {
     name: ShuttleBayController,
-    state: BayStatus,
     initial: Standby,
     states: [Standby, Cycling, Open, Locked],
     events {
@@ -25,7 +24,7 @@ state_machine! {
     }
 }
 
-impl<S> ShuttleBayController<S> {
+impl<C, S> ShuttleBayController<C, S> {
     fn audit_before_cycle(&self) {
         BEFORE_CYCLE_COUNT.fetch_add(1, Ordering::SeqCst);
     }
@@ -40,7 +39,7 @@ fn callbacks_fire_on_events() {
     BEFORE_CYCLE_COUNT.store(0, Ordering::SeqCst);
     AFTER_OPEN_COUNT.store(0, Ordering::SeqCst);
 
-    let controller = ShuttleBayController::new();
+    let controller = ShuttleBayController::new(());
     let controller = controller.cycle().expect("cycle should succeed");
     assert_eq!(BEFORE_CYCLE_COUNT.load(Ordering::SeqCst), 1);
     assert_eq!(AFTER_OPEN_COUNT.load(Ordering::SeqCst), 0);

@@ -18,6 +18,8 @@ use syn::{Ident, Type};
 pub struct StateMachine {
     pub name: Ident,
     pub initial: Ident,
+    #[allow(dead_code)]
+    pub context: Option<Type>,
     pub states: Vec<Ident>,
     pub state_storage: Vec<StateStorageSpec>,
     pub hierarchy: Hierarchy,
@@ -55,6 +57,7 @@ impl TransitionGraph {
     }
 
     /// Add a transition edge to the graph.
+    #[allow(clippy::too_many_arguments)]
     pub fn add_edge(
         &mut self,
         source: &Ident,
