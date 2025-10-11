@@ -25,6 +25,7 @@ pub struct StateMachine {
     pub hierarchy: Hierarchy,
     pub events: Vec<Event>,
     pub async_mode: bool,
+    pub dynamic_mode: bool,
     pub transition_graph: TransitionGraph,
 }
 

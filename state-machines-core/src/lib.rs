@@ -94,6 +94,61 @@ impl GuardError {
     }
 }
 
+/// Error returned when dynamic dispatch fails.
+///
+/// This error type is used by the dynamic mode wrapper when runtime
+/// event dispatch encounters errors like invalid transitions or guard failures.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DynamicError {
+    /// Attempted to trigger an event that's not valid from the current state.
+    InvalidTransition {
+        from: &'static str,
+        event: &'static str,
+    },
+    /// A guard callback failed during the transition.
+    GuardFailed {
+        guard: &'static str,
+        event: &'static str,
+    },
+    /// An action callback failed during the transition.
+    ActionFailed {
+        action: &'static str,
+        event: &'static str,
+    },
+}
+
+impl DynamicError {
+    pub fn invalid_transition(from: &'static str, event: &'static str) -> Self {
+        Self::InvalidTransition { from, event }
+    }
+
+    pub fn guard_failed(guard: &'static str, event: &'static str) -> Self {
+        Self::GuardFailed { guard, event }
+    }
+
+    pub fn action_failed(action: &'static str, event: &'static str) -> Self {
+        Self::ActionFailed { action, event }
+    }
+
+    /// Convert from GuardError to DynamicError.
+    pub fn from_guard_error(err: GuardError) -> Self {
+        match err.kind {
+            TransitionErrorKind::GuardFailed { guard } => Self::GuardFailed {
+                guard,
+                event: err.event,
+            },
+            TransitionErrorKind::ActionFailed { action } => Self::ActionFailed {
+                action,
+                event: err.event,
+            },
+            TransitionErrorKind::InvalidTransition => Self::InvalidTransition {
+                from: "",
+                event: err.event,
+            },
+        }
+    }
+}
+
 pub trait Machine {
     type State: MachineState;
 

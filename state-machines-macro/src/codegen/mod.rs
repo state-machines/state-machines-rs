@@ -1,24 +1,40 @@
 //! Code generation for the state machine macro.
 //!
-//! Now uses typestate pattern exclusively for compile-time type safety.
+//! Supports both typestate pattern (compile-time safety) and dynamic dispatch
+//! (runtime flexibility). Dynamic mode is opt-in via feature flag or explicit config.
 
+pub mod dynamic;
 pub mod typestate;
 
 use crate::types::*;
 use proc_macro2::TokenStream as TokenStream2;
+use quote::quote;
 use syn::Result;
 
 impl StateMachine {
     /// Generate the complete state machine code.
     ///
-    /// Now uses typestate pattern exclusively for compile-time type safety.
-    /// Each state becomes a distinct type, and transitions consume the machine.
-    ///
-    /// This is the Rust way - impossible states become unrepresentable!
+    /// Generates typestate pattern for compile-time type safety.
+    /// Optionally also generates dynamic dispatch wrapper when:
+    /// - The `dynamic` feature flag is enabled, OR
+    /// - The macro explicitly specifies `dynamic: true`
     pub fn expand(&self) -> Result<TokenStream2> {
         self.validate()?;
 
-        // Generate typestate-based machine
-        typestate::generate_typestate_machine(self)
+        // Always generate typestate-based machine
+        let typestate_code = typestate::generate_typestate_machine(self)?;
+
+        // Conditionally generate dynamic dispatch wrapper
+        let should_generate_dynamic = self.dynamic_mode || cfg!(feature = "dynamic");
+
+        if should_generate_dynamic {
+            let dynamic_code = dynamic::generate_dynamic_wrapper(self)?;
+            Ok(quote! {
+                #typestate_code
+                #dynamic_code
+            })
+        } else {
+            Ok(typestate_code)
+        }
     }
 }

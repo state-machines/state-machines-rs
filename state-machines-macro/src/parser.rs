@@ -13,8 +13,9 @@ use proc_macro2::Span;
 use quote::format_ident;
 use std::collections::HashSet;
 use syn::{
-    Ident, Result, Token, braced, bracketed, parenthesized,
+    braced, bracketed, parenthesized,
     parse::{Parse, ParseBuffer, ParseStream},
+    Ident, Result, Token,
 };
 
 /// Implementation of syn::Parse for StateMachine.
@@ -30,6 +31,7 @@ impl Parse for StateMachine {
         let mut states = None;
         let mut events = None;
         let mut async_mode = false;
+        let mut dynamic_mode = false;
         let mut state_storage = Vec::new();
         let mut hierarchy = Hierarchy::default();
 
@@ -46,6 +48,11 @@ impl Parse for StateMachine {
                 let key_str = key.to_string();
 
                 match key_str.as_str() {
+                    "dynamic" => {
+                        input.parse::<Token![:]>()?;
+                        let value: syn::LitBool = input.parse()?;
+                        dynamic_mode = value.value();
+                    }
                     "name" => {
                         input.parse::<Token![:]>()?;
                         name = Some(input.parse()?);
@@ -114,6 +121,7 @@ impl Parse for StateMachine {
             hierarchy,
             events: events.unwrap_or_default(),
             async_mode,
+            dynamic_mode,
             transition_graph: TransitionGraph::default(),
         };
 

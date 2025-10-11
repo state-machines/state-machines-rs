@@ -1,15 +1,15 @@
 #![no_std]
 #![allow(clippy::needless_doctest_main)]
-#![doc = include_str!("../README.md")]
+#![doc = include_str!("../../README.md")]
 
 pub mod core {
     pub use state_machines_core::*;
 }
 
 pub use state_machines_core::{
-    AroundOutcome, AroundStage, EventDefinition, Machine, MachineDefinition, MachineState,
-    SubstateOf, SuperstateDefinition, TransitionContext, TransitionDefinition, TransitionError,
-    TransitionErrorKind, TransitionResult,
+    AroundOutcome, AroundStage, DynamicError, EventDefinition, Machine, MachineDefinition,
+    MachineState, SubstateOf, SuperstateDefinition, TransitionContext, TransitionDefinition,
+    TransitionError, TransitionErrorKind, TransitionResult,
 };
 pub use state_machines_macro::state_machine;
 

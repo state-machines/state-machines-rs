@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use pollster::block_on;
 use state_machines::state_machine;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct BurnRequest {
     power: u8,
 }
@@ -77,7 +77,7 @@ fn sync_payload_event_runs_guards_and_callbacks() {
     assert_eq!(AFTER_CALLED_WITH.load(Ordering::SeqCst), 3);
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct Cargo {
     weight: u8,
 }

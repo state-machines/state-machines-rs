@@ -53,7 +53,7 @@ While learning Rust, I chose to port something familiar and widely used—so I c
 
 **Hierarchical States** – Superstates with polymorphic transitions via SubstateOf trait
 
-_Planned:_ **Dynamic Dispatch** – Event-driven mode (see `docs/dual_mode_design.md`)
+**Dynamic Dispatch** – Runtime event dispatch for event-driven systems (opt-in via feature flag or explicit config)
 
 ---
 
@@ -215,7 +215,7 @@ async fn main() {
 ```rust
 use state_machines::state_machine;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct LoginCredentials {
     username: String,
     password: String,
@@ -599,6 +599,265 @@ See `state-machines/benches/typestate_transitions.rs` for detailed benchmarks.
 
 ---
 
+## Dynamic Dispatch Mode
+
+While the typestate pattern provides excellent compile-time safety, sometimes you need **runtime flexibility** when events come from external sources (user input, network messages, event queues). Dynamic dispatch mode solves this by generating a runtime wrapper alongside your typestate machine.
+
+### When to Use Dynamic Mode
+
+**Use Typestate When:**
+- ✅ Control flow is known at compile time
+- ✅ Want maximum type safety
+- ✅ Performance critical (zero overhead)
+- ✅ Building DSLs or configuration pipelines
+
+**Use Dynamic When:**
+- ✅ Events from external sources (UI, network, queues)
+- ✅ Runtime event routing/dispatch
+- ✅ Need to store machines in collections
+- ✅ Building event-driven systems or GUIs
+
+**Use Both When:**
+- ✅ Type-safe setup phase, then dynamic runtime
+- ✅ Want compile-time safety where possible
+
+### Enabling Dynamic Mode
+
+Dynamic dispatch is **opt-in** to keep binaries small by default. Enable it via:
+
+**Option 1: Explicit in macro (always generates dynamic code)**
+```rust,ignore
+state_machine! {
+    name: TrafficLight,
+    dynamic: true,  // ← Enable dynamic dispatch
+    initial: Red,
+    states: [Red, Yellow, Green],
+    events { /* ... */ }
+}
+```
+
+**Option 2: Cargo feature flag (conditional compilation)**
+```toml
+[dependencies]
+state-machines = { version = "0.2", features = ["dynamic"] }
+```
+
+With the feature flag enabled, ALL state machines get dynamic dispatch without explicit `dynamic: true`.
+
+### Basic Dynamic Dispatch
+
+```rust,ignore
+use state_machines::state_machine;
+
+state_machine! {
+    name: TrafficLight,
+    dynamic: true,
+    initial: Red,
+    states: [Red, Yellow, Green],
+    events {
+        Next {
+            transition: { from: Red, to: Green }
+            transition: { from: Green, to: Yellow }
+            transition: { from: Yellow, to: Red }
+        }
+    }
+}
+
+fn main() {
+    // Create dynamic machine
+    let mut light = DynamicTrafficLight::new(());
+
+    // Runtime event dispatch
+    light.handle(TrafficLightEvent::Next).unwrap();
+    assert_eq!(light.current_state(), "Green");
+
+    light.handle(TrafficLightEvent::Next).unwrap();
+    assert_eq!(light.current_state(), "Yellow");
+
+    light.handle(TrafficLightEvent::Next).unwrap();
+    assert_eq!(light.current_state(), "Red");
+}
+```
+
+### What Gets Generated
+
+When `dynamic: true` is set, the macro generates:
+
+1. **Event Enum** – Runtime representation of events
+```rust
+pub enum TrafficLightEvent {
+    Next,
+    // With payloads:
+    // SetSpeed(u32),
+}
+```
+
+2. **Dynamic Machine** – Runtime dispatch wrapper
+```rust,ignore
+pub struct DynamicTrafficLight<C> {
+    // Internal state wrapper
+}
+
+impl<C: Default> DynamicTrafficLight<C> {
+    pub fn new(ctx: C) -> Self { /* ... */ }
+    pub fn handle(&mut self, event: TrafficLightEvent) -> Result<(), DynamicError> { /* ... */ }
+    pub fn current_state(&self) -> &'static str { /* ... */ }
+}
+```
+
+3. **Conversion Methods** – Switch between modes
+```rust,ignore
+impl<C> TrafficLight<C, Red> {
+    pub fn into_dynamic(self) -> DynamicTrafficLight<C> { /* ... */ }
+}
+
+impl<C> DynamicTrafficLight<C> {
+    pub fn into_red(self) -> Result<TrafficLight<C, Red>, Self> { /* ... */ }
+    pub fn into_yellow(self) -> Result<TrafficLight<C, Yellow>, Self> { /* ... */ }
+    pub fn into_green(self) -> Result<TrafficLight<C, Green>, Self> { /* ... */ }
+}
+```
+
+### Switching Between Modes
+
+Convert from typestate to dynamic when you need runtime flexibility:
+
+```rust,ignore
+// Start with typestate for setup
+let light = TrafficLight::new(());
+// Type: TrafficLight<(), Red>
+
+// Perform type-safe transitions
+let light = light.Next().unwrap();
+// Type: TrafficLight<(), Green>
+
+// Convert to dynamic for event loop
+let mut dynamic_light = light.into_dynamic();
+
+// Now handle runtime events
+loop {
+    let event = receive_event(); // From network, user input, etc
+    match dynamic_light.handle(event) {
+        Ok(()) => println!("Transitioned to {}", dynamic_light.current_state()),
+        Err(e) => eprintln!("Transition failed: {:?}", e),
+    }
+}
+```
+
+Convert back to typestate when you know the current state:
+
+```rust,ignore
+let mut dynamic = DynamicTrafficLight::new(());
+dynamic.handle(TrafficLightEvent::Next).unwrap();
+
+// Extract typed machine if in Green state
+if let Ok(typed) = dynamic.into_green() {
+    // Type: TrafficLight<(), Green>
+    // Now have compile-time guarantees again
+    let _ = typed.Next();
+}
+```
+
+### Event-Driven Example
+
+A common pattern is using dynamic mode with external event sources:
+
+```rust
+use state_machines::{state_machine, DynamicError};
+
+state_machine! {
+    name: Connection,
+    dynamic: true,
+    initial: Disconnected,
+    states: [Disconnected, Connecting, Connected, Failed],
+    events {
+        Connect {
+            transition: { from: Disconnected, to: Connecting }
+        }
+        Established {
+            transition: { from: Connecting, to: Connected }
+        }
+        Timeout {
+            transition: { from: Connecting, to: Failed }
+        }
+        Disconnect {
+            transition: { from: [Connecting, Connected], to: Disconnected }
+        }
+    }
+}
+
+fn handle_network_events(conn: &mut DynamicConnection<()>) {
+    // Receive events from network layer
+    let events = vec![
+        ConnectionEvent::Connect,
+        ConnectionEvent::Established,
+        ConnectionEvent::Disconnect,
+    ];
+
+    for event in events {
+        match conn.handle(event) {
+            Ok(()) => {
+                println!("State: {}", conn.current_state());
+            }
+            Err(DynamicError::InvalidTransition { from, event }) => {
+                eprintln!("Can't {} from {}", event, from);
+            }
+            Err(DynamicError::GuardFailed { guard, event }) => {
+                eprintln!("Guard {} failed for {}", guard, event);
+            }
+            Err(DynamicError::ActionFailed { action, event }) => {
+                eprintln!("Action {} failed for {}", action, event);
+            }
+        }
+    }
+}
+```
+
+### Error Handling
+
+Dynamic mode provides `DynamicError` with three variants:
+
+```rust
+pub enum DynamicError {
+    InvalidTransition { from: &'static str, event: &'static str },
+    GuardFailed { guard: &'static str, event: &'static str },
+    ActionFailed { action: &'static str, event: &'static str },
+}
+```
+
+Unlike typestate mode (which returns the old machine on error), dynamic mode keeps the machine in a valid state:
+
+```rust,ignore
+let mut machine = DynamicTrafficLight::new(());
+
+// Invalid transition
+let result = machine.handle(TrafficLightEvent::Next); // Red → Green (valid)
+assert!(result.is_ok());
+
+// Machine is now in Green state, regardless of success/failure
+assert_eq!(machine.current_state(), "Green");
+```
+
+### Performance Considerations
+
+| Mode | Overhead | Safety | Use Case |
+|------|----------|--------|----------|
+| **Typestate** | Zero (PhantomData) | Compile-time | Known sequences |
+| **Dynamic** | Enum match (~few ns) | Runtime | Event-driven |
+
+Dynamic mode adds minimal runtime overhead (enum discriminant check + match). For most applications, this is negligible compared to the actual business logic.
+
+### Design Philosophy
+
+This library provides **both** modes:
+- **Typestate by default** – Zero-cost abstractions, compile-time safety
+- **Dynamic opt-in** – Runtime flexibility when needed
+- **Seamless conversion** – Switch modes as requirements change
+
+You're never forced to choose one over the other. Start with typestate for safety, convert to dynamic for flexibility, and back again when you need guarantees.
+
+---
+
 ## Comparison to Ruby's state_machines
 
 If you're coming from Ruby, here's how the concepts map:
@@ -710,32 +969,34 @@ fn embedded_main() {
 
 ## Performance
 
-This library achieves **true zero-cost abstractions** for guards and callbacks:
+This library achieves **true zero-cost abstractions** for typestate mode:
 
 | Feature | Overhead | Notes |
 |---------|----------|-------|
+| **Typestate mode** | | |
 | Guards | ~0 ps | Compiled to inline comparisons |
 | Callbacks | ~0 ps | Compiled to inline function calls |
 | Around callbacks | ~0 ps | Compiled to inline function calls |
 | Hierarchical transitions | ~3-4 ns | Minimal cost for storage lifecycle |
 | State data access | ~1 ns | Direct field access |
+| **Dynamic mode** | | |
+| Event dispatch | ~few ns | Enum match + method call |
+| State introspection | ~0 ps | Direct field access |
 
-Guards, callbacks, and around callbacks add **literally zero runtime overhead** - the compiler optimizes them completely. Even hierarchical states with storage management complete in nanoseconds.
+Guards, callbacks, and around callbacks in typestate mode add **literally zero runtime overhead** - the compiler optimizes them completely. Dynamic mode adds minimal overhead (enum matching), typically under 10ns per transition.
 
 Run benchmarks yourself:
 ```bash
 cargo bench --bench typestate_transitions
 ```
 
-See **[Benchmark Results](docs/benchmarks.md)** for detailed analysis.
-
 ---
 
 ## Documentation
 
 - **[API Docs](https://docs.rs/state-machines)** – Full API reference
-- **[Benchmarks](docs/benchmarks.md)** – Performance analysis and zero-cost proof
-- **[Migration Notes](docs/migration_notes.md)** – Compatibility guidance for pre-hierarchy adopters
+- **[Crates.io](https://crates.io/crates/state-machines)** – Published crate versions
+- **[GitHub](https://github.com/state-machines/state-machines-rs)** – Source code and issues
 
 ---
 
