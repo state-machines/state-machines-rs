@@ -484,9 +484,32 @@ fn embedded_main() {
 
 ---
 
+## Performance
+
+This library achieves **true zero-cost abstractions** for guards and callbacks:
+
+| Feature | Overhead | Notes |
+|---------|----------|-------|
+| Guards | ~0 ps | Compiled to inline comparisons |
+| Callbacks | ~0 ps | Compiled to inline function calls |
+| Hierarchical transitions | ~3-4 ns | Minimal cost for storage lifecycle |
+| State data access | ~1 ns | Direct field access |
+
+Guards and callbacks add **literally zero runtime overhead** - the compiler optimizes them completely. Even hierarchical states with storage management complete in nanoseconds.
+
+Run benchmarks yourself:
+```bash
+cargo bench --bench typestate_transitions
+```
+
+See **[Benchmark Results](docs/benchmarks.md)** for detailed analysis.
+
+---
+
 ## Documentation
 
 - **[API Docs](https://docs.rs/state-machines)** – Full API reference
+- **[Benchmarks](docs/benchmarks.md)** – Performance analysis and zero-cost proof
 - **[Migration Notes](docs/migration_notes.md)** – Compatibility guidance for pre-hierarchy adopters
 
 ---

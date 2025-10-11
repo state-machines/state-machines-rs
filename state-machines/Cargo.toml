@@ -19,6 +19,11 @@ state-machines-macro = { version = "0.1.1", path = "../state-machines-macro" }
 
 [dev-dependencies]
 pollster = "0.4"
+criterion = "0.5"
+
+[[bench]]
+name = "typestate_transitions"
+harness = false
 
 [features]
 default = []
