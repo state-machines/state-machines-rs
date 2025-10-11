@@ -10,8 +10,8 @@ homepage = "https://github.com/state-machines/state-machines-rs"
 documentation = "https://docs.rs/state-machines"
 keywords = ["state-machine", "fsm", "async", "no-std", "embedded"]
 categories = ["rust-patterns", "asynchronous", "embedded", "no-std"]
-readme = "../README.md"
-include = ["src/**/*", "tests/**/*", "benches/**/*", "Cargo.toml", "../README.md", "LICENSE-MIT", "LICENSE-APACHE"]
+readme = "README.md"
+include = ["src/**/*", "tests/**/*", "benches/**/*", "Cargo.toml", "README.md", "LICENSE-MIT", "LICENSE-APACHE"]
 
 [dependencies]
 state-machines-core = { version = "0.3.0", path = "../state-machines-core" }
