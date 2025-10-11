@@ -49,7 +49,7 @@ While learning Rust, I chose to port something familiar and widely used—so I c
 
 ✅ **Type-safe** – Invalid transitions become compile errors, not runtime errors
 
-🚧 **Hierarchical States** – Planned for future release
+✅ **Hierarchical States** – Superstates with polymorphic transitions via SubstateOf trait
 
 🚧 **Around Callbacks** – Planned for future release
 
@@ -248,6 +248,130 @@ fn main() {
     // Type is AuthSession<LoggedIn>
 }
 ```
+
+### Hierarchical States (Superstates)
+
+Group related states into superstates for polymorphic transitions and cleaner state organization:
+
+```rust
+use state_machines::state_machine;
+
+#[derive(Default, Debug, Clone)]
+struct PrepData {
+    checklist_complete: bool,
+}
+
+#[derive(Default, Debug, Clone)]
+struct LaunchData {
+    engines_ignited: bool,
+}
+
+state_machine! {
+    name: LaunchSequence,
+
+    initial: Standby,
+    states: [
+        Standby,
+        superstate Flight {
+            state LaunchPrep(PrepData),
+            state Launching(LaunchData),
+        },
+        InOrbit,
+    ],
+    events {
+        enter_flight {
+            transition: { from: Standby, to: Flight }
+        }
+        ignite {
+            transition: { from: Standby, to: LaunchPrep }
+        }
+        cycle_engines {
+            transition: { from: LaunchPrep, to: Launching }
+        }
+        ascend {
+            transition: { from: Flight, to: InOrbit }
+        }
+        abort {
+            transition: { from: Flight, to: Standby }
+        }
+    }
+}
+
+fn main() {
+    // Start in Standby
+    let sequence = LaunchSequence::new(());
+
+    // Transition to Flight superstate resolves to initial child (LaunchPrep)
+    let sequence = sequence.enter_flight().unwrap();
+
+    // Access state-specific data (guaranteed non-None)
+    let prep_data = sequence.launch_prep_data();
+    println!("Checklist complete: {}", prep_data.checklist_complete);
+
+    // Move to Launching within Flight superstate
+    let sequence = sequence.cycle_engines().unwrap();
+
+    // abort() is defined on Flight, but works from ANY substate
+    let sequence = sequence.abort().unwrap();
+    // Type: LaunchSequence<C, Standby>
+
+    // Go directly to LaunchPrep (bypassing superstate entry)
+    let sequence = sequence.ignite().unwrap();
+    // Type: LaunchSequence<C, LaunchPrep>
+
+    // abort() STILL works - polymorphic transition!
+    let _sequence = sequence.abort().unwrap();
+}
+```
+
+**Key Features:**
+
+- **Polymorphic Transitions**: Define transitions `from: Flight` that work from ANY substate (LaunchPrep, Launching)
+- **Automatic Resolution**: `to: Flight` transitions resolve to the superstate's initial child state
+- **State Data Storage**: Each state with data gets guaranteed accessors like `launch_prep_data()` and `launching_data()`
+- **SubstateOf Trait**: Generated trait implementations enable compile-time polymorphism
+- **Storage Lifecycle**: State data is automatically initialized on entry, cleared on exit
+
+**Under the Hood:**
+
+The macro generates:
+
+```rust,ignore
+// Marker trait for polymorphism
+impl SubstateOf<Flight> for LaunchPrep {}
+impl SubstateOf<Flight> for Launching {}
+
+// Polymorphic transition implementation
+impl<C, S: SubstateOf<Flight>> LaunchSequence<C, S> {
+    pub fn abort(self) -> Result<LaunchSequence<C, Standby>, ...> {
+        // Works from ANY state where S implements SubstateOf<Flight>
+    }
+}
+
+// State-specific data accessors (no Option wrapper!)
+impl<C> LaunchSequence<C, LaunchPrep> {
+    pub fn launch_prep_data(&self) -> &PrepData { ... }
+    pub fn launch_prep_data_mut(&mut self) -> &mut PrepData { ... }
+}
+```
+
+**Ruby Comparison:**
+
+Ruby's `state_machines` doesn't have formal superstate support in this way. The closest equivalent would be using state predicates:
+
+```ruby
+# Ruby approach
+def in_flight?
+  [:launch_prep, :launching].include?(state)
+end
+
+# Rust: Compile-time polymorphism via trait bounds
+impl<C, S: SubstateOf<Flight>> LaunchSequence<C, S> {
+  pub fn abort(self) -> ... { }
+}
+```
+
+Rust's typestate pattern makes this compile-time safe with zero runtime overhead.
 
 ---
 
