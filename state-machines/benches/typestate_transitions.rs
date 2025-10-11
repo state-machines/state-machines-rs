@@ -1,3 +1,6 @@
+#![allow(non_camel_case_types)]
+#![allow(non_snake_case)]
+
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use state_machines::{
     core::{AroundOutcome, AroundStage},

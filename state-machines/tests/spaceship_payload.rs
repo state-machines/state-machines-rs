@@ -1,3 +1,7 @@
+#![allow(non_camel_case_types)]
+#![allow(non_snake_case)]
+#![allow(private_interfaces)]
+
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use pollster::block_on;
