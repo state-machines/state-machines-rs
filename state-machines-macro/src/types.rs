@@ -4,29 +4,25 @@
 //! state machines during macro expansion, including:
 //! - StateMachine: The root struct representing the entire machine
 //! - Event and Transition: Event definitions and their transitions
-//! - Callbacks: Global callback configurations
+//! - Callbacks: Global callback configurations (legacy, not used in typestate)
 //! - Hierarchy: Superstate tracking and resolution
 //! - Storage specifications for state-associated data
 
-use proc_macro2::TokenStream as TokenStream2;
 use std::collections::HashMap;
 use syn::{Ident, Type};
 
 /// The main state machine definition parsed from the macro input.
 ///
 /// Contains all the information needed to generate the state machine code,
-/// including states, events, transitions, callbacks, and hierarchy information.
+/// including states, events, transitions, and hierarchy information.
 pub struct StateMachine {
     pub name: Ident,
-    pub state: Ident,
     pub initial: Ident,
     pub states: Vec<Ident>,
     pub state_storage: Vec<StateStorageSpec>,
     pub hierarchy: Hierarchy,
     pub events: Vec<Event>,
     pub async_mode: bool,
-    pub action: Option<Ident>,
-    pub callbacks: Callbacks,
     pub transition_graph: TransitionGraph,
 }
 
@@ -53,6 +49,7 @@ pub struct TransitionEdge {
 }
 
 impl TransitionGraph {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self::default()
     }
@@ -119,23 +116,17 @@ pub struct Transition {
     pub after: Vec<Ident>,
 }
 
-/// Global callback configurations.
-///
-/// These callbacks apply to all transitions based on filters (from/to/on).
-/// Unlike event-level callbacks, these can be conditionally applied.
+/// Global callback configurations (legacy, not used in typestate).
 #[derive(Default)]
+#[allow(dead_code)]
 pub struct Callbacks {
     pub before: Vec<TransitionCallback>,
     pub after: Vec<TransitionCallback>,
     pub around: Vec<TransitionCallback>,
 }
 
-/// A global callback with optional filtering conditions.
-///
-/// Can specify:
-/// - from: Only trigger when transitioning from these states
-/// - to: Only trigger when transitioning to these states
-/// - on: Only trigger on these events
+/// A global callback with optional filtering conditions (legacy).
+#[allow(dead_code)]
 pub struct TransitionCallback {
     pub name: Ident,
     pub from: Vec<Ident>,
@@ -143,24 +134,13 @@ pub struct TransitionCallback {
     pub on: Vec<Ident>,
 }
 
-/// The generated token streams for an event's methods.
-///
-/// Contains both the event method (e.g., `activate()`) and
-/// the corresponding can method (e.g., `can_activate()`).
-pub struct EventTokens {
-    pub event_method: TokenStream2,
-    pub can_method: TokenStream2,
-}
-
 /// Specification for state-associated storage.
 ///
 /// When a state has associated data (e.g., `Active(ConnectionData)`),
 /// this describes how to store and manage that data in the machine struct.
 pub struct StateStorageSpec {
-    pub owner: Ident,
     pub field: Ident,
     pub ty: Type,
-    pub is_superstate: bool,
 }
 
 /// Information about a superstate.
@@ -168,8 +148,8 @@ pub struct StateStorageSpec {
 /// Superstates are composite states that contain multiple leaf states.
 /// They enable hierarchical state machines.
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct SuperstateInfo {
-    pub name: Ident,
     pub descendants: Vec<Ident>,
     pub initial: Ident,
 }
@@ -195,7 +175,6 @@ impl Hierarchy {
         self.lookup.insert(lookup_key.clone(), descendants.clone());
         self.initial_children.insert(lookup_key, initial.clone());
         self.superstates.push(SuperstateInfo {
-            name,
             descendants,
             initial,
         });

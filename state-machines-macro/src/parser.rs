@@ -25,13 +25,10 @@ impl Parse for StateMachine {
     fn parse(input: ParseStream<'_>) -> Result<Self> {
         // Initialize all fields with defaults or None
         let mut name = None;
-        let mut state = None;
         let mut initial = None;
         let mut states = None;
         let mut events = None;
         let mut async_mode = false;
-        let mut action = None;
-        let mut callbacks = Callbacks::default();
         let mut state_storage = Vec::new();
         let mut hierarchy = Hierarchy::default();
 
@@ -52,17 +49,9 @@ impl Parse for StateMachine {
                         input.parse::<Token![:]>()?;
                         name = Some(input.parse()?);
                     }
-                    "state" => {
-                        input.parse::<Token![:]>()?;
-                        state = Some(input.parse()?);
-                    }
                     "initial" => {
                         input.parse::<Token![:]>()?;
                         initial = Some(input.parse()?);
-                    }
-                    "action" => {
-                        input.parse::<Token![:]>()?;
-                        action = Some(input.parse()?);
                     }
                     "states" => {
                         input.parse::<Token![:]>()?;
@@ -82,14 +71,16 @@ impl Parse for StateMachine {
                         braced!(content in input);
                         events = Some(parse_events(&content)?);
                     }
-                    "callbacks" => {
-                        // Optional colon for backwards compatibility
-                        if input.peek(Token![:]) {
-                            input.parse::<Token![:]>()?;
+                    // Legacy fields - parse but ignore
+                    "state" | "action" | "callbacks" => {
+                        input.parse::<Token![:]>()?;
+                        if input.peek(syn::token::Brace) {
+                            let _content;
+                            braced!(_content in input);
+                            // Consume but ignore
+                        } else {
+                            let _: Ident = input.parse()?;
                         }
-                        let content;
-                        braced!(content in input);
-                        callbacks = parse_callbacks(&content)?;
                     }
                     other => {
                         return Err(syn::Error::new(
@@ -109,8 +100,6 @@ impl Parse for StateMachine {
         // Build the StateMachine, returning errors for missing required fields
         let mut machine = Self {
             name: name.ok_or_else(|| syn::Error::new(Span::call_site(), "missing `name` field"))?,
-            state: state
-                .ok_or_else(|| syn::Error::new(Span::call_site(), "missing `state` field"))?,
             initial: initial
                 .ok_or_else(|| syn::Error::new(Span::call_site(), "missing `initial` field"))?,
             states: states
@@ -119,8 +108,6 @@ impl Parse for StateMachine {
             hierarchy,
             events: events.unwrap_or_default(),
             async_mode,
-            action,
-            callbacks,
             transition_graph: TransitionGraph::default(),
         };
 
@@ -165,12 +152,7 @@ pub fn parse_states_section(input: &ParseBuffer<'_>) -> Result<ParsedStates> {
             // If the superstate has data, create a storage spec for it
             if let Some(ty) = superstate_ty.clone() {
                 let field = storage_field_ident(&superstate_name);
-                storage_specs.push(StateStorageSpec {
-                    owner: superstate_name.clone(),
-                    field,
-                    ty,
-                    is_superstate: true,
-                });
+                storage_specs.push(StateStorageSpec { field, ty });
             }
 
             // Parse the superstate's contents
@@ -215,12 +197,7 @@ pub fn parse_states_section(input: &ParseBuffer<'_>) -> Result<ParsedStates> {
             // If the state has data, create a storage spec for it
             if let Some(ty) = data_ty {
                 let field = storage_field_ident(&state_ident);
-                storage_specs.push(StateStorageSpec {
-                    owner: state_ident,
-                    field,
-                    ty,
-                    is_superstate: false,
-                });
+                storage_specs.push(StateStorageSpec { field, ty });
             }
         }
 
@@ -292,12 +269,7 @@ pub fn parse_superstate_block(
                 // If the state has data, create a storage spec for it
                 if let Some(ty) = data_ty {
                     let field = storage_field_ident(&state_ident);
-                    storage.push(StateStorageSpec {
-                        owner: state_ident,
-                        field,
-                        ty,
-                        is_superstate: false,
-                    });
+                    storage.push(StateStorageSpec { field, ty });
                 }
             }
             "superstate" => {
@@ -316,12 +288,7 @@ pub fn parse_superstate_block(
                 // If the superstate has data, create a storage spec for it
                 if let Some(ty) = super_data_ty.clone() {
                     let field = storage_field_ident(&nested_name);
-                    storage.push(StateStorageSpec {
-                        owner: nested_name.clone(),
-                        field,
-                        ty,
-                        is_superstate: true,
-                    });
+                    storage.push(StateStorageSpec { field, ty });
                 }
 
                 // Parse the nested superstate's contents
@@ -557,6 +524,7 @@ pub fn parse_transition(input: &ParseBuffer<'_>) -> Result<Transition> {
 /// - before_transition: Runs before any transition
 /// - after_transition: Runs after any transition
 /// - around_transition: Wraps transitions with before/after hooks
+#[allow(dead_code)]
 pub fn parse_callbacks(input: &ParseBuffer<'_>) -> Result<Callbacks> {
     let mut callbacks = Callbacks::default();
 
@@ -601,6 +569,7 @@ pub fn parse_callbacks(input: &ParseBuffer<'_>) -> Result<Callbacks> {
 ///
 /// Each callback is a block like:
 /// `{ name: log_transition, from: [StateA, StateB], to: StateC, on: event_name }`
+#[allow(dead_code)]
 pub fn parse_callback_list(input: &ParseBuffer<'_>) -> Result<Vec<TransitionCallback>> {
     let mut callbacks = Vec::new();
 
@@ -621,6 +590,7 @@ pub fn parse_callback_list(input: &ParseBuffer<'_>) -> Result<Vec<TransitionCall
 /// Parse a single callback definition.
 ///
 /// Must have a name, and can optionally filter by from/to/on.
+#[allow(dead_code)]
 pub fn parse_callback(input: &ParseBuffer<'_>) -> Result<TransitionCallback> {
     let mut name = None;
     let mut from = Vec::new();

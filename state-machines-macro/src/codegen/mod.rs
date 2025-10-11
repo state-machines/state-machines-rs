@@ -1,15 +1,7 @@
 //! Code generation for the state machine macro.
 //!
 //! Now uses typestate pattern exclusively for compile-time type safety.
-//! The code is split across smaller modules:
-//! - `callbacks`: filtering logic for global callbacks (legacy, may be removed)
-//! - `event`: event method generation (legacy, may be removed)
-//! - `storage`: helpers for state data storage handling (legacy, may be removed)
-//! - `typestate`: typestate pattern code generation (ACTIVE)
 
-mod callbacks;
-mod event;
-mod storage;
 pub mod typestate;
 
 use crate::types::*;
