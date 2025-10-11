@@ -13,8 +13,9 @@ use proc_macro2::Span;
 use quote::format_ident;
 use std::collections::HashSet;
 use syn::{
-    Ident, Result, Token, braced, bracketed, parenthesized,
+    braced, bracketed, parenthesized,
     parse::{Parse, ParseBuffer, ParseStream},
+    Ident, Result, Token,
 };
 
 /// Implementation of syn::Parse for StateMachine.
@@ -389,12 +390,6 @@ pub fn parse_superstate_block(
     })
 }
 
-/// Parse the events section.
-///
-/// Each event has:
-/// - A name
-/// - One or more transitions
-/// - Optional guards, callbacks, and payload type
 pub fn parse_events(input: &ParseBuffer<'_>) -> Result<Vec<Event>> {
     let mut events = Vec::new();
 
@@ -408,6 +403,7 @@ pub fn parse_events(input: &ParseBuffer<'_>) -> Result<Vec<Event>> {
         let mut unless = Vec::new();
         let mut before = Vec::new();
         let mut after = Vec::new();
+        let mut around = Vec::new();
         let mut payload = None;
 
         // Parse each field in the event block
@@ -438,6 +434,10 @@ pub fn parse_events(input: &ParseBuffer<'_>) -> Result<Vec<Event>> {
                     content.parse::<Token![:]>()?;
                     after = parse_ident_list_value(&content)?;
                 }
+                "around" => {
+                    content.parse::<Token![:]>()?;
+                    around = parse_ident_list_value(&content)?;
+                }
                 "payload" => {
                     content.parse::<Token![:]>()?;
                     payload = Some(content.parse()?);
@@ -464,6 +464,7 @@ pub fn parse_events(input: &ParseBuffer<'_>) -> Result<Vec<Event>> {
             unless,
             before,
             after,
+            around,
         });
 
         // Optional trailing comma
@@ -475,13 +476,6 @@ pub fn parse_events(input: &ParseBuffer<'_>) -> Result<Vec<Event>> {
     Ok(events)
 }
 
-/// Parse a single transition block.
-///
-/// A transition must have:
-/// - from: One or more source states
-/// - to: A target state
-///
-/// And can optionally have guards and callbacks.
 pub fn parse_transition(input: &ParseBuffer<'_>) -> Result<Transition> {
     let mut sources = None;
     let mut target = None;
@@ -489,6 +483,7 @@ pub fn parse_transition(input: &ParseBuffer<'_>) -> Result<Transition> {
     let mut unless = Vec::new();
     let mut before = Vec::new();
     let mut after = Vec::new();
+    let mut around = Vec::new();
 
     while !input.is_empty() {
         let key: Ident = input.parse()?;
@@ -514,6 +509,9 @@ pub fn parse_transition(input: &ParseBuffer<'_>) -> Result<Transition> {
             "after" => {
                 after = parse_ident_list_value(input)?;
             }
+            "around" => {
+                around = parse_ident_list_value(input)?;
+            }
             other => {
                 return Err(syn::Error::new(
                     key.span(),
@@ -537,6 +535,7 @@ pub fn parse_transition(input: &ParseBuffer<'_>) -> Result<Transition> {
         unless,
         before,
         after,
+        around,
     })
 }
 
@@ -764,6 +763,9 @@ impl StateMachine {
                         let mut all_after = event.after.clone();
                         all_after.extend(transition.after.clone());
 
+                        let mut all_around = event.around.clone();
+                        all_around.extend(transition.around.clone());
+
                         self.transition_graph.add_edge(
                             &actual_source,
                             resolved_target.clone(),
@@ -772,6 +774,7 @@ impl StateMachine {
                             all_unless,
                             all_before,
                             all_after,
+                            all_around,
                             event.payload.clone(),
                         );
                     }

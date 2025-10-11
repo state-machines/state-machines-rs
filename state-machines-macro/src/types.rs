@@ -47,6 +47,7 @@ pub struct TransitionEdge {
     pub unless: Vec<Ident>,
     pub before: Vec<Ident>,
     pub after: Vec<Ident>,
+    pub around: Vec<Ident>,
     pub payload: Option<Type>,
 }
 
@@ -67,6 +68,7 @@ impl TransitionGraph {
         unless: Vec<Ident>,
         before: Vec<Ident>,
         after: Vec<Ident>,
+        around: Vec<Ident>,
         payload: Option<Type>,
     ) {
         self.edges
@@ -79,6 +81,7 @@ impl TransitionGraph {
                 unless,
                 before,
                 after,
+                around,
                 payload,
             });
     }
@@ -95,6 +98,7 @@ impl TransitionGraph {
 /// - Multiple transitions (from different source states to different targets)
 /// - Guards that must pass before any transition can occur
 /// - Before/after callbacks that run around transitions
+/// - Around callbacks that wrap the entire transition
 /// - An optional payload type for passing data
 pub struct Event {
     pub name: Ident,
@@ -104,6 +108,7 @@ pub struct Event {
     pub unless: Vec<Ident>,
     pub before: Vec<Ident>,
     pub after: Vec<Ident>,
+    pub around: Vec<Ident>,
 }
 
 /// A single transition within an event.
@@ -117,6 +122,7 @@ pub struct Transition {
     pub unless: Vec<Ident>,
     pub before: Vec<Ident>,
     pub after: Vec<Ident>,
+    pub around: Vec<Ident>,
 }
 
 /// Global callback configurations (legacy, not used in typestate).

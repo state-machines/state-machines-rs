@@ -132,6 +132,7 @@ where
     pub unless: &'static [&'static str],
     pub before: &'static [&'static str],
     pub after: &'static [&'static str],
+    pub around: &'static [&'static str],
 }
 
 #[derive(Debug, Clone)]
@@ -143,6 +144,7 @@ where
     pub guards: &'static [&'static str],
     pub before: &'static [&'static str],
     pub after: &'static [&'static str],
+    pub around: &'static [&'static str],
     pub payload: Option<&'static str>,
     pub transitions: &'static [TransitionDefinition<S>],
 }
