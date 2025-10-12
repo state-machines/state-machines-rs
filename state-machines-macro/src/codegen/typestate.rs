@@ -712,7 +712,7 @@ fn generate_state_specific_accessors(machine: &StateMachine) -> Result<Vec<Token
 
         // Generate method names from state name: LaunchPrep -> launch_prep_data
         let state_str = state_name.to_string();
-        let snake = crate::parser::to_snake_case(&state_str);
+        let snake = crate::codegen::utils::to_snake_case(&state_str);
         let data_method = syn::Ident::new(&format!("{}_data", snake), state_name.span());
         let data_mut_method = syn::Ident::new(&format!("{}_data_mut", snake), state_name.span());
 

@@ -5,7 +5,7 @@
 //! - The `dynamic` feature flag is enabled, OR
 //! - The macro explicitly specifies `dynamic: true`
 
-use crate::codegen::utils::{to_snake_case, to_snake_case_ident};
+use crate::codegen::utils::{to_pascal_case, to_snake_case, to_snake_case_ident};
 use crate::types::*;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
@@ -46,20 +46,6 @@ pub fn generate_dynamic_wrapper(machine: &StateMachine) -> Result<TokenStream2> 
 fn generate_event_enum(machine: &StateMachine) -> Result<TokenStream2> {
     let machine_name = &machine.name;
     let event_name = quote::format_ident!("{}Event", machine_name);
-
-    // Convert snake_case event names to PascalCase for enum variants
-    // Example: next → Next, enter_half_open → EnterHalfOpen
-    let to_pascal_case = |s: &str| -> String {
-        s.split('_')
-            .map(|word| {
-                let mut chars = word.chars();
-                match chars.next() {
-                    None => String::new(),
-                    Some(first) => first.to_uppercase().chain(chars).collect(),
-                }
-            })
-            .collect()
-    };
 
     let enum_variants = machine.events.iter().map(|event| {
         let pascal_name =

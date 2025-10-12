@@ -10,6 +10,7 @@
 //! - All referenced states exist
 //! - Superstates that are used as targets have initial states
 
+use crate::codegen::utils::to_snake_case;
 use crate::types::*;
 use std::collections::HashSet;
 use syn::Result;
@@ -50,38 +51,6 @@ fn is_snake_case(s: &str) -> bool {
     }
 
     true
-}
-
-/// Convert any casing to snake_case for error messages.
-fn to_snake_case(s: &str) -> String {
-    let mut result = String::new();
-    let chars: Vec<char> = s.chars().collect();
-
-    for (i, &ch) in chars.iter().enumerate() {
-        if ch.is_uppercase() {
-            let prev_is_lowercase = i > 0 && chars.get(i - 1).is_some_and(|c| c.is_lowercase());
-            let next_is_lowercase = chars.get(i + 1).is_some_and(|c| c.is_lowercase());
-
-            // Add underscore before uppercase if:
-            // 1. Not at start
-            // 2. Previous was lowercase (camelCase boundary)
-            // 3. In middle of acronym with lowercase following
-            if i > 0 && (prev_is_lowercase || next_is_lowercase) {
-                let prev_is_upper = i > 0 && chars.get(i - 1).is_some_and(|c| c.is_uppercase());
-                if !prev_is_upper || next_is_lowercase {
-                    result.push('_');
-                }
-            }
-
-            for lower in ch.to_lowercase() {
-                result.push(lower);
-            }
-        } else {
-            result.push(ch);
-        }
-    }
-
-    result
 }
 
 impl StateMachine {

@@ -71,6 +71,26 @@ pub fn to_snake_case_ident_with_span(s: &str, span: Span) -> Ident {
     Ident::new(&snake, span)
 }
 
+/// Convert snake_case to PascalCase.
+///
+/// Examples:
+/// - `next` → `Next`
+/// - `enter_half_open` → `EnterHalfOpen`
+/// - `set_threshold` → `SetThreshold`
+///
+/// This is used to generate PascalCase enum variants from snake_case event names.
+pub fn to_pascal_case(s: &str) -> String {
+    s.split('_')
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(first) => first.to_uppercase().chain(chars).collect(),
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -98,5 +118,16 @@ mod tests {
         let pascal = Ident::new("EnterHalfOpen", Span::call_site());
         let snake = to_snake_case_ident(&pascal);
         assert_eq!(snake.to_string(), "enter_half_open");
+    }
+
+    #[test]
+    fn test_to_pascal_case() {
+        assert_eq!(to_pascal_case("next"), "Next");
+        assert_eq!(to_pascal_case("enter_half_open"), "EnterHalfOpen");
+        assert_eq!(to_pascal_case("set_threshold"), "SetThreshold");
+        assert_eq!(to_pascal_case("http_request"), "HttpRequest");
+        assert_eq!(to_pascal_case("send_http_request"), "SendHttpRequest");
+        assert_eq!(to_pascal_case("a"), "A");
+        assert_eq!(to_pascal_case("abc"), "Abc");
     }
 }

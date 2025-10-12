@@ -1,6 +1,6 @@
 [package]
 name = "state-machines"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 authors = ["Abdelkader Boudih <terminale@gmail.com>"]
 description = "Type-safe state machines with hierarchical states, guards, callbacks, and async support - Rust port of Ruby's state_machines gem"
@@ -14,8 +14,8 @@ readme = "README.md"
 include = ["src/**/*", "tests/**/*", "benches/**/*", "Cargo.toml", "README.md", "LICENSE-MIT", "LICENSE-APACHE"]
 
 [dependencies]
-state-machines-core = { version = "0.4.0", path = "../state-machines-core" }
-state-machines-macro = { version = "0.4.0", path = "../state-machines-macro" }
+state-machines-core = { version = "0.4.1", path = "../state-machines-core" }
+state-machines-macro = { version = "0.4.1", path = "../state-machines-macro" }
 
 [dev-dependencies]
 pollster = "0.4"

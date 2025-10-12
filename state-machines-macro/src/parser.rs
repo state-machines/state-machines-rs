@@ -714,29 +714,8 @@ pub fn parse_ident_list_value(input: &ParseBuffer<'_>) -> Result<Vec<Ident>> {
 /// Converts a state name like `ConnectionActive` to a field name
 /// like `__state_data_connection_active`.
 pub fn storage_field_ident(name: &Ident) -> Ident {
-    let snake = to_snake_case(&name.to_string());
+    let snake = crate::codegen::utils::to_snake_case(&name.to_string());
     format_ident!("__state_data_{}", snake)
-}
-
-/// Convert a string from PascalCase to snake_case.
-///
-/// Used for generating field names from state names.
-/// Example: "ConnectionActive" -> "connection_active"
-pub fn to_snake_case(input: &str) -> String {
-    let mut result = String::new();
-    for (i, ch) in input.chars().enumerate() {
-        if ch.is_uppercase() {
-            if i != 0 {
-                result.push('_');
-            }
-            for lower in ch.to_lowercase() {
-                result.push(lower);
-            }
-        } else {
-            result.push(ch);
-        }
-    }
-    result
 }
 
 impl StateMachine {

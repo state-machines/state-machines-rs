@@ -1005,14 +1005,6 @@ cargo bench --bench typestate_transitions
 
 ---
 
-## Migration Notes (High Level)
-
-- Existing flat machines continue to compile unchanged; the macro infers leaf states exactly as before.
-- New superstate syntax only adds enum variants—no generated method signatures were removed.
-- Enable the `std` feature (default) if you rely on `std` types in guards/actions; disable it for embedded builds.
-
----
-
 ## Contributing
 
 Contributions are welcome! This is a learning project, so:
