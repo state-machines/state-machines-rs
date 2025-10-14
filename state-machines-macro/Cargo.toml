@@ -1,6 +1,6 @@
 [package]
 name = "state-machines-macro"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2024"
 authors = ["Abdelkader Boudih <terminale@gmail.com>"]
 description = "Procedural macros for the state-machines library"
@@ -19,7 +19,7 @@ proc-macro = true
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full"] }
-state-machines-core = { version = "0.4.1", path = "../state-machines-core" }
+state-machines-core = { version = "0.5.0", path = "../state-machines-core" }
 
 [features]
 default = []

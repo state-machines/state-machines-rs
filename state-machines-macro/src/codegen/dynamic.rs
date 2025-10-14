@@ -100,9 +100,25 @@ fn generate_any_state_enum(machine: &StateMachine) -> Result<TokenStream2> {
     let any_state_name = quote::format_ident!("Any{}State", machine_name);
 
     // Generate enum variants for each state
-    let variants = machine.states.iter().map(|state| {
-        quote! { #state(#machine_name<C, #state>) }
-    });
+    let variants = if machine.context.is_some() {
+        // Concrete context: Machine<S> only
+        machine
+            .states
+            .iter()
+            .map(|state| {
+                quote! { #state(#machine_name<#state>) }
+            })
+            .collect::<Vec<_>>()
+    } else {
+        // Generic context: Machine<C, S>
+        machine
+            .states
+            .iter()
+            .map(|state| {
+                quote! { #state(#machine_name<C, #state>) }
+            })
+            .collect::<Vec<_>>()
+    };
 
     // Generate match arms for the name() method
     let name_arms = machine.states.iter().map(|state| {
@@ -110,17 +126,26 @@ fn generate_any_state_enum(machine: &StateMachine) -> Result<TokenStream2> {
         quote! { Self::#state(_) => #state_str }
     });
 
+    // Determine enum generics
+    let (enum_generics, impl_generics) = if machine.context.is_some() {
+        // Concrete context: no generics
+        (quote! {}, quote! {})
+    } else {
+        // Generic context
+        (quote! { <C> }, quote! { <C> })
+    };
+
     Ok(quote! {
         /// Internal enum wrapping all typed state machines.
         ///
         /// This enables runtime polymorphism over different states while
         /// preserving the compile-time safety of the typestate pattern.
         #[derive(Debug)]
-        enum #any_state_name<C> {
+        enum #any_state_name #enum_generics {
             #(#variants,)*
         }
 
-        impl<C> #any_state_name<C> {
+        impl #impl_generics #any_state_name #enum_generics {
             /// Get the name of the current state.
             fn name(&self) -> &'static str {
                 match self {
@@ -265,6 +290,39 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
         quote! { pub fn handle(&mut self, event: #event_name) -> Result<(), state_machines::DynamicError> }
     };
 
+    // Determine struct and impl generics based on context
+    let (struct_generics, impl_generics, ctx_param_ty, any_state_generics) =
+        if let Some(concrete_ctx) = &machine.context {
+            // Concrete context: no generics, specific context type
+            (quote! {}, quote! {}, quote! { #concrete_ctx }, quote! {})
+        } else {
+            // Generic context
+            (quote! { <C> }, quote! { <C> }, quote! { C }, quote! { <C> })
+        };
+
+    // Default impl only for generic context with Default bound, or concrete context with Default
+    let default_impl = if machine.context.is_some() {
+        // Concrete context: only generate Default impl if the concrete type has Default
+        // We can't check that at macro time, so we conditionally generate with where clause
+        let concrete_ctx = machine.context.as_ref().unwrap();
+        quote! {
+            impl Default for #dynamic_name where #concrete_ctx: ::core::default::Default {
+                fn default() -> Self {
+                    Self::new(<#concrete_ctx as ::core::default::Default>::default())
+                }
+            }
+        }
+    } else {
+        // Generic context: use C: Default bound
+        quote! {
+            impl<C: ::core::default::Default> Default for #dynamic_name<C> {
+                fn default() -> Self {
+                    Self::new(C::default())
+                }
+            }
+        }
+    };
+
     Ok(quote! {
         /// Dynamic wrapper for runtime event dispatch.
         ///
@@ -272,13 +330,13 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
         /// for dispatching events at runtime. Use this when events come from external
         /// sources and can't be determined at compile time.
         #[derive(Debug)]
-        pub struct #dynamic_name<C> {
-            inner: ::core::option::Option<#any_state_name<C>>,
+        pub struct #dynamic_name #struct_generics {
+            inner: ::core::option::Option<#any_state_name #any_state_generics>,
         }
 
-        impl<C> #dynamic_name<C> {
+        impl #impl_generics #dynamic_name #struct_generics {
             /// Create a new dynamic machine in the initial state.
-            pub fn new(ctx: C) -> Self {
+            pub fn new(ctx: #ctx_param_ty) -> Self {
                 Self {
                     inner: ::core::option::Option::Some(#any_state_name::#initial_state(#machine_name::new(ctx))),
                 }
@@ -311,11 +369,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
             }
         }
 
-        impl<C: Default> Default for #dynamic_name<C> {
-            fn default() -> Self {
-                Self::new(C::default())
-            }
-        }
+        #default_impl
     })
 }
 
@@ -337,47 +391,110 @@ fn generate_conversions(machine: &StateMachine) -> Result<TokenStream2> {
     let dynamic_name = quote::format_ident!("Dynamic{}", machine_name);
     let any_state_name = quote::format_ident!("Any{}State", machine_name);
 
+    // Determine context type for conversions
+    let (impl_generics, dynamic_generics) = if machine.context.is_some() {
+        // Concrete context
+        (quote! {}, quote! {})
+    } else {
+        // Generic context
+        (quote! { <C> }, quote! { <C> })
+    };
+
     // Generate into_dynamic() methods for each state
-    let into_dynamic_methods = machine.states.iter().map(|state| {
-        quote! {
-            impl<C> #machine_name<C, #state> {
-                /// Convert this typestate machine into a dynamic wrapper.
-                ///
-                /// This allows runtime event dispatch at the cost of losing
-                /// compile-time guarantees about state transitions.
-                pub fn into_dynamic(self) -> #dynamic_name<C> {
-                    #dynamic_name {
-                        inner: ::core::option::Option::Some(#any_state_name::#state(self)),
+    let into_dynamic_methods =
+        if machine.context.is_some() {
+            // Concrete context: Machine<S>
+            machine.states.iter().map(|state| {
+            quote! {
+                impl #machine_name<#state> {
+                    /// Convert this typestate machine into a dynamic wrapper.
+                    ///
+                    /// This allows runtime event dispatch at the cost of losing
+                    /// compile-time guarantees about state transitions.
+                    pub fn into_dynamic(self) -> #dynamic_name {
+                        #dynamic_name {
+                            inner: ::core::option::Option::Some(#any_state_name::#state(self)),
+                        }
                     }
                 }
             }
-        }
-    });
+        }).collect::<Vec<_>>()
+        } else {
+            // Generic context: Machine<C, S>
+            machine.states.iter().map(|state| {
+            quote! {
+                impl<C> #machine_name<C, #state> {
+                    /// Convert this typestate machine into a dynamic wrapper.
+                    ///
+                    /// This allows runtime event dispatch at the cost of losing
+                    /// compile-time guarantees about state transitions.
+                    pub fn into_dynamic(self) -> #dynamic_name<C> {
+                        #dynamic_name {
+                            inner: ::core::option::Option::Some(#any_state_name::#state(self)),
+                        }
+                    }
+                }
+            }
+        }).collect::<Vec<_>>()
+        };
 
     // Generate into_{state}() methods for extracting typed machines
-    let extract_methods = machine.states.iter().map(|state| {
-        let method_name = quote::format_ident!("into_{}", to_snake_case(&state.to_string()));
-        quote! {
-            /// Try to extract a typestate machine in the `#state` state.
-            ///
-            /// Returns `Ok` if the machine is currently in this state,
-            /// otherwise returns `Err(self)` so you can try another state.
-            pub fn #method_name(mut self) -> Result<#machine_name<C, #state>, Self> {
-                match self.inner.take() {
-                    ::core::option::Option::Some(#any_state_name::#state(m)) => Ok(m),
-                    other => {
-                        self.inner = other;
-                        Err(self)
+    let extract_methods = if machine.context.is_some() {
+        // Concrete context: Machine<S>
+        machine
+            .states
+            .iter()
+            .map(|state| {
+                let method_name =
+                    quote::format_ident!("into_{}", to_snake_case(&state.to_string()));
+                quote! {
+                    /// Try to extract a typestate machine in the `#state` state.
+                    ///
+                    /// Returns `Ok` if the machine is currently in this state,
+                    /// otherwise returns `Err(self)` so you can try another state.
+                    pub fn #method_name(mut self) -> Result<#machine_name<#state>, Self> {
+                        match self.inner.take() {
+                            ::core::option::Option::Some(#any_state_name::#state(m)) => Ok(m),
+                            other => {
+                                self.inner = other;
+                                Err(self)
+                            }
+                        }
                     }
                 }
-            }
-        }
-    });
+            })
+            .collect::<Vec<_>>()
+    } else {
+        // Generic context: Machine<C, S>
+        machine
+            .states
+            .iter()
+            .map(|state| {
+                let method_name =
+                    quote::format_ident!("into_{}", to_snake_case(&state.to_string()));
+                quote! {
+                    /// Try to extract a typestate machine in the `#state` state.
+                    ///
+                    /// Returns `Ok` if the machine is currently in this state,
+                    /// otherwise returns `Err(self)` so you can try another state.
+                    pub fn #method_name(mut self) -> Result<#machine_name<C, #state>, Self> {
+                        match self.inner.take() {
+                            ::core::option::Option::Some(#any_state_name::#state(m)) => Ok(m),
+                            other => {
+                                self.inner = other;
+                                Err(self)
+                            }
+                        }
+                    }
+                }
+            })
+            .collect::<Vec<_>>()
+    };
 
     Ok(quote! {
         #(#into_dynamic_methods)*
 
-        impl<C> #dynamic_name<C> {
+        impl #impl_generics #dynamic_name #dynamic_generics {
             #(#extract_methods)*
         }
     })

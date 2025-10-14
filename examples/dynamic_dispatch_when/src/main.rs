@@ -105,11 +105,12 @@
 //! - Convert to dynamic for command loop (unknown sequence)
 //! - Extract back to typestate for shutdown (safety critical)
 
-use state_machines::{state_machine, DynamicError};
+use state_machines::{DynamicError, state_machine};
 
 /// Command source identifier
 #[derive(Debug, Clone)]
-enum CommandSource {
+#[allow(dead_code)]
+pub enum CommandSource {
     MissionControl,
     Pilot,
     Autopilot,
@@ -117,8 +118,10 @@ enum CommandSource {
 
 /// Command payload
 #[derive(Debug, Clone)]
-struct Command {
+pub struct Command {
+    #[allow(dead_code)]
     source: CommandSource,
+    #[allow(dead_code)]
     priority: u8,
 }
 

@@ -162,6 +162,97 @@ fn main() {
 }
 ```
 
+### Concrete Context for Embedded Systems
+
+For embedded systems or applications where the context type is known at compile time, you can specify a **concrete context type** in the macro. This allows guards and callbacks to directly access context fields without generic trait bounds.
+
+**Generic Context (Default):**
+```rust,ignore
+state_machine! {
+    name: Door,
+    // No context specified - machine is generic over C
+}
+
+impl<C, S> Door<C, S> {
+    fn guard(&self, _ctx: &C) -> bool {
+        // C is generic - can't access its fields
+        false
+    }
+}
+```
+
+**Concrete Context (Embedded-Friendly):**
+```rust
+use state_machines::state_machine;
+
+#[derive(Debug, Default)]
+struct HardwareSensors {
+    temperature_c: i16,
+    pressure_kpa: u32,
+}
+
+state_machine! {
+    name: Door,
+    context: HardwareSensors,  // ← Concrete context type
+    initial: Closed,
+    states: [Closed, Open],
+    events {
+        open {
+            guards: [safe_conditions],
+            transition: { from: Closed, to: Open }
+        }
+        close {
+            transition: { from: Open, to: Closed }
+        }
+    }
+}
+
+impl<S> Door<S> {
+    fn safe_conditions(&self, ctx: &HardwareSensors) -> bool {
+        // Direct field access!
+        ctx.temperature_c >= -40
+            && ctx.temperature_c <= 85
+            && ctx.pressure_kpa >= 95
+            && ctx.pressure_kpa <= 105
+    }
+}
+
+fn main() {
+    let sensors = HardwareSensors {
+        temperature_c: 22,
+        pressure_kpa: 101,
+    };
+
+    let door = Door::new(sensors);
+    let door = door.open().unwrap();
+    let _door = door.close().unwrap();
+}
+```
+
+**Key Differences:**
+
+| Aspect | Generic Context | Concrete Context |
+|--------|----------------|------------------|
+| **Struct signature** | `Machine<C, S>` | `Machine<S>` |
+| **Impl blocks** | `impl<C, S>` | `impl<S>` |
+| **Guard signature** | `fn(&self, &C)` | `fn(&self, &HardwareType)` |
+| **Field access** | Not possible | Direct access |
+| **Flexibility** | Works with any context | Fixed to one type |
+| **Use case** | Libraries, flexibility | Embedded, hardware |
+
+**When to Use:**
+- **Embedded systems** – Hardware types known at compile time
+- **no_std environments** – Direct hardware register access
+- **Fixed architectures** – Single deployment target
+- **Performance critical** – Compiler can optimize better
+
+**When to Avoid:**
+- **Libraries** – Users need context flexibility
+- **Multiple deployments** – Different hardware configs
+- **Generic code** – Need to work with various types
+
+See `examples/guards_and_validation` for a complete example using concrete context for spacecraft telemetry.
+
 ### Async Support
 
 The typestate pattern works seamlessly with async Rust:

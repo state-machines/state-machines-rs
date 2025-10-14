@@ -247,7 +247,10 @@ impl<C, S> DroneScout<C, S> {
         println!("[Guard] Checking for signal...");
         let strength = SignalSystem::scan_for_signal().await;
         let detected = strength >= 50; // Need at least 50 strength
-        println!("[Guard] Signal detected: {} (strength: {})", detected, strength);
+        println!(
+            "[Guard] Signal detected: {} (strength: {})",
+            detected, strength
+        );
         detected
     }
 
@@ -355,9 +358,7 @@ fn main() {
     let drone = drone.unwrap();
 
     println!("Calling drone.complete().await...\n");
-    let _drone = pollster::block_on(async {
-        drone.complete().await.unwrap()
-    });
+    let _drone = pollster::block_on(async { drone.complete().await.unwrap() });
     println!("✓ Transitioned to DataReceived\n");
 
     // Scenario 2: Weak signal - guard failure
@@ -365,9 +366,7 @@ fn main() {
     SignalSystem::set_strength(30); // Too weak!
 
     let drone = DroneScout::new(());
-    let drone = pollster::block_on(async {
-        drone.scan().await.unwrap()
-    });
+    let drone = pollster::block_on(async { drone.scan().await.unwrap() });
 
     println!("Signal strength too weak (30), attempting lock...\n");
     pollster::block_on(async {

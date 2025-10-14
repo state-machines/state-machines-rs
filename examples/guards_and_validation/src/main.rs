@@ -79,19 +79,37 @@
 //!
 //! If you need OR logic, write a single guard that does the check.
 //!
-//! ### Caveat 4: Guards Can't Access Generic Context Data
+//! ### Caveat 4: Context Flexibility - Generic vs Concrete
 //!
+//! **Option 1: Generic Context (C type parameter)**
 //! ```rust,ignore
+//! state_machine! {
+//!     name: Machine,
+//!     // No context specified = generic over C
+//! }
+//!
 //! impl<C, S> Machine<C, S> {
 //!     fn guard(&self, _ctx: &C) -> bool {
 //!         // C is generic - can't access its fields
-//!         // Use static/atomic data or callbacks for context-dependent checks
 //!     }
 //! }
 //! ```
 //!
-//! **Why:** Guards must be generic over all context types. For context-dependent
-//! validation, use static state or `before` callbacks instead.
+//! **Option 2: Concrete Context (specified type)**
+//! ```rust,ignore
+//! state_machine! {
+//!     name: Machine,
+//!     context: SpacecraftSensors,  // ← Concrete type
+//! }
+//!
+//! impl<S> Machine<S> {
+//!     fn guard(&self, ctx: &SpacecraftSensors) -> bool {
+//!         ctx.altitude_km >= 100  // ✓ Direct field access!
+//!     }
+//! }
+//! ```
+//!
+//! **This example demonstrates Option 2** - concrete context for embedded/hardware systems.
 //!
 //! ## The Flow: Cargo Bay Door Safety System
 //!
@@ -110,37 +128,44 @@
 //! - Emergency: Can override safety checks with confirmation flag
 //! - Failed guards: Machine stays in current state, returns error details
 
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use state_machines::{core::TransitionErrorKind, state_machine};
 
-/// Spacecraft telemetry data (simulated with atomic statics)
+/// Spacecraft telemetry data (concrete context type)
 ///
-/// In real spacecraft systems, these would be sensor readings.
-/// We use atomics to allow mutation in guards (which take &self).
-static ALTITUDE_KM: AtomicU32 = AtomicU32::new(0);
-static ENGINES_ACTIVE: AtomicBool = AtomicBool::new(false);
-static EMERGENCY_OVERRIDE: AtomicBool = AtomicBool::new(false);
-
-/// Helper struct to set spacecraft state
-struct SpacecraftTelemetry;
+/// In real spacecraft systems, these would be sensor readings from hardware.
+/// Using a concrete context type allows guards to directly access fields.
+#[derive(Debug, Clone, Default)]
+pub struct SpacecraftTelemetry {
+    pub altitude_km: u32,
+    pub engines_active: bool,
+    pub emergency_override: bool,
+}
 
 impl SpacecraftTelemetry {
-    fn set_altitude(km: u32) {
-        ALTITUDE_KM.store(km, Ordering::Relaxed);
+    fn new() -> Self {
+        Self::default()
     }
 
-    fn set_engines(active: bool) {
-        ENGINES_ACTIVE.store(active, Ordering::Relaxed);
+    fn with_altitude(mut self, km: u32) -> Self {
+        self.altitude_km = km;
+        self
     }
 
-    fn set_override(enabled: bool) {
-        EMERGENCY_OVERRIDE.store(enabled, Ordering::Relaxed);
+    fn with_engines(mut self, active: bool) -> Self {
+        self.engines_active = active;
+        self
+    }
+
+    fn with_override(mut self, enabled: bool) -> Self {
+        self.emergency_override = enabled;
+        self
     }
 }
 
 // Define cargo bay door state machine with safety guards
 state_machine! {
     name: CargoBay,
+    context: SpacecraftTelemetry,  // ← Concrete context type for direct field access
 
     initial: Closed,
     states: [Closed, Open],
@@ -170,46 +195,43 @@ state_machine! {
 //
 // Guards receive:
 // - &self: Reference to the machine (can access state)
-// - &C: Reference to context (generic, can't access fields)
+// - &SpacecraftTelemetry: Reference to concrete context (can access fields!)
 //
 // They must return bool:
 // - true: Transition is allowed
 // - false: Transition is blocked (machine stays in current state)
 //
-// IMPORTANT: Guards must be generic over C. To access spacecraft state,
-// we use static atomics (like real embedded systems would use hardware registers).
-impl<C, S> CargoBay<C, S> {
+// IMPORTANT: With concrete context, guards can directly access telemetry fields.
+// This is ideal for embedded systems where hardware types are known at compile time.
+impl<S> CargoBay<S> {
     /// Guard: Check if spacecraft is in stable orbit
     ///
     /// Below 100km is considered atmosphere (dangerous decompression)
-    fn in_orbit(&self, _ctx: &C) -> bool {
-        let altitude = ALTITUDE_KM.load(Ordering::Relaxed);
-        println!("  [Guard] Checking orbit altitude: {} km", altitude);
-        altitude >= 100
+    fn in_orbit(&self, ctx: &SpacecraftTelemetry) -> bool {
+        println!("  [Guard] Checking orbit altitude: {} km", ctx.altitude_km);
+        ctx.altitude_km >= 100
     }
 
     /// Guard: Check if engines are off
     ///
     /// Firing engines with cargo bay open risks debris damage
-    fn engines_off(&self, _ctx: &C) -> bool {
-        let active = ENGINES_ACTIVE.load(Ordering::Relaxed);
+    fn engines_off(&self, ctx: &SpacecraftTelemetry) -> bool {
         println!(
             "  [Guard] Checking engine status: {}",
-            if active { "active" } else { "off" }
+            if ctx.engines_active { "active" } else { "off" }
         );
-        !active
+        !ctx.engines_active
     }
 
     /// Guard: Check emergency override authorization
     ///
     /// Emergency situations may require opening bay despite safety concerns
-    fn has_override_authorization(&self, _ctx: &C) -> bool {
-        let override_enabled = EMERGENCY_OVERRIDE.load(Ordering::Relaxed);
+    fn has_override_authorization(&self, ctx: &SpacecraftTelemetry) -> bool {
         println!(
             "  [Guard] Checking override authorization: {}",
-            override_enabled
+            ctx.emergency_override
         );
-        override_enabled
+        ctx.emergency_override
     }
 }
 
@@ -218,11 +240,12 @@ fn main() {
 
     // Scenario 1: Unsafe conditions (on ground, engines off)
     println!("--- Scenario 1: Attempting to open on ground ---");
-    SpacecraftTelemetry::set_altitude(0); // On ground!
-    SpacecraftTelemetry::set_engines(false);
-    SpacecraftTelemetry::set_override(false);
+    let telemetry = SpacecraftTelemetry::new()
+        .with_altitude(0) // On ground!
+        .with_engines(false)
+        .with_override(false);
 
-    let bay = CargoBay::new(());
+    let bay = CargoBay::new(telemetry);
     let result = bay.open();
 
     match result {
@@ -232,11 +255,8 @@ fn main() {
             println!("  Failed guard: {}", err.guard);
 
             // Check the error kind
-            match err.kind {
-                TransitionErrorKind::GuardFailed { guard } => {
-                    println!("  Error type: Guard '{}' returned false", guard);
-                }
-                _ => {}
+            if let TransitionErrorKind::GuardFailed { guard } = err.kind {
+                println!("  Error type: Guard '{}' returned false", guard);
             }
 
             // IMPORTANT: We still have the machine in Closed state!
@@ -245,9 +265,12 @@ fn main() {
 
             // Scenario 2: Fix altitude, try again
             println!("--- Scenario 2: Ascending to orbit ---");
-            SpacecraftTelemetry::set_altitude(150); // Now in orbit
+            let telemetry = SpacecraftTelemetry::new()
+                .with_altitude(150) // Now in orbit
+                .with_engines(false)
+                .with_override(false);
 
-            let bay = CargoBay::new(());
+            let bay = CargoBay::new(telemetry);
             match bay.open() {
                 Ok(bay) => {
                     println!("✓ Both guards passed! Bay is now Open");
@@ -265,10 +288,12 @@ fn main() {
 
     // Scenario 3: Engines firing (unsafe even in orbit)
     println!("--- Scenario 3: Engines active (in orbit) ---");
-    SpacecraftTelemetry::set_altitude(200);
-    SpacecraftTelemetry::set_engines(true); // Unsafe!
+    let telemetry = SpacecraftTelemetry::new()
+        .with_altitude(200)
+        .with_engines(true) // Unsafe!
+        .with_override(false);
 
-    let bay = CargoBay::new(());
+    let bay = CargoBay::new(telemetry);
     match bay.open() {
         Ok(_) => println!("✗ ERROR: Should not have opened with engines firing!"),
         Err((_bay, err)) => {
@@ -277,9 +302,12 @@ fn main() {
 
             // Scenario 4: Emergency override
             println!("--- Scenario 4: Emergency override ---");
-            SpacecraftTelemetry::set_override(true);
+            let telemetry = SpacecraftTelemetry::new()
+                .with_altitude(200)
+                .with_engines(true)
+                .with_override(true);
 
-            let bay = CargoBay::new(());
+            let bay = CargoBay::new(telemetry);
             match bay.emergency_open() {
                 Ok(bay) => {
                     println!("⚠️  Emergency override successful!");
@@ -297,11 +325,12 @@ fn main() {
 
     // Scenario 5: All conditions nominal
     println!("--- Scenario 5: Nominal operations ---");
-    SpacecraftTelemetry::set_altitude(250);
-    SpacecraftTelemetry::set_engines(false);
-    SpacecraftTelemetry::set_override(false);
+    let telemetry = SpacecraftTelemetry::new()
+        .with_altitude(250)
+        .with_engines(false)
+        .with_override(false);
 
-    let bay = CargoBay::new(());
+    let bay = CargoBay::new(telemetry);
     match bay.open() {
         Ok(bay) => {
             println!("✓ All guards passed!");
