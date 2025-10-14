@@ -115,6 +115,12 @@ pub enum DynamicError {
         action: &'static str,
         event: &'static str,
     },
+    /// Attempted to access or modify state data when in wrong state.
+    WrongState {
+        expected: &'static str,
+        actual: &'static str,
+        operation: &'static str,
+    },
 }
 
 impl DynamicError {
@@ -128,6 +134,18 @@ impl DynamicError {
 
     pub fn action_failed(action: &'static str, event: &'static str) -> Self {
         Self::ActionFailed { action, event }
+    }
+
+    pub fn wrong_state(
+        expected: &'static str,
+        actual: &'static str,
+        operation: &'static str,
+    ) -> Self {
+        Self::WrongState {
+            expected,
+            actual,
+            operation,
+        }
     }
 
     /// Convert from GuardError to DynamicError.

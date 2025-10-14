@@ -156,3 +156,111 @@ fn test_guard_failure() {
     machine.handle(GuardedEvent::Proceed).unwrap();
     assert_eq!(machine.current_state(), "End");
 }
+
+// State storage test - demonstrates accessing and mutating state data
+#[derive(Debug, Clone, Default, PartialEq)]
+struct CounterData {
+    count: u32,
+}
+
+state_machine! {
+    name: Counter,
+    dynamic: true,
+    initial: Stopped,
+    states: [
+        Stopped,
+        Running(CounterData),
+    ],
+    events {
+        start {
+            transition: { from: Stopped, to: Running }
+        }
+        stop {
+            transition: { from: Running, to: Stopped }
+        }
+    }
+}
+
+#[test]
+fn test_dynamic_state_data_accessors() {
+    use state_machines::DynamicError;
+
+    let mut counter = DynamicCounter::new(());
+
+    // No data in Stopped state
+    assert!(counter.running_data().is_none());
+    assert!(counter.running_data_mut().is_none());
+
+    // Transition to Running
+    counter.handle(CounterEvent::Start).unwrap();
+    assert_eq!(counter.current_state(), "Running");
+
+    // Set data using setter
+    counter
+        .set_running_data(CounterData { count: 42 })
+        .unwrap();
+
+    // Read data
+    assert_eq!(counter.running_data().unwrap().count, 42);
+
+    // Mutate data via mutable accessor
+    counter.running_data_mut().unwrap().count += 1;
+    assert_eq!(counter.running_data().unwrap().count, 43);
+
+    // Mutate again
+    if let Some(data) = counter.running_data_mut() {
+        data.count = 100;
+    }
+    assert_eq!(counter.running_data().unwrap().count, 100);
+
+    // Transition back to Stopped
+    counter.handle(CounterEvent::Stop).unwrap();
+    assert_eq!(counter.current_state(), "Stopped");
+
+    // Data accessors return None after transition
+    assert!(counter.running_data().is_none());
+    assert!(counter.running_data_mut().is_none());
+
+    // Try to set data when in wrong state
+    let result = counter.set_running_data(CounterData { count: 99 });
+    assert!(result.is_err());
+
+    match result.unwrap_err() {
+        DynamicError::WrongState {
+            expected,
+            actual,
+            operation,
+        } => {
+            assert_eq!(expected, "Running");
+            assert_eq!(actual, "Stopped");
+            assert_eq!(operation, "set_running_data");
+        }
+        _ => panic!("Expected WrongState error"),
+    }
+}
+
+#[test]
+fn test_dynamic_state_data_with_typestate_conversion() {
+    let mut counter = DynamicCounter::new(());
+
+    // Transition and set data
+    counter.handle(CounterEvent::Start).unwrap();
+    counter
+        .set_running_data(CounterData { count: 50 })
+        .unwrap();
+
+    // Convert to typestate
+    let typed = counter.into_running().unwrap();
+
+    // Access data via typestate-specific accessor (guaranteed non-null)
+    assert_eq!(typed.running_data().count, 50);
+
+    // Convert back to dynamic
+    let mut dynamic = typed.into_dynamic();
+    assert_eq!(dynamic.current_state(), "Running");
+    assert_eq!(dynamic.running_data().unwrap().count, 50);
+
+    // Mutate via dynamic accessor
+    dynamic.running_data_mut().unwrap().count = 75;
+    assert_eq!(dynamic.running_data().unwrap().count, 75);
+}

@@ -55,6 +55,8 @@ While learning Rust, I chose to port something familiar and widely used—so I c
 
 **Dynamic Dispatch** – Runtime event dispatch for event-driven systems (opt-in via feature flag or explicit config)
 
+**State Data Accessors** – Access and mutate per-state data in dynamic mode (v0.6.0+)
+
 ---
 
 ## Quick Start
@@ -808,6 +810,9 @@ fn handle_network_events(conn: &mut DynamicConnection<()>) {
             Err(DynamicError::ActionFailed { action, event }) => {
                 eprintln!("Action {} failed for {}", action, event);
             }
+            Err(DynamicError::WrongState { expected, actual, operation }) => {
+                eprintln!("Operation {} expected state {}, but in {}", operation, expected, actual);
+            }
         }
     }
 }
@@ -820,13 +825,14 @@ fn main() {
 
 ### Error Handling
 
-Dynamic mode provides `DynamicError` with three variants:
+Dynamic mode provides `DynamicError` with four variants:
 
 ```rust
 pub enum DynamicError {
     InvalidTransition { from: &'static str, event: &'static str },
     GuardFailed { guard: &'static str, event: &'static str },
     ActionFailed { action: &'static str, event: &'static str },
+    WrongState { expected: &'static str, actual: &'static str, operation: &'static str },
 }
 ```
 
@@ -842,6 +848,138 @@ assert!(result.is_ok());
 // Machine is now in Green state, regardless of success/failure
 assert_eq!(machine.current_state(), "Green");
 ```
+
+### State Data Accessors
+
+**New in v0.6.0:** Dynamic machines can now access and mutate per-state data, enabling patterns like circuit breakers that need runtime counters and timestamps.
+
+When states have associated data (e.g., `Open(OpenData)`), the macro generates three accessor types on the dynamic wrapper:
+
+```rust,ignore
+// Read-only access (returns None if not in this state)
+pub fn open_data(&self) -> Option<&OpenData>
+
+// Mutable access for updating counters/timestamps
+pub fn open_data_mut(&mut self) -> Option<&mut OpenData>
+
+// Direct setter (returns WrongState error if not in this state)
+pub fn set_open_data(&mut self, data: OpenData) -> Result<(), DynamicError>
+```
+
+**Example: Circuit Breaker Pattern**
+
+```rust,ignore
+use std::time::Instant;
+
+#[derive(Debug, Clone)]
+struct OpenData {
+    opened_at: Instant,
+    failure_count: u32,
+}
+
+#[derive(Debug, Clone)]
+struct HalfOpenData {
+    consecutive_successes: u32,
+}
+
+state_machine! {
+    name: Circuit,
+    dynamic: true,
+    initial: Closed,
+    states: [
+        Closed,
+        Open(OpenData),
+        HalfOpen(HalfOpenData),
+    ],
+    events {
+        trip { transition: { from: Closed, to: Open } }
+        attempt_reset { transition: { from: Open, to: HalfOpen } }
+        reset { transition: { from: HalfOpen, to: Closed } }
+        fail_again { transition: { from: HalfOpen, to: Open } }
+    }
+}
+
+struct CircuitBreaker {
+    machine: DynamicCircuit,
+}
+
+impl CircuitBreaker {
+    pub fn new() -> Self {
+        Self {
+            machine: DynamicCircuit::new(()),
+        }
+    }
+
+    pub fn call(&mut self) -> Result<Response, Error> {
+        match self.machine.current_state() {
+            "Closed" => {
+                // Execute call
+                match execute_request() {
+                    Ok(resp) => Ok(resp),
+                    Err(e) => {
+                        // Trip circuit on failure
+                        self.machine.handle(CircuitEvent::Trip).unwrap();
+                        self.machine
+                            .set_open_data(OpenData {
+                                opened_at: Instant::now(),
+                                failure_count: 1,
+                            })
+                            .unwrap();
+                        Err(e)
+                    }
+                }
+            }
+            "Open" => {
+                // Check if timeout expired
+                if let Some(data) = self.machine.open_data() {
+                    if data.opened_at.elapsed() > Duration::from_secs(60) {
+                        // Try half-open
+                        self.machine.handle(CircuitEvent::AttemptReset).unwrap();
+                        self.machine
+                            .set_half_open_data(HalfOpenData {
+                                consecutive_successes: 0,
+                            })
+                            .unwrap();
+                        return self.call(); // Retry
+                    }
+                }
+                Err(Error::CircuitOpen)
+            }
+            "HalfOpen" => {
+                // Execute call, track successes
+                match execute_request() {
+                    Ok(resp) => {
+                        // Increment success counter
+                        if let Some(data) = self.machine.half_open_data_mut() {
+                            data.consecutive_successes += 1;
+
+                            // Reset after 3 successes
+                            if data.consecutive_successes >= 3 {
+                                self.machine.handle(CircuitEvent::Reset).unwrap();
+                            }
+                        }
+                        Ok(resp)
+                    }
+                    Err(e) => {
+                        // Back to Open
+                        self.machine.handle(CircuitEvent::FailAgain).unwrap();
+                        Err(e)
+                    }
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+```
+
+**Key Points:**
+
+- **Read accessors** return `Option<&T>` - None when not in that state
+- **Mutable accessors** return `Option<&mut T>` - allows in-place updates
+- **Setters** return `Result<(), DynamicError>` - errors with `WrongState` if not in target state
+- Works seamlessly with hierarchical states (substates can access parent state data)
+- Zero overhead - delegates directly to typestate machine's field access
 
 ### Performance Considerations
 

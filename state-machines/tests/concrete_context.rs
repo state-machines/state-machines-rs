@@ -120,7 +120,7 @@ fn test_concrete_context_altitude_guard() {
         // Note: We need to access internal state to modify altitude
         // In real code, you'd update the context through proper channels
         // For this test, we'll create a new machine
-        drop(spacecraft);
+        let _ = spacecraft; // Explicitly discard
     }
 
     // Create new machine with sufficient altitude

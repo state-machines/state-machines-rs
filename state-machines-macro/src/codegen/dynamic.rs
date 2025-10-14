@@ -323,6 +323,97 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
         }
     };
 
+    // Generate state data accessor methods
+    let state_data_accessors = if machine.state_storage.is_empty() {
+        quote! {}
+    } else {
+        let accessor_methods = machine.state_storage.iter().map(|spec| {
+            let state_name = &spec.state_name;
+            let data_ty = &spec.ty;
+            let field = &spec.field;
+            let state_snake = to_snake_case(&state_name.to_string());
+            let read_method = quote::format_ident!("{}_data", state_snake);
+            let write_method = quote::format_ident!("{}_data_mut", state_snake);
+            let set_method = quote::format_ident!("set_{}_data", state_snake);
+            let state_str = state_name.to_string();
+            let reachable_states = machine
+                .hierarchy
+                .expand_state(state_name, &machine.states);
+
+            if reachable_states.is_empty() {
+                quote! {}
+            } else {
+                let read_match_arms = reachable_states.iter().map(|reachable| {
+                    quote! { #any_state_name::#reachable(machine) => machine.#field.as_ref(), }
+                });
+
+                let write_match_arms = reachable_states.iter().map(|reachable| {
+                    quote! { #any_state_name::#reachable(machine) => machine.#field.as_mut(), }
+                });
+
+                let set_match_arms = reachable_states.iter().map(|reachable| {
+                    quote! {
+                        #any_state_name::#reachable(machine) => {
+                            machine.#field = ::core::option::Option::Some(data);
+                            ::core::result::Result::Ok(())
+                        }
+                    }
+                });
+
+                quote! {
+                    /// Read access to state data when in the `#state_name` state.
+                    ///
+                    /// Returns `None` if not currently in this state or if the machine
+                    /// has been extracted via `into_{state}()` methods.
+                    pub fn #read_method(&self) -> ::core::option::Option<&#data_ty> {
+                        match self.inner.as_ref()? {
+                            #(#read_match_arms)*
+                            _ => ::core::option::Option::None,
+                        }
+                    }
+
+                    /// Mutable access to state data when in the `#state_name` state.
+                    ///
+                    /// Returns `None` if not currently in this state or if the machine
+                    /// has been extracted via `into_{state}()` methods.
+                    pub fn #write_method(&mut self) -> ::core::option::Option<&mut #data_ty> {
+                        match self.inner.as_mut()? {
+                            #(#write_match_arms)*
+                            _ => ::core::option::Option::None,
+                        }
+                    }
+
+                    /// Set state data when in the `#state_name` state.
+                    ///
+                    /// Returns an error if:
+                    /// - Not currently in the `#state_name` state
+                    /// - The machine has been extracted via `into_{state}()` methods
+                    pub fn #set_method(&mut self, data: #data_ty) -> Result<(), state_machines::DynamicError> {
+                        match self.inner.as_mut() {
+                            ::core::option::Option::Some(state) => match state {
+                                #(#set_match_arms)*
+                                other => Err(state_machines::DynamicError::wrong_state(
+                                    #state_str,
+                                    other.name(),
+                                    stringify!(#set_method),
+                                )),
+                            },
+                            ::core::option::Option::None => Err(state_machines::DynamicError::wrong_state(
+                                #state_str,
+                                "<extracted>",
+                                stringify!(#set_method),
+                            )),
+                        }
+                    }
+                }
+            }
+        }).collect::<Vec<_>>();
+
+        quote! {
+            #(#accessor_methods)*
+        }
+    };
+
     Ok(quote! {
         /// Dynamic wrapper for runtime event dispatch.
         ///
@@ -367,6 +458,8 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
                     .expect("dynamic machine in invalid state")
                     .name()
             }
+
+            #state_data_accessors
         }
 
         #default_impl
