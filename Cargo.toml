@@ -4,5 +4,11 @@ members = [
     "state-machines-core",
     "state-machines-macro",
     "examples/no_std_flight",
+    "examples/basic_transitions",
+    "examples/guards_and_validation",
+    "examples/callbacks_lifecycle",
+    "examples/async_patterns",
+    "examples/hierarchical_thinking",
+    "examples/dynamic_dispatch_when",
 ]
 resolver = "2"

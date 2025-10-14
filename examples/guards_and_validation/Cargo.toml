@@ -1,0 +1,8 @@
+[package]
+name = "guards_and_validation"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+state-machines = { path = "../../state-machines" }

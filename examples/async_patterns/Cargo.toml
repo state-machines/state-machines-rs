@@ -1,0 +1,9 @@
+[package]
+name = "async_patterns"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+state-machines = { path = "../../state-machines" }
+pollster = "0.4"
