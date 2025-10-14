@@ -102,8 +102,11 @@ fn generate_state_markers(machine: &StateMachine) -> Result<TokenStream2> {
 /// Generate the generic Machine<C, S> struct.
 ///
 /// The struct is parameterized by context type `C` and state type `S`:
-/// - C: Context type for hardware access or shared state
+/// - C: Context type for hardware access or shared state (generic if not specified)
 /// - S: Current state type (typestate pattern)
+///
+/// If a concrete context type is specified in the macro, the struct will use that type directly.
+/// Otherwise, it remains generic over C for maximum flexibility.
 ///
 /// Contains:
 /// - A PhantomData marker to track the state type
@@ -112,9 +115,19 @@ fn generate_state_markers(machine: &StateMachine) -> Result<TokenStream2> {
 ///
 /// # Example Output
 ///
+/// Generic context:
 /// ```rust,ignore
 /// pub struct FlightDeck<C, S> {
 ///     ctx: C,
+///     _state: core::marker::PhantomData<S>,
+///     __docking_data: Option<DockingData>,
+/// }
+/// ```
+///
+/// Concrete context:
+/// ```rust,ignore
+/// pub struct FlightDeck<S> {
+///     ctx: MyContext,
 ///     _state: core::marker::PhantomData<S>,
 ///     __docking_data: Option<DockingData>,
 /// }
@@ -135,10 +148,19 @@ fn generate_machine_struct(machine: &StateMachine) -> Result<TokenStream2> {
         })
         .collect();
 
+    // Determine struct generics and context field type
+    let (struct_generics, ctx_ty) = if let Some(concrete_ctx) = &machine.context {
+        // Concrete context: only generic over state
+        (quote! { <S> }, quote! { #concrete_ctx })
+    } else {
+        // Generic context: generic over both context and state
+        (quote! { <C, S> }, quote! { C })
+    };
+
     Ok(quote! {
         #[derive(Debug)]
-        pub struct #machine_name<C, S> {
-            ctx: C,
+        pub struct #machine_name #struct_generics {
+            ctx: #ctx_ty,
             _state: ::core::marker::PhantomData<S>,
             #( #storage_fields, )*
         }
@@ -179,8 +201,18 @@ fn generate_state_impls(machine: &StateMachine) -> Result<Vec<TokenStream2>> {
         }
 
         let machine_name = &machine.name;
+
+        // Determine impl generics and type parameters
+        let (impl_generics, type_params) = if machine.context.is_some() {
+            // Concrete context: impl for specific state only (struct is Machine<S>)
+            (quote! {}, quote! { <#state> })
+        } else {
+            // Generic context: impl generic over C (struct is Machine<C, S>)
+            (quote! { <C> }, quote! { <C, #state> })
+        };
+
         let impl_block = quote! {
-            impl<C> #machine_name<C, #state> {
+            impl #impl_generics #machine_name #type_params {
                 #( #methods )*
             }
         };
@@ -192,8 +224,18 @@ fn generate_state_impls(machine: &StateMachine) -> Result<Vec<TokenStream2>> {
     if !machine.state_storage.is_empty() {
         let storage_accessors = generate_storage_accessors(machine)?;
         let machine_name = &machine.name;
+
+        // Determine impl generics for storage accessors
+        let (impl_generics, type_params) = if machine.context.is_some() {
+            // Concrete context: impl generic only over state (struct is Machine<S>)
+            (quote! { <S> }, quote! { <S> })
+        } else {
+            // Generic context: impl generic over both (struct is Machine<C, S>)
+            (quote! { <C, S> }, quote! { <C, S> })
+        };
+
         let generic_impl = quote! {
-            impl<C, S> #machine_name<C, S> {
+            impl #impl_generics #machine_name #type_params {
                 #( #storage_accessors )*
             }
         };
@@ -212,10 +254,26 @@ fn generate_state_impls(machine: &StateMachine) -> Result<Vec<TokenStream2>> {
 /// Creates a new machine instance in the initial state with all storage fields
 /// initialized to None. Takes a context parameter for hardware/external dependencies.
 ///
+/// The context parameter type depends on whether a concrete context was specified:
+/// - Generic context: `ctx: C`
+/// - Concrete context: `ctx: ConcreteType`
+///
 /// # Example Output
 ///
+/// Generic:
 /// ```rust,ignore
 /// pub fn new(ctx: C) -> Self {
+///     Self {
+///         ctx,
+///         _state: core::marker::PhantomData,
+///         __data_field: None,
+///     }
+/// }
+/// ```
+///
+/// Concrete:
+/// ```rust,ignore
+/// pub fn new(ctx: MyContext) -> Self {
 ///     Self {
 ///         ctx,
 ///         _state: core::marker::PhantomData,
@@ -235,8 +293,15 @@ fn generate_constructor(machine: &StateMachine, _state: &Ident) -> Result<TokenS
         })
         .collect();
 
+    // Determine context parameter type
+    let ctx_param_ty = if let Some(concrete_ctx) = &machine.context {
+        quote! { #concrete_ctx }
+    } else {
+        quote! { C }
+    };
+
     Ok(quote! {
-        pub fn new(ctx: C) -> Self {
+        pub fn new(ctx: #ctx_param_ty) -> Self {
             Self {
                 ctx,
                 _state: ::core::marker::PhantomData,
@@ -318,8 +383,17 @@ fn generate_transition_method(
         (sig, quote! {})
     };
 
-    let return_type = quote! {
-        ::core::result::Result<#machine_name<C, #target_state>, (Self, #core_path::GuardError)>
+    // Determine return type - depends on whether context is concrete or generic
+    let return_type = if machine.context.is_some() {
+        // Concrete context: struct is Machine<S>, so return Machine<TargetState>
+        quote! {
+            ::core::result::Result<#machine_name<#target_state>, (Self, #core_path::GuardError)>
+        }
+    } else {
+        // Generic context: struct is Machine<C, S>, so return Machine<C, TargetState>
+        quote! {
+            ::core::result::Result<#machine_name<C, #target_state>, (Self, #core_path::GuardError)>
+        }
     };
 
     // Build guard checks
@@ -716,9 +790,18 @@ fn generate_state_specific_accessors(machine: &StateMachine) -> Result<Vec<Token
         let data_method = syn::Ident::new(&format!("{}_data", snake), state_name.span());
         let data_mut_method = syn::Ident::new(&format!("{}_data_mut", snake), state_name.span());
 
+        // Determine impl generics and type parameters
+        let (impl_generics, type_params) = if machine.context.is_some() {
+            // Concrete context (struct is Machine<S>)
+            (quote! {}, quote! { <#state_name> })
+        } else {
+            // Generic context (struct is Machine<C, S>)
+            (quote! { <C> }, quote! { <C, #state_name> })
+        };
+
         // Generate state-specific impl block
         let impl_block = quote! {
-            impl<C> #machine_name<C, #state_name> {
+            impl #impl_generics #machine_name #type_params {
                 /// Access the state-associated data for this specific state.
                 ///
                 /// This method is guaranteed to return a reference because
@@ -794,8 +877,23 @@ fn generate_superstate_transition_impls(machine: &StateMachine) -> Result<Vec<To
                 .collect::<Result<Vec<_>>>()?;
 
             if !methods.is_empty() {
+                // Determine impl generics and type parameters for superstate transitions
+                let (impl_generics, type_params) = if machine.context.is_some() {
+                    // Concrete context (struct is Machine<S>)
+                    (
+                        quote! { <S: ::state_machines::SubstateOf<#superstate>> },
+                        quote! { <S> },
+                    )
+                } else {
+                    // Generic context (struct is Machine<C, S>)
+                    (
+                        quote! { <C, S: ::state_machines::SubstateOf<#superstate>> },
+                        quote! { <C, S> },
+                    )
+                };
+
                 let impl_block = quote! {
-                    impl<C, S: ::state_machines::SubstateOf<#superstate>> #machine_name<C, S> {
+                    impl #impl_generics #machine_name #type_params {
                         #( #methods )*
                     }
                 };
@@ -838,8 +936,17 @@ fn generate_superstate_transition_method(
         }
     };
 
-    let return_type = quote! {
-        ::core::result::Result<#machine_name<C, #target_state>, (Self, #core_path::GuardError)>
+    // Determine return type - depends on whether context is concrete or generic
+    let return_type = if machine.context.is_some() {
+        // Concrete context: struct is Machine<S>, so return Machine<TargetState>
+        quote! {
+            ::core::result::Result<#machine_name<#target_state>, (Self, #core_path::GuardError)>
+        }
+    } else {
+        // Generic context: struct is Machine<C, S>, so return Machine<C, TargetState>
+        quote! {
+            ::core::result::Result<#machine_name<C, #target_state>, (Self, #core_path::GuardError)>
+        }
     };
 
     // Build storage field transfers for target state

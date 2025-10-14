@@ -308,7 +308,7 @@ fn main() {
     println!("Current state: O2Generation");
     println!("Calling deactivate() - works because O2Generation ⊆ LifeSupport");
 
-    let system = system.deactivate().unwrap();
+    let _system = system.deactivate().unwrap();
     println!("✓ Deactivated from O2Generation → Offline");
     println!("  Power consumption: 0 kW\n");
 
@@ -324,7 +324,7 @@ fn main() {
     println!("⚠️  HULL BREACH DETECTED");
     println!("Calling emergency_shutdown()...");
 
-    let system = system.emergency_shutdown().unwrap();
+    let _system = system.emergency_shutdown().unwrap();
     println!("✓ Emergency shutdown from PressureRegulation → Offline");
     println!("  All systems safed\n");
 

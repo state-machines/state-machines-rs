@@ -362,7 +362,7 @@ fn main() {
             println!("\n[{}] ✓ Transition to Armed complete\n", timestamp());
             engine
         }
-        Err((engine, err)) => {
+        Err((_engine, err)) => {
             println!("\n✗ Transition failed: {}", err.guard);
             return;
         }
@@ -373,7 +373,7 @@ fn main() {
     println!("\n[{}] ✓ Transition to Ignited complete\n", timestamp());
 
     println!("Calling engine.throttle()...\n");
-    let engine = engine.throttle().unwrap();
+    let _engine = engine.throttle().unwrap();
     println!("\n[{}] ✓ Transition to Thrust complete\n", timestamp());
 
     // Scenario 2: Callback execution order visualization
