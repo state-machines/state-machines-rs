@@ -5,7 +5,6 @@
 //! - The main StateMachine structure (via syn::Parse trait)
 //! - States section (including nested superstates)
 //! - Events and transitions
-//! - Callbacks
 //! - Helper utilities for parsing lists and sets
 
 use crate::types::*;
@@ -13,8 +12,9 @@ use proc_macro2::Span;
 use quote::format_ident;
 use std::collections::HashSet;
 use syn::{
-    Ident, Result, Token, braced, bracketed, parenthesized,
+    braced, bracketed, parenthesized,
     parse::{Parse, ParseBuffer, ParseStream},
+    Ident, Result, Token,
 };
 
 /// Implementation of syn::Parse for StateMachine.
@@ -542,125 +542,6 @@ pub fn parse_transition(input: &ParseBuffer<'_>) -> Result<Transition> {
         before,
         after,
         around,
-    })
-}
-
-/// Parse the callbacks section.
-///
-/// Callbacks can be:
-/// - before_transition: Runs before any transition
-/// - after_transition: Runs after any transition
-/// - around_transition: Wraps transitions with before/after hooks
-#[allow(dead_code)]
-pub fn parse_callbacks(input: &ParseBuffer<'_>) -> Result<Callbacks> {
-    let mut callbacks = Callbacks::default();
-
-    while !input.is_empty() {
-        let key: Ident = input.parse()?;
-        let key_str = key.to_string();
-
-        match key_str.as_str() {
-            "before_transition" => {
-                let list_content;
-                bracketed!(list_content in input);
-                callbacks.before = parse_callback_list(&list_content)?;
-            }
-            "after_transition" => {
-                let list_content;
-                bracketed!(list_content in input);
-                callbacks.after = parse_callback_list(&list_content)?;
-            }
-            "around_transition" => {
-                let list_content;
-                bracketed!(list_content in input);
-                callbacks.around = parse_callback_list(&list_content)?;
-            }
-            other => {
-                return Err(syn::Error::new(
-                    key.span(),
-                    format!("unexpected key `{}`", other),
-                ));
-            }
-        }
-
-        // Optional trailing comma
-        if input.peek(Token![,]) {
-            input.parse::<Token![,]>()?;
-        }
-    }
-
-    Ok(callbacks)
-}
-
-/// Parse a list of callback definitions.
-///
-/// Each callback is a block like:
-/// `{ name: log_transition, from: [StateA, StateB], to: StateC, on: event_name }`
-#[allow(dead_code)]
-pub fn parse_callback_list(input: &ParseBuffer<'_>) -> Result<Vec<TransitionCallback>> {
-    let mut callbacks = Vec::new();
-
-    while !input.is_empty() {
-        let content;
-        braced!(content in input);
-        callbacks.push(parse_callback(&content)?);
-
-        // Optional trailing comma
-        if input.peek(Token![,]) {
-            input.parse::<Token![,]>()?;
-        }
-    }
-
-    Ok(callbacks)
-}
-
-/// Parse a single callback definition.
-///
-/// Must have a name, and can optionally filter by from/to/on.
-#[allow(dead_code)]
-pub fn parse_callback(input: &ParseBuffer<'_>) -> Result<TransitionCallback> {
-    let mut name = None;
-    let mut from = Vec::new();
-    let mut to = Vec::new();
-    let mut on = Vec::new();
-
-    while !input.is_empty() {
-        let key: Ident = input.parse()?;
-        let key_str = key.to_string();
-        input.parse::<Token![:]>()?;
-
-        match key_str.as_str() {
-            "name" => {
-                name = Some(input.parse()?);
-            }
-            "from" => {
-                from = parse_state_set(input)?;
-            }
-            "to" => {
-                to = parse_state_set(input)?;
-            }
-            "on" => {
-                on = parse_ident_list_value(input)?;
-            }
-            other => {
-                return Err(syn::Error::new(
-                    key.span(),
-                    format!("unexpected key `{}`", other),
-                ));
-            }
-        }
-
-        // Optional trailing comma
-        if input.peek(Token![,]) {
-            input.parse::<Token![,]>()?;
-        }
-    }
-
-    Ok(TransitionCallback {
-        name: name.ok_or_else(|| syn::Error::new(Span::call_site(), "callback missing `name`"))?,
-        from,
-        to,
-        on,
     })
 }
 

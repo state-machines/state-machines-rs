@@ -55,7 +55,7 @@ While learning Rust, I chose to port something familiar and widely used—so I c
 
 **Dynamic Dispatch** – Runtime event dispatch for event-driven systems (opt-in via feature flag or explicit config)
 
-**State Data Accessors** – Access and mutate per-state data in dynamic mode (v0.6.0+)
+**State Data Accessors** – Access and mutate per-state data in dynamic mode
 
 ---
 
@@ -851,7 +851,7 @@ assert_eq!(machine.current_state(), "Green");
 
 ### State Data Accessors
 
-**New in v0.6.0:** Dynamic machines can now access and mutate per-state data, enabling patterns like circuit breakers that need runtime counters and timestamps.
+Dynamic machines can access and mutate per-state data, enabling patterns like circuit breakers that need runtime counters and timestamps.
 
 When states have associated data (e.g., `Open(OpenData)`), the macro generates three accessor types on the dynamic wrapper:
 

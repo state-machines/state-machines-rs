@@ -4,7 +4,6 @@
 //! state machines during macro expansion, including:
 //! - StateMachine: The root struct representing the entire machine
 //! - Event and Transition: Event definitions and their transitions
-//! - Callbacks: Global callback configurations (legacy, not used in typestate)
 //! - Hierarchy: Superstate tracking and resolution
 //! - Storage specifications for state-associated data
 
@@ -53,11 +52,6 @@ pub struct TransitionEdge {
 }
 
 impl TransitionGraph {
-    #[allow(dead_code)]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Add a transition edge to the graph.
     #[allow(clippy::too_many_arguments)]
     pub fn add_edge(
@@ -124,24 +118,6 @@ pub struct Transition {
     pub before: Vec<Ident>,
     pub after: Vec<Ident>,
     pub around: Vec<Ident>,
-}
-
-/// Global callback configurations (legacy, not used in typestate).
-#[derive(Default)]
-#[allow(dead_code)]
-pub struct Callbacks {
-    pub before: Vec<TransitionCallback>,
-    pub after: Vec<TransitionCallback>,
-    pub around: Vec<TransitionCallback>,
-}
-
-/// A global callback with optional filtering conditions (legacy).
-#[allow(dead_code)]
-pub struct TransitionCallback {
-    pub name: Ident,
-    pub from: Vec<Ident>,
-    pub to: Vec<Ident>,
-    pub on: Vec<Ident>,
 }
 
 /// Specification for state-associated storage.

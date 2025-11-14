@@ -4,13 +4,13 @@
 //!
 //! At first, Rust made me believe I had superpowers. I didn't see the warnings,
 //! so I brought my Ruby `snake_case` traditions into event names.
-//! Then I published version 0.3, and Rust was like:
+//! Then I shipped an early release, and Rust was like:
 //! "Congratulations, Citizen! Now you need to follow the rules of the land."
 //!
 //! And thus, this module was born, converting between PascalCase and snake_case
 //! so both the compiler and developers can live in harmony.
 
-use proc_macro2::{Ident, Span};
+use proc_macro2::Ident;
 
 /// Convert PascalCase or camelCase to snake_case.
 ///
@@ -62,13 +62,6 @@ pub fn to_snake_case(s: &str) -> String {
 pub fn to_snake_case_ident(ident: &Ident) -> Ident {
     let snake = to_snake_case(&ident.to_string());
     Ident::new(&snake, ident.span())
-}
-
-/// Create a snake_case identifier with a custom span.
-#[allow(dead_code)]
-pub fn to_snake_case_ident_with_span(s: &str, span: Span) -> Ident {
-    let snake = to_snake_case(s);
-    Ident::new(&snake, span)
 }
 
 /// Convert snake_case to PascalCase.
