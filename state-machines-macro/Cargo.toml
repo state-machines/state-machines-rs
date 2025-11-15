@@ -1,6 +1,6 @@
 [package]
 name = "state-machines-macro"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 authors = ["Abdelkader Boudih <terminale@gmail.com>"]
 description = "Procedural macros for the state-machines library"
