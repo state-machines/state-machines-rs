@@ -1,5 +1,5 @@
 {
-  "state-machines": "0.6.0",
-  "state-machines-core": "0.6.0",
-  "state-machines-macro": "0.6.0"
+  "state-machines": "0.7.0",
+  "state-machines-core": "0.7.0",
+  "state-machines-macro": "0.7.0"
 }
