@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/state-machines/state-machines-rs/compare/state-machines-macro-v0.7.0...state-machines-macro-v0.7.1) (2025-11-15)
+
+
+### Bug Fixes
+
+* enable cargo-workspace plugin and update internal deps to 0.7.0 ([296c963](https://github.com/state-machines/state-machines-rs/commit/296c963bb826cdc1b818edd453d31758dcf7a1fc))
+
 ## [0.7.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-macro-v0.6.0...state-machines-macro-v0.7.0) (2025-11-15)
 
 
