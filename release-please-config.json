@@ -1,0 +1,16 @@
+{
+  "packages": {
+    "state-machines": {
+      "release-type": "rust",
+      "component": "state-machines"
+    },
+    "state-machines-core": {
+      "release-type": "rust",
+      "component": "state-machines-core"
+    },
+    "state-machines-macro": {
+      "release-type": "rust",
+      "component": "state-machines-macro"
+    }
+  }
+}

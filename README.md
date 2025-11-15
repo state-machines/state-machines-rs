@@ -63,7 +63,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-state-machines = "0.1"
+state-machines = "0.6"
 ```
 
 ### Basic Example
@@ -730,7 +730,7 @@ state_machine! {
 **Option 2: Cargo feature flag (conditional compilation)**
 ```toml
 [dependencies]
-state-machines = { version = "0.2", features = ["dynamic"] }
+state-machines = { version = "0.6", features = ["dynamic"] }
 ```
 
 With the feature flag enabled, ALL state machines get dynamic dispatch without explicit `dynamic: true`.
@@ -1056,7 +1056,7 @@ fn embedded_main() {
 # fn main() {} // For doctest
 ```
 
-- Disable default features: `state-machines = { version = "0.1", default-features = false }`
+- Disable default features: `state-machines = { version = "0.6", default-features = false }`
 - The library uses no allocator - purely stack-based with zero-sized state markers
 - CI runs `cargo build --no-default-features` to prevent std regressions
 - See `examples/no_std_flight/` for a complete embedded example
