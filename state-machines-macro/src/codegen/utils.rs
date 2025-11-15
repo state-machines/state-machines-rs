@@ -87,7 +87,7 @@ pub fn to_pascal_case(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    use proc_macro2::Span;
     #[test]
     fn test_to_snake_case() {
         assert_eq!(to_snake_case("Trip"), "trip");

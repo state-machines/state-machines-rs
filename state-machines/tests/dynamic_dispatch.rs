@@ -196,9 +196,7 @@ fn test_dynamic_state_data_accessors() {
     assert_eq!(counter.current_state(), "Running");
 
     // Set data using setter
-    counter
-        .set_running_data(CounterData { count: 42 })
-        .unwrap();
+    counter.set_running_data(CounterData { count: 42 }).unwrap();
 
     // Read data
     assert_eq!(counter.running_data().unwrap().count, 42);
@@ -245,9 +243,7 @@ fn test_dynamic_state_data_with_typestate_conversion() {
 
     // Transition and set data
     counter.handle(CounterEvent::Start).unwrap();
-    counter
-        .set_running_data(CounterData { count: 50 })
-        .unwrap();
+    counter.set_running_data(CounterData { count: 50 }).unwrap();
 
     // Convert to typestate
     let typed = counter.into_running().unwrap();

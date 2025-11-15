@@ -19,7 +19,8 @@ state-machines-macro = { version = "0.6.0", path = "../state-machines-macro" }
 
 [dev-dependencies]
 pollster = "0.4"
-criterion = "0.5"
+criterion = { version = "0.7", features = ["async_tokio"] }
+tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 
 [[bench]]
 name = "typestate_transitions"

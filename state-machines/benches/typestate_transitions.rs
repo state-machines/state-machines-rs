@@ -1,11 +1,13 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use state_machines::{
     core::{AroundOutcome, AroundStage},
     state_machine,
 };
+use std::{hint::black_box, time::Duration};
+use tokio::runtime::Builder;
 
 // ============================================================================
 // Baseline: Simple state machine with no guards/callbacks
@@ -385,6 +387,53 @@ fn benchmark_full_stack_transition(c: &mut Criterion) {
     });
 }
 
+// ============================================================================
+// Async transitions: illustrate Criterion's async executor support
+// ============================================================================
+
+state_machine! {
+    name: AsyncValve,
+    async: true,
+    initial: ValveClosed,
+    states: [ValveClosed, ValvePressurizing, ValveOpen],
+    events {
+        engage {
+            guards: [pressure_safe],
+            transition: { from: ValveClosed, to: ValvePressurizing }
+        }
+        equalize {
+            transition: { from: ValvePressurizing, to: ValveOpen }
+        }
+        reset {
+            transition: { from: ValveOpen, to: ValveClosed }
+        }
+    }
+}
+
+impl<C, S> AsyncValve<C, S> {
+    async fn pressure_safe(&self, _ctx: &C) -> bool {
+        tokio::time::sleep(Duration::from_micros(20)).await;
+        true
+    }
+}
+
+fn benchmark_async_transition(c: &mut Criterion) {
+    let runtime = Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("create tokio runtime");
+    let handle = runtime.handle().clone();
+
+    c.bench_function("async_transition", move |b| {
+        b.to_async(handle.clone()).iter(|| async {
+            let valve = AsyncValve::new(());
+            let valve = valve.engage().await.unwrap();
+            let valve = valve.equalize().await.unwrap();
+            valve.reset().await.unwrap()
+        });
+    });
+}
+
 criterion_group!(
     benches,
     benchmark_simple_transition,
@@ -398,5 +447,6 @@ criterion_group!(
     benchmark_around_transition,
     benchmark_multi_around_transition,
     benchmark_full_stack_transition,
+    benchmark_async_transition,
 );
 criterion_main!(benches);
