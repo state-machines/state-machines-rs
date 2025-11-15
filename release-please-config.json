@@ -1,4 +1,5 @@
 {
+  "plugins": ["cargo-workspace"],
   "packages": {
     "state-machines": {
       "release-type": "rust",

@@ -14,8 +14,8 @@ readme = "README.md"
 include = ["src/**/*", "tests/**/*", "benches/**/*", "Cargo.toml", "README.md", "LICENSE-MIT", "LICENSE-APACHE"]
 
 [dependencies]
-state-machines-core = { version = "0.6.0", path = "../state-machines-core" }
-state-machines-macro = { version = "0.6.0", path = "../state-machines-macro" }
+state-machines-core = { version = "0.7.0", path = "../state-machines-core" }
+state-machines-macro = { version = "0.7.0", path = "../state-machines-macro" }
 
 [dev-dependencies]
 pollster = "0.4"
