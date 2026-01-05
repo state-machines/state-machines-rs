@@ -13,7 +13,11 @@ categories = ["rust-patterns", "no-std"]
 include = ["src/**/*", "Cargo.toml", "../README.md", "LICENSE-MIT", "LICENSE-APACHE"]
 
 [dependencies]
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"], optional = true }
+serde_json = { version = "1.0", optional = true }
 
 [features]
 default = []
 typestate = []
+inspect = ["serde"]
+std = ["inspect", "serde_json"]

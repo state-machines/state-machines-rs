@@ -7,3 +7,7 @@ publish = false
 [dependencies]
 state-machines = { path = "../../state-machines" }
 pollster = "0.4"
+
+[features]
+default = []
+inspect = ["state-machines/inspect"]

@@ -1,0 +1,20 @@
+[package]
+name = "state-machines-cli"
+version = "0.1.0"
+edition = "2024"
+authors = ["Abdelkader Boudih <terminale@gmail.com>"]
+description = "CLI tool for state-machines visualization and introspection"
+license = "MIT"
+repository = "https://github.com/state-machines/state-machines-rs"
+keywords = ["state-machine", "cli", "mermaid", "visualization"]
+categories = ["command-line-utilities", "development-tools"]
+publish = false
+
+[[bin]]
+name = "state-machines"
+path = "src/main.rs"
+
+[dependencies]
+state-machines-core = { version = "0.7.0", path = "../state-machines-core", features = ["std"] }
+clap = { version = "4", features = ["derive"] }
+serde_json = "1.0"

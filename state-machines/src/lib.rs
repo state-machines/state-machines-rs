@@ -14,6 +14,11 @@ pub use state_machines_core::{
 };
 pub use state_machines_macro::state_machine;
 
+#[cfg(feature = "inspect")]
+pub use state_machines_core::{
+    EventSchema, Inspectable, MachineSchema, SuperstateSchema, TransitionSchema,
+};
+
 /// Convenience macro for aborting an around callback with a guard-style error.
 ///
 /// ```rust,ignore

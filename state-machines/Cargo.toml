@@ -30,6 +30,8 @@ harness = false
 default = []
 typestate = []
 dynamic = ["state-machines-macro/dynamic"]
+inspect = ["state-machines-core/inspect"]
+std = ["inspect", "state-machines-core/std"]
 
 [package.metadata.docs.rs]
 all-features = true

@@ -5,4 +5,8 @@ edition = "2024"
 publish = false
 
 [dependencies]
-state-machines = { path = "../../state-machines" }
+state-machines = { path = "../../state-machines", features = ["std"] }
+
+[features]
+default = ["inspect"]
+inspect = ["state-machines/inspect"]

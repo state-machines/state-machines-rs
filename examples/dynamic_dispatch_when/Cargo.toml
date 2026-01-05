@@ -6,3 +6,7 @@ publish = false
 
 [dependencies]
 state-machines = { path = "../../state-machines", features = ["dynamic"] }
+
+[features]
+default = []
+inspect = ["state-machines/inspect"]

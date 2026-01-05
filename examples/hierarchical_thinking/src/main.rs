@@ -265,6 +265,26 @@ fn main() {
     println!("=== Life Support System Hierarchy Demo ===\n");
     println!("This example demonstrates hierarchical states (superstates).\n");
 
+    // Demonstrate introspection with hierarchical states
+    #[cfg(feature = "inspect")]
+    {
+        let schema = LifeSupportSystem::<(), Offline>::schema();
+        println!("=== Machine Introspection (with Superstates) ===\n");
+        println!("Machine: {}", schema.name);
+        println!("States: {:?}", schema.states);
+        if !schema.superstates.is_empty() {
+            println!("Superstates:");
+            for ss in &schema.superstates {
+                println!(
+                    "  {} (initial: {}, descendants: {:?})",
+                    ss.name, ss.initial, ss.descendants
+                );
+            }
+        }
+        println!("\nMermaid Diagram:");
+        println!("{}", schema.to_mermaid());
+    }
+
     // Scenario 1: Activating life support and cycling through modes
     println!("--- Scenario 1: Normal Operations ---");
 

@@ -3,6 +3,7 @@ members = [
     "state-machines",
     "state-machines-core",
     "state-machines-macro",
+    "state-machines-cli",
     "examples/no_std_flight",
     "examples/basic_transitions",
     "examples/guards_and_validation",

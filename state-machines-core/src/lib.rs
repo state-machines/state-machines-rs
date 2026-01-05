@@ -2,6 +2,12 @@
 
 use core::fmt::Debug;
 
+#[cfg(feature = "inspect")]
+pub mod schema;
+
+#[cfg(feature = "inspect")]
+pub use schema::{EventSchema, Inspectable, MachineSchema, SuperstateSchema, TransitionSchema};
+
 /// Marker trait for states used by the generated state machines.
 pub trait MachineState: Copy + Eq + Debug + Send + Sync + 'static {}
 

@@ -4,6 +4,7 @@
 //! (runtime flexibility). Dynamic mode is opt-in via feature flag or explicit config.
 
 pub mod dynamic;
+pub mod inspect;
 pub mod typestate;
 pub mod utils;
 
@@ -25,6 +26,9 @@ impl StateMachine {
         // Always generate typestate-based machine
         let typestate_code = typestate::generate_typestate_machine(self)?;
 
+        // Generate Inspectable impl (conditionally compiled via cfg in generated code)
+        let inspect_code = inspect::generate_inspectable_impl(self)?;
+
         // Conditionally generate dynamic dispatch wrapper
         let should_generate_dynamic = self.dynamic_mode || cfg!(feature = "dynamic");
 
@@ -32,10 +36,14 @@ impl StateMachine {
             let dynamic_code = dynamic::generate_dynamic_wrapper(self)?;
             Ok(quote! {
                 #typestate_code
+                #inspect_code
                 #dynamic_code
             })
         } else {
-            Ok(typestate_code)
+            Ok(quote! {
+                #typestate_code
+                #inspect_code
+            })
         }
     }
 }

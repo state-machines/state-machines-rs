@@ -127,6 +127,21 @@ state_machine! {
 fn main() {
     println!("=== Airlock Pressure Cycle Demo ===\n");
 
+    // Demonstrate introspection capabilities
+    #[cfg(feature = "inspect")]
+    {
+        let schema = Airlock::<(), Pressurized>::schema();
+        println!("=== Machine Introspection ===\n");
+        println!("Machine: {}", schema.name);
+        println!("Initial State: {}", schema.initial);
+        println!("States: {:?}", schema.states);
+        println!("\nMermaid Diagram:");
+        println!("{}", schema.to_mermaid());
+        println!("JSON Schema:");
+        println!("{}", schema.to_json_pretty());
+        println!();
+    }
+
     // Create new airlock in Pressurized state
     // Type: Airlock<(), Pressurized>
     let airlock = Airlock::new(());
