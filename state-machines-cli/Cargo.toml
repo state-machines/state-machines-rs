@@ -1,6 +1,6 @@
 [package]
 name = "state-machines-cli"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 authors = ["Abdelkader Boudih <terminale@gmail.com>"]
 description = "CLI tool for state-machines visualization and introspection"
@@ -15,6 +15,6 @@ name = "state-machines"
 path = "src/main.rs"
 
 [dependencies]
-state-machines-core = { version = "0.7.0", path = "../state-machines-core", features = ["std"] }
+state-machines-core = { version = "0.8.0", path = "../state-machines-core", features = ["std"] }
 clap = { version = "4", features = ["derive"] }
 serde_json = "1.0"

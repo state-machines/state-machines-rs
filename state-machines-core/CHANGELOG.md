@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-core-v0.7.0...state-machines-core-v0.8.0) (2026-01-17)
+
+
+### Features
+
+* add introspection and visualization support with Mermaid/JSON export ([#5](https://github.com/state-machines/state-machines-rs/issues/5)) ([2416648](https://github.com/state-machines/state-machines-rs/commit/2416648368151caf8a07955ce96606bc7bf30d73))
+
 ## [0.7.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-core-v0.6.0...state-machines-core-v0.7.0) (2025-11-15)
 
 
