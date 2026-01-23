@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.1](https://github.com/state-machines/state-machines-rs/compare/state-machines-macro-v0.8.0...state-machines-macro-v0.8.1) (2026-01-23)
+
+
+### Bug Fixes
+
+* clippy error ([5e61436](https://github.com/state-machines/state-machines-rs/commit/5e61436e6e8af9c96ace8a544e1a122de2281dab))
+* inspect is optional feaature ([ed4c072](https://github.com/state-machines/state-machines-rs/commit/ed4c072243864f0602ee4df6271fd5fcdc700e89))
+
 ## [0.8.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-macro-v0.7.1...state-machines-macro-v0.8.0) (2026-01-17)
 
 

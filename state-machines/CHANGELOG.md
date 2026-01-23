@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.1](https://github.com/state-machines/state-machines-rs/compare/state-machines-v0.8.0...state-machines-v0.8.1) (2026-01-23)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * state-machines-macro bumped from 0.8.0 to 0.8.1
+
 ## [0.8.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-v0.7.1...state-machines-v0.8.0) (2026-01-17)
 
 
