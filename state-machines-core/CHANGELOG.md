@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-core-v0.8.0...state-machines-core-v0.9.0) (2026-03-22)
+
+
+### Features
+
+* add fallible async callbacks with rollback semantics ([082611f](https://github.com/state-machines/state-machines-rs/commit/082611f5ba33e668e21725bbf81442b9b4a8a005))
+
 ## [0.8.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-core-v0.7.0...state-machines-core-v0.8.0) (2026-01-17)
 
 

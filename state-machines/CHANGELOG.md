@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.9.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-v0.8.1...state-machines-v0.9.0) (2026-03-22)
+
+
+### Features
+
+* add fallible async callbacks with rollback semantics ([082611f](https://github.com/state-machines/state-machines-rs/commit/082611f5ba33e668e21725bbf81442b9b4a8a005))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * state-machines-core bumped from 0.8.0 to 0.9.0
+    * state-machines-macro bumped from 0.8.1 to 0.9.0
+
 ## [0.8.1](https://github.com/state-machines/state-machines-rs/compare/state-machines-v0.8.0...state-machines-v0.8.1) (2026-01-23)
 
 
