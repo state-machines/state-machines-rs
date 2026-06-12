@@ -1,0 +1,12 @@
+[package]
+name = "TrafficLight"
+version = "0.1.4"
+edition = "2024"
+publish = false
+
+[dependencies]
+state-machines = { path = "../../state-machines" }
+
+[features]
+default = []
+inspect = ["state-machines/inspect"]
