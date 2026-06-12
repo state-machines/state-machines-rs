@@ -78,12 +78,17 @@
 //!
 //! Dynamic mode needs to clone payloads for routing.
 //!
-//! ### Caveat 4: current_state() Returns String, Not Type
+//! ### Caveat 4: current_state() Returns a Runtime State Enum
 //!
 //! ```rust,ignore
-//! let state: &str = dynamic.current_state();  // "Active", "Standby", etc.
-//! // Not a type - can't use type-specific methods
+//! let state: ComputerState = dynamic.current_state();
+//! match state {
+//!     ComputerState::Active => { /* ... */ }
+//!     _ => { /* ... */ }
+//! }
 //! ```
+//!
+//! The enum supports `Display` and `name()` when a string representation is needed.
 //!
 //! State is a runtime string, not a compile-time type marker.
 //!

@@ -23,17 +23,28 @@ fn test_dynamic_dispatch_basic() {
     let mut light = DynamicTrafficLight::new(());
 
     // Check initial state
-    assert_eq!(light.current_state(), "Red");
+    assert_eq!(light.current_state(), TrafficLightState::Red);
 
     // Trigger events dynamically
     light.handle(TrafficLightEvent::Next).unwrap();
-    assert_eq!(light.current_state(), "Green");
+    assert_eq!(light.current_state(), TrafficLightState::Green);
 
     light.handle(TrafficLightEvent::Next).unwrap();
-    assert_eq!(light.current_state(), "Yellow");
+    assert_eq!(light.current_state(), TrafficLightState::Yellow);
 
     light.handle(TrafficLightEvent::Next).unwrap();
-    assert_eq!(light.current_state(), "Red");
+    assert_eq!(light.current_state(), TrafficLightState::Red);
+}
+
+#[test]
+fn test_dynamic_dispatch_with_selected_initial_state() {
+    let mut light = DynamicTrafficLight::new_init_state((), TrafficLightState::Yellow);
+
+    assert_eq!(light.current_state(), TrafficLightState::Yellow);
+    assert_eq!(light.current_state().name(), "Yellow");
+    assert_eq!(light.current_state().to_string(), "Yellow");
+    light.handle(TrafficLightEvent::Next).unwrap();
+    assert_eq!(light.current_state(), TrafficLightState::Red);
 }
 
 #[test]
@@ -43,11 +54,11 @@ fn test_typestate_to_dynamic_conversion() {
 
     // Convert to dynamic
     let mut dynamic_light = light.into_dynamic();
-    assert_eq!(dynamic_light.current_state(), "Red");
+    assert_eq!(dynamic_light.current_state(), TrafficLightState::Red);
 
     // Use dynamic dispatch
     dynamic_light.handle(TrafficLightEvent::Next).unwrap();
-    assert_eq!(dynamic_light.current_state(), "Green");
+    assert_eq!(dynamic_light.current_state(), TrafficLightState::Green);
 }
 
 #[test]
@@ -57,7 +68,7 @@ fn test_dynamic_to_typestate_conversion() {
 
     // Transition to Green
     light.handle(TrafficLightEvent::Next).unwrap();
-    assert_eq!(light.current_state(), "Green");
+    assert_eq!(light.current_state(), TrafficLightState::Green);
 
     // Convert back to typestate
     let typed_light = light.into_green().unwrap();
@@ -98,13 +109,13 @@ fn test_async_dynamic_dispatch() {
 
     block_on(async {
         let mut processor = DynamicAsyncProcessor::new(());
-        assert_eq!(processor.current_state(), "Idle");
+        assert_eq!(processor.current_state(), AsyncProcessorState::Idle);
 
         processor.handle(AsyncProcessorEvent::Start).await.unwrap();
-        assert_eq!(processor.current_state(), "Processing");
+        assert_eq!(processor.current_state(), AsyncProcessorState::Processing);
 
         processor.handle(AsyncProcessorEvent::Finish).await.unwrap();
-        assert_eq!(processor.current_state(), "Done");
+        assert_eq!(processor.current_state(), AsyncProcessorState::Done);
     });
 }
 
@@ -151,12 +162,12 @@ fn test_guard_failure() {
     }
 
     // Machine stays in Start state after guard failure
-    assert_eq!(machine.current_state(), "Start");
+    assert_eq!(machine.current_state(), GuardedState::Start);
 
     // Now allow the guard to pass
     GUARD_ALLOWED.store(true, Ordering::SeqCst);
     machine.handle(GuardedEvent::Proceed).unwrap();
-    assert_eq!(machine.current_state(), "End");
+    assert_eq!(machine.current_state(), GuardedState::End);
 }
 
 // State storage test - demonstrates accessing and mutating state data
@@ -195,7 +206,7 @@ fn test_dynamic_state_data_accessors() {
 
     // Transition to Running
     counter.handle(CounterEvent::Start).unwrap();
-    assert_eq!(counter.current_state(), "Running");
+    assert_eq!(counter.current_state(), CounterState::Running);
 
     // Set data using setter
     counter.set_running_data(CounterData { count: 42 }).unwrap();
@@ -215,7 +226,7 @@ fn test_dynamic_state_data_accessors() {
 
     // Transition back to Stopped
     counter.handle(CounterEvent::Stop).unwrap();
-    assert_eq!(counter.current_state(), "Stopped");
+    assert_eq!(counter.current_state(), CounterState::Stopped);
 
     // Data accessors return None after transition
     assert!(counter.running_data().is_none());
@@ -240,6 +251,14 @@ fn test_dynamic_state_data_accessors() {
 }
 
 #[test]
+fn test_dynamic_selected_state_initializes_state_data() {
+    let counter = DynamicCounter::new_init_state((), CounterState::Running);
+
+    assert_eq!(counter.current_state(), CounterState::Running);
+    assert_eq!(counter.running_data(), Some(&CounterData::default()));
+}
+
+#[test]
 fn test_dynamic_state_data_with_typestate_conversion() {
     let mut counter = DynamicCounter::new(());
 
@@ -255,7 +274,7 @@ fn test_dynamic_state_data_with_typestate_conversion() {
 
     // Convert back to dynamic
     let mut dynamic = typed.into_dynamic();
-    assert_eq!(dynamic.current_state(), "Running");
+    assert_eq!(dynamic.current_state(), CounterState::Running);
     assert_eq!(dynamic.running_data().unwrap().count, 50);
 
     // Mutate via dynamic accessor
