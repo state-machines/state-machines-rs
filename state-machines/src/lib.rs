@@ -3,6 +3,13 @@
 #![cfg_attr(test, allow(non_camel_case_types, non_snake_case))]
 #![doc = include_str!("../README.md")]
 
+extern crate alloc;
+
+#[doc(hidden)]
+pub mod __private {
+    pub use alloc::vec::Vec;
+}
+
 pub mod core {
     pub use state_machines_core::*;
 }

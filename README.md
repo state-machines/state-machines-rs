@@ -842,6 +842,7 @@ impl<C> DynamicTrafficLight<C> {
     pub fn new_init_state(ctx: C, state: TrafficLightState) -> Self { /* ... */ }
     pub fn handle(&mut self, event: TrafficLightEvent) -> Result<(), DynamicError> { /* ... */ }
     pub fn current_state(&self) -> TrafficLightState { /* ... */ }
+    pub fn get_available_events(&self) -> Vec<TrafficLightEvent> { /* ... */ }
 }
 ```
 
@@ -852,6 +853,18 @@ let red = DynamicTrafficLight::new(());
 let yellow =
     DynamicTrafficLight::new_init_state((), TrafficLightState::Yellow);
 ```
+
+`get_available_events()` returns events valid from the current state whose
+`guards` and `unless` checks pass:
+
+```rust,ignore
+let events = yellow.get_available_events();
+assert_eq!(events[0].name(), "next");
+```
+
+Payload events are omitted because their guards cannot be evaluated without a
+payload value. For async machines, use
+`machine.get_available_events().await`.
 
 3. **Conversion Methods** – Switch between modes
 ```rust,ignore

@@ -306,6 +306,92 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
         quote! { pub fn handle(&mut self, event: #event_name) -> Result<(), #dynamic_error_ty> }
     };
 
+    let available_event_arms = machine.states.iter().map(|state| {
+        let checks = machine
+            .transition_graph
+            .outgoing(state)
+            .into_iter()
+            .flatten()
+            .filter(|edge| edge.payload.is_none())
+            .map(|edge| {
+                let event_pascal =
+                    syn::Ident::new(&to_pascal_case(&edge.event.to_string()), edge.event.span());
+                let guard_checks = edge.guards.iter().map(|guard| {
+                    if is_async {
+                        quote! { machine.#guard(&machine.ctx).await }
+                    } else {
+                        quote! { machine.#guard(&machine.ctx) }
+                    }
+                });
+                let unless_checks = edge.unless.iter().map(|guard| {
+                    if is_async {
+                        quote! { !machine.#guard(&machine.ctx).await }
+                    } else {
+                        quote! { !machine.#guard(&machine.ctx) }
+                    }
+                });
+
+                quote! {
+                    if true #( && #guard_checks )* #( && #unless_checks )* {
+                        events.push(#event_name::#event_pascal);
+                    }
+                }
+            })
+            .collect::<Vec<_>>();
+
+        if checks.is_empty() {
+            quote! {
+                #any_state_name::#state(_) => {}
+            }
+        } else {
+            quote! {
+                #any_state_name::#state(machine) => {
+                    #( #checks )*
+                }
+            }
+        }
+    });
+
+    let available_events_method = if is_async {
+        quote! {
+            /// Return the payload-free events currently enabled by state and guards.
+            ///
+            /// Events with payloads are omitted because their guards cannot be
+            /// evaluated without a payload value.
+            pub async fn get_available_events(
+                &self,
+            ) -> ::state_machines::__private::Vec<#event_name> {
+                #[allow(unused_mut)]
+                let mut events = ::state_machines::__private::Vec::new();
+                match self.inner.as_ref()
+                    .expect("dynamic machine in invalid state")
+                {
+                    #( #available_event_arms, )*
+                }
+                events
+            }
+        }
+    } else {
+        quote! {
+            /// Return the payload-free events currently enabled by state and guards.
+            ///
+            /// Events with payloads are omitted because their guards cannot be
+            /// evaluated without a payload value.
+            pub fn get_available_events(
+                &self,
+            ) -> ::state_machines::__private::Vec<#event_name> {
+                #[allow(unused_mut)]
+                let mut events = ::state_machines::__private::Vec::new();
+                match self.inner.as_ref()
+                    .expect("dynamic machine in invalid state")
+                {
+                    #( #available_event_arms, )*
+                }
+                events
+            }
+        }
+    };
+
     // Determine struct and impl generics based on context
     let (struct_generics, impl_generics, ctx_param_ty, any_state_generics) =
         if let Some(concrete_ctx) = &machine.context {
@@ -537,6 +623,8 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
                     #( #current_state_arms, )*
                 }
             }
+
+            #available_events_method
 
             #state_data_accessors
         }

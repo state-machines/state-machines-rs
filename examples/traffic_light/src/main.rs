@@ -26,6 +26,11 @@ fn main() {
     let a = light.current_state();
     println!("{:?}", a);
 
+
+
+    let c = light.get_available_events();
+    println!("{:?}", c);
+
     return;
     // Runtime event dispatch
     light.handle(TrafficLightEvent::Next).unwrap();
