@@ -31,14 +31,14 @@ fn main() {
     let c = light.get_available_events();
     println!("{:?}", c);
 
-    return;
-    // Runtime event dispatch
-    light.handle(TrafficLightEvent::Next).unwrap();
-    assert_eq!(light.current_state(), TrafficLightState::Red);
 
+    // Runtime event dispatch
     light.handle(TrafficLightEvent::Next).unwrap();
     assert_eq!(light.current_state(), TrafficLightState::Green);
 
     light.handle(TrafficLightEvent::Next).unwrap();
     assert_eq!(light.current_state(), TrafficLightState::Yellow);
+
+    light.handle(TrafficLightEvent::Next).unwrap();
+    assert_eq!(light.current_state(), TrafficLightState::Red);
 }
