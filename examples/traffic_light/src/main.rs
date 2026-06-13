@@ -19,18 +19,15 @@ fn main() {
     // let mut light = DynamicTrafficLight::new_init_state((), TrafficLightState::Yellow);
     let mut light = DynamicTrafficLight::new(());
 
-    let a = TrafficLightState::Yellow;
+    let _a = TrafficLightState::Yellow;
 
-    let b = TrafficLightEvent::Next;
+    let _b = TrafficLightEvent::Next;
 
     let a = light.current_state();
     println!("{:?}", a);
 
-
-
     let c = light.get_available_events();
     println!("{:?}", c);
-
 
     // Runtime event dispatch
     light.handle(TrafficLightEvent::Next).unwrap();
