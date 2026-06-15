@@ -477,19 +477,13 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
     let current_state_arms = machine.states.iter().map(|state| {
         quote! { #any_state_name::#state(_) => #state_enum_name::#state }
     });
+    let initial_state_constructor = quote! {
+        #any_state_name::#initial_state(#machine_name::new(ctx))
+    };
     let state_constructor_arms = machine.states.iter().map(|state| {
         let storage_inits = machine.state_storage.iter().map(|spec| {
             let field = &spec.field;
-            let ty = &spec.ty;
-            if spec.state_name == *state {
-                quote! {
-                    #field: ::core::option::Option::Some(
-                        <#ty as ::core::default::Default>::default()
-                    )
-                }
-            } else {
-                quote! { #field: ::core::option::Option::None }
-            }
+            quote! { #field: ::core::option::Option::None }
         });
 
         quote! {
@@ -651,7 +645,9 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
         impl #impl_generics #dynamic_name #struct_generics {
             /// Create a new dynamic machine in the declared initial state.
             pub fn new(ctx: #ctx_param_ty) -> Self {
-                Self::new_init_state(ctx, #state_enum_name::#initial_state)
+                Self {
+                    inner: ::core::option::Option::Some(#initial_state_constructor),
+                }
             }
 
             /// Create a new dynamic machine in the specified state.

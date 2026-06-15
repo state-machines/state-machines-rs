@@ -350,11 +350,14 @@ fn test_dynamic_state_data_accessors() {
 }
 
 #[test]
-fn test_dynamic_selected_state_initializes_state_data() {
-    let counter = DynamicCounter::new_init_state((), CounterState::Running);
+fn test_dynamic_selected_state_starts_with_empty_state_data() {
+    let mut counter = DynamicCounter::new_init_state((), CounterState::Running);
 
     assert_eq!(counter.current_state(), CounterState::Running);
-    assert_eq!(counter.running_data(), Some(&CounterData::default()));
+    assert!(counter.running_data().is_none());
+
+    counter.set_running_data(CounterData { count: 7 }).unwrap();
+    assert_eq!(counter.running_data().unwrap().count, 7);
 }
 
 #[test]
@@ -379,4 +382,32 @@ fn test_dynamic_state_data_with_typestate_conversion() {
     // Mutate via dynamic accessor
     dynamic.running_data_mut().unwrap().count = 75;
     assert_eq!(dynamic.running_data().unwrap().count, 75);
+}
+
+#[derive(Debug, PartialEq)]
+struct NonDefaultInitialData {
+    value: u32,
+}
+
+state_machine! {
+    name: StartsWithData,
+    dynamic: true,
+    initial: Initial,
+    states: [
+        Initial(NonDefaultInitialData),
+        Final,
+    ],
+    events {
+        finish {
+            transition: { from: Initial, to: Final }
+        }
+    }
+}
+
+#[test]
+fn test_dynamic_new_does_not_require_initial_state_data_default() {
+    let machine = DynamicStartsWithData::new(());
+
+    assert_eq!(machine.current_state(), StartsWithDataState::Initial);
+    assert!(machine.initial_data().is_none());
 }
