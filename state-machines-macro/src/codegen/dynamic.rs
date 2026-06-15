@@ -352,6 +352,49 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
         }
     });
 
+    let is_available_event_arms = machine.states.iter().flat_map(|state| {
+        machine
+            .transition_graph
+            .outgoing(state)
+            .into_iter()
+            .flatten()
+            .map(|edge| {
+                let event_pascal =
+                    syn::Ident::new(&to_pascal_case(&edge.event.to_string()), edge.event.span());
+                let event_pattern = if edge.payload.is_some() {
+                    quote! { #event_name::#event_pascal(payload) }
+                } else {
+                    quote! { #event_name::#event_pascal }
+                };
+                let payload_ref = if edge.payload.is_some() {
+                    quote! { , payload }
+                } else {
+                    quote! {}
+                };
+                let guard_checks = edge.guards.iter().map(|guard| {
+                    if is_async {
+                        quote! { machine.#guard(&machine.ctx #payload_ref).await }
+                    } else {
+                        quote! { machine.#guard(&machine.ctx #payload_ref) }
+                    }
+                });
+                let unless_checks = edge.unless.iter().map(|guard| {
+                    if is_async {
+                        quote! { !machine.#guard(&machine.ctx #payload_ref).await }
+                    } else {
+                        quote! { !machine.#guard(&machine.ctx #payload_ref) }
+                    }
+                });
+
+                quote! {
+                    (#any_state_name::#state(machine), #event_pattern) => {
+                        true #( && #guard_checks )* #( && #unless_checks )*
+                    }
+                }
+            })
+            .collect::<Vec<_>>()
+    });
+
     let available_events_method = if is_async {
         quote! {
             /// Return the payload-free events currently enabled by state and guards.
@@ -369,6 +412,18 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
                     #( #available_event_arms, )*
                 }
                 events
+            }
+
+            /// Return whether this event is enabled by the current state and guards.
+            pub async fn is_available_event(&self, event: &#event_name) -> bool {
+                match (
+                    self.inner.as_ref()
+                        .expect("dynamic machine in invalid state"),
+                    event,
+                ) {
+                    #( #is_available_event_arms, )*
+                    _ => false,
+                }
             }
         }
     } else {
@@ -388,6 +443,18 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
                     #( #available_event_arms, )*
                 }
                 events
+            }
+
+            /// Return whether this event is enabled by the current state and guards.
+            pub fn is_available_event(&self, event: &#event_name) -> bool {
+                match (
+                    self.inner.as_ref()
+                        .expect("dynamic machine in invalid state"),
+                    event,
+                ) {
+                    #( #is_available_event_arms, )*
+                    _ => false,
+                }
             }
         }
     };

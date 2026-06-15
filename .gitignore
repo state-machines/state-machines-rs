@@ -16,3 +16,4 @@ doc/
 
 # Rust Analyzer
 .rust-analyzer
+/.idea

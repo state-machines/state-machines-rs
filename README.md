@@ -843,6 +843,7 @@ impl<C> DynamicTrafficLight<C> {
     pub fn handle(&mut self, event: TrafficLightEvent) -> Result<(), DynamicError> { /* ... */ }
     pub fn current_state(&self) -> TrafficLightState { /* ... */ }
     pub fn get_available_events(&self) -> Vec<TrafficLightEvent> { /* ... */ }
+    pub fn is_available_event(&self, event: &TrafficLightEvent) -> bool { /* ... */ }
 }
 ```
 
@@ -865,6 +866,14 @@ assert_eq!(events[0].name(), "next");
 Payload events are omitted because their guards cannot be evaluated without a
 payload value. For async machines, use
 `machine.get_available_events().await`.
+
+Use `is_available_event(&event)` to check a specific event, including payload
+events:
+
+```rust,ignore
+let event = TrafficLightEvent::Next;
+assert!(yellow.is_available_event(&event));
+```
 
 3. **Conversion Methods** – Switch between modes
 ```rust,ignore

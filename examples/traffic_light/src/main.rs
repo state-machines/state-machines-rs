@@ -29,6 +29,9 @@ fn main() {
     let c = light.get_available_events();
     println!("{:?}", c);
 
+    let d = light.is_available_event(&_b);
+    println!("{:?}", d);
+
     // Runtime event dispatch
     light.handle(TrafficLightEvent::Next).unwrap();
     assert_eq!(light.current_state(), TrafficLightState::Green);

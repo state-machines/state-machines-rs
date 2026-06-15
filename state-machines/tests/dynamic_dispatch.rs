@@ -43,11 +43,13 @@ fn test_get_available_events_tracks_current_state() {
     let events = light.get_available_events();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].name(), "next");
+    assert!(light.is_available_event(&TrafficLightEvent::Next));
 
     light.handle(TrafficLightEvent::Next).unwrap();
     let events = light.get_available_events();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].name(), "next");
+    assert!(light.is_available_event(&TrafficLightEvent::Next));
 }
 
 #[test]
@@ -125,10 +127,25 @@ fn test_async_dynamic_dispatch() {
         let mut processor = DynamicAsyncProcessor::new(());
         assert_eq!(processor.current_state(), AsyncProcessorState::Idle);
         assert_eq!(processor.get_available_events().await[0].name(), "start");
+        assert!(
+            processor
+                .is_available_event(&AsyncProcessorEvent::Start)
+                .await
+        );
+        assert!(
+            !processor
+                .is_available_event(&AsyncProcessorEvent::Finish)
+                .await
+        );
 
         processor.handle(AsyncProcessorEvent::Start).await.unwrap();
         assert_eq!(processor.current_state(), AsyncProcessorState::Processing);
         assert_eq!(processor.get_available_events().await[0].name(), "finish");
+        assert!(
+            processor
+                .is_available_event(&AsyncProcessorEvent::Finish)
+                .await
+        );
 
         processor.handle(AsyncProcessorEvent::Finish).await.unwrap();
         assert_eq!(processor.current_state(), AsyncProcessorState::Done);
@@ -173,6 +190,7 @@ fn test_guard_failure() {
     GUARD_BLOCKED.store(false, Ordering::SeqCst);
     let mut machine = DynamicGuarded::new(());
     assert!(machine.get_available_events().is_empty());
+    assert!(!machine.is_available_event(&GuardedEvent::Proceed));
 
     let result = machine.handle(GuardedEvent::Proceed);
     assert!(result.is_err());
@@ -192,18 +210,23 @@ fn test_guard_failure() {
     GUARD_ALLOWED.store(true, Ordering::SeqCst);
     GUARD_BLOCKED.store(true, Ordering::SeqCst);
     assert!(machine.get_available_events().is_empty());
+    assert!(!machine.is_available_event(&GuardedEvent::Proceed));
 
     GUARD_BLOCKED.store(false, Ordering::SeqCst);
     let events = machine.get_available_events();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].name(), "proceed");
+    assert!(machine.is_available_event(&GuardedEvent::Proceed));
     machine.handle(GuardedEvent::Proceed).unwrap();
     assert_eq!(machine.current_state(), GuardedState::End);
     assert!(machine.get_available_events().is_empty());
+    assert!(!machine.is_available_event(&GuardedEvent::Proceed));
 }
 
 #[derive(Debug)]
-pub struct Payload;
+pub struct Payload {
+    allowed: bool,
+}
 
 state_machine! {
     name: PayloadAvailability,
@@ -213,11 +236,18 @@ state_machine! {
     events {
         submit {
             payload: Payload,
+            guards: [payload_allowed],
             transition: { from: Ready, to: Submitted }
         }
         cancel {
             transition: { from: Ready, to: Submitted }
         }
+    }
+}
+
+impl<C, S> PayloadAvailability<C, S> {
+    fn payload_allowed(&self, _ctx: &C, payload: &Payload) -> bool {
+        payload.allowed
     }
 }
 
@@ -228,6 +258,15 @@ fn test_get_available_events_omits_payload_events() {
 
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].name(), "cancel");
+    assert!(machine.is_available_event(&PayloadAvailabilityEvent::Cancel));
+    assert!(
+        machine.is_available_event(&PayloadAvailabilityEvent::Submit(Payload { allowed: true }))
+    );
+    assert!(
+        !machine.is_available_event(&PayloadAvailabilityEvent::Submit(Payload {
+            allowed: false
+        }))
+    );
 }
 
 // State storage test - demonstrates accessing and mutating state data
