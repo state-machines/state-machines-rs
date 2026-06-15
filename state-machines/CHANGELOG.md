@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.20.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-v0.9.0...state-machines-v0.20.0) (2026-06-15)
+
+
+### ⚠ BREAKING CHANGES
+
+* `current_state()` returns the generated state enum instead of `&'static str`. Match on `{Machine}State` variants, or call `.name()` / `.to_string()` for the previous string form.
+
+### Features
+
+* typed runtime state enum for dynamic machines ([#12](https://github.com/state-machines/state-machines-rs/issues/12)) ([6f90319](https://github.com/state-machines/state-machines-rs/commit/6f903194d315679a1210b7907c97f7a437b7f0e6))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * state-machines-macro bumped from 0.9.0 to 0.20.0
+
 ## [0.9.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-v0.8.1...state-machines-v0.9.0) (2026-03-22)
 
 
