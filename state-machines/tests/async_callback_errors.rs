@@ -160,13 +160,13 @@ fn async_dynamic_callback_failure_keeps_runtime_state() {
             other => panic!("expected callback failure, got {other:?}"),
         }
 
-        assert_eq!(machine.current_state(), "RefreshToken");
+        assert_eq!(machine.current_state(), AuthRecoveryState::RefreshToken);
 
         BEFORE_FAILS.store(false, Ordering::SeqCst);
         machine
             .handle(AuthRecoveryEvent::Refresh)
             .await
             .expect("retry should succeed without advancing on the failed attempt");
-        assert_eq!(machine.current_state(), "Done");
+        assert_eq!(machine.current_state(), AuthRecoveryState::Done);
     });
 }

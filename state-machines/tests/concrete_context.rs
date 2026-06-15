@@ -180,22 +180,22 @@ fn test_concrete_context_dynamic_dispatch() {
     let sensors = SpacecraftSensors::new().with_fuel(80).with_altitude(450);
     let mut spacecraft = DynamicSpacecraft::new(sensors);
 
-    assert_eq!(spacecraft.current_state(), "Grounded");
+    assert_eq!(spacecraft.current_state(), SpacecraftState::Grounded);
 
     // Test successful transition via dynamic dispatch
     let result = spacecraft.handle(SpacecraftEvent::Launch);
     assert!(result.is_ok(), "Launch should succeed with 80% fuel");
-    assert_eq!(spacecraft.current_state(), "Flying");
+    assert_eq!(spacecraft.current_state(), SpacecraftState::Flying);
 
     // Test successful orbit transition
     let result = spacecraft.handle(SpacecraftEvent::ReachOrbit);
     assert!(result.is_ok(), "Should reach orbit at 450km");
-    assert_eq!(spacecraft.current_state(), "Orbiting");
+    assert_eq!(spacecraft.current_state(), SpacecraftState::Orbiting);
 
     // Test landing from orbiting
     let result = spacecraft.handle(SpacecraftEvent::Land);
     assert!(result.is_ok(), "Should land from orbit");
-    assert_eq!(spacecraft.current_state(), "Grounded");
+    assert_eq!(spacecraft.current_state(), SpacecraftState::Grounded);
 }
 
 #[test]
@@ -219,7 +219,7 @@ fn test_concrete_context_dynamic_guard_failure() {
     }
 
     // Machine should remain in original state after guard failure
-    assert_eq!(spacecraft.current_state(), "Grounded");
+    assert_eq!(spacecraft.current_state(), SpacecraftState::Grounded);
 }
 
 #[test]
@@ -231,12 +231,12 @@ fn test_concrete_context_dynamic_conversion() {
 
     // Convert to dynamic
     let mut dynamic = spacecraft.into_dynamic();
-    assert_eq!(dynamic.current_state(), "Flying");
+    assert_eq!(dynamic.current_state(), SpacecraftState::Flying);
 
     // Use dynamic mode
     let result = dynamic.handle(SpacecraftEvent::Land);
     assert!(result.is_ok());
-    assert_eq!(dynamic.current_state(), "Grounded");
+    assert_eq!(dynamic.current_state(), SpacecraftState::Grounded);
 
     // Convert back to typestate
     let typed = dynamic.into_grounded();

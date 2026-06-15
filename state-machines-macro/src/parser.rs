@@ -533,7 +533,11 @@ pub fn parse_ident_list_value(input: &ParseBuffer<'_>) -> Result<Vec<Ident>> {
 ///
 /// No-op when the state has no data type. Centralises the field-name
 /// derivation so leaf states and superstates stay consistent.
-fn push_storage_spec(storage: &mut Vec<StateStorageSpec>, state_name: &Ident, ty: Option<syn::Type>) {
+fn push_storage_spec(
+    storage: &mut Vec<StateStorageSpec>,
+    state_name: &Ident,
+    ty: Option<syn::Type>,
+) {
     if let Some(ty) = ty {
         let field = storage_field_ident(state_name);
         storage.push(StateStorageSpec {

@@ -182,6 +182,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
     let dynamic_name = quote::format_ident!("Dynamic{}", machine_name);
     let any_state_name = quote::format_ident!("Any{}State", machine_name);
     let event_name = quote::format_ident!("{}Event", machine_name);
+    let state_enum_name = quote::format_ident!("{}State", machine_name);
     let initial_state = &machine.initial;
     let is_async = machine.async_mode;
     let dynamic_error_ty = if let Some(error_ty) = machine.error.as_ref() {
@@ -299,6 +300,92 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
         quote! { pub fn handle(&mut self, event: #event_name) -> Result<(), #dynamic_error_ty> }
     };
 
+    let available_event_arms = machine.states.iter().map(|state| {
+        let checks = machine
+            .transition_graph
+            .outgoing(state)
+            .into_iter()
+            .flatten()
+            .filter(|edge| edge.payload.is_none())
+            .map(|edge| {
+                let event_pascal =
+                    syn::Ident::new(&to_pascal_case(&edge.event.to_string()), edge.event.span());
+                let guard_checks = edge.guards.iter().map(|guard| {
+                    if is_async {
+                        quote! { machine.#guard(&machine.ctx).await }
+                    } else {
+                        quote! { machine.#guard(&machine.ctx) }
+                    }
+                });
+                let unless_checks = edge.unless.iter().map(|guard| {
+                    if is_async {
+                        quote! { !machine.#guard(&machine.ctx).await }
+                    } else {
+                        quote! { !machine.#guard(&machine.ctx) }
+                    }
+                });
+
+                quote! {
+                    if true #( && #guard_checks )* #( && #unless_checks )* {
+                        events.push(#event_name::#event_pascal);
+                    }
+                }
+            })
+            .collect::<Vec<_>>();
+
+        if checks.is_empty() {
+            quote! {
+                #any_state_name::#state(_) => {}
+            }
+        } else {
+            quote! {
+                #any_state_name::#state(machine) => {
+                    #( #checks )*
+                }
+            }
+        }
+    });
+
+    let available_events_method = if is_async {
+        quote! {
+            /// Return the payload-free events currently enabled by state and guards.
+            ///
+            /// Events with payloads are omitted because their guards cannot be
+            /// evaluated without a payload value.
+            pub async fn get_available_events(
+                &self,
+            ) -> ::state_machines::__private::Vec<#event_name> {
+                #[allow(unused_mut)]
+                let mut events = ::state_machines::__private::Vec::new();
+                match self.inner.as_ref()
+                    .expect("dynamic machine in invalid state")
+                {
+                    #( #available_event_arms, )*
+                }
+                events
+            }
+        }
+    } else {
+        quote! {
+            /// Return the payload-free events currently enabled by state and guards.
+            ///
+            /// Events with payloads are omitted because their guards cannot be
+            /// evaluated without a payload value.
+            pub fn get_available_events(
+                &self,
+            ) -> ::state_machines::__private::Vec<#event_name> {
+                #[allow(unused_mut)]
+                let mut events = ::state_machines::__private::Vec::new();
+                match self.inner.as_ref()
+                    .expect("dynamic machine in invalid state")
+                {
+                    #( #available_event_arms, )*
+                }
+                events
+            }
+        }
+    };
+
     // Determine struct and impl generics based on context
     let (struct_generics, impl_generics, ctx_param_ty, any_state_generics) =
         if let Some(concrete_ctx) = &machine.context {
@@ -308,6 +395,37 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
             // Generic context
             (quote! { <C> }, quote! { <C> }, quote! { C }, quote! { <C> })
         };
+
+    let state_variants = &machine.states;
+    let state_name_arms = machine.states.iter().map(|state| {
+        let state_str = state.to_string();
+        quote! { Self::#state => #state_str }
+    });
+    let current_state_arms = machine.states.iter().map(|state| {
+        quote! { #any_state_name::#state(_) => #state_enum_name::#state }
+    });
+    // State-associated storage always starts empty, exactly as `new()` does.
+    // This keeps construction working for state data types that do not
+    // implement `Default`; data is populated as transitions run.
+    let storage_inits: Vec<_> = machine
+        .state_storage
+        .iter()
+        .map(|spec| {
+            let field = &spec.field;
+            quote! { #field: ::core::option::Option::None }
+        })
+        .collect();
+    let state_constructor_arms = machine.states.iter().map(|state| {
+        quote! {
+            #state_enum_name::#state => #any_state_name::#state(
+                #machine_name {
+                    ctx,
+                    _state: ::core::marker::PhantomData,
+                    #( #storage_inits, )*
+                }
+            )
+        }
+    });
 
     // Default impl only for generic context with Default bound, or concrete context with Default
     let default_impl = if let Some(concrete_ctx) = &machine.context {
@@ -423,6 +541,27 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
     };
 
     Ok(quote! {
+        /// Runtime state selector used when constructing a dynamic machine.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        pub enum #state_enum_name {
+            #( #state_variants, )*
+        }
+
+        impl #state_enum_name {
+            /// Get the state name as a static string.
+            pub fn name(self) -> &'static str {
+                match self {
+                    #( #state_name_arms, )*
+                }
+            }
+        }
+
+        impl ::core::fmt::Display for #state_enum_name {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                f.write_str((*self).name())
+            }
+        }
+
         /// Dynamic wrapper for runtime event dispatch.
         ///
         /// This struct wraps the typestate machine and provides a `handle()` method
@@ -434,10 +573,17 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
         }
 
         impl #impl_generics #dynamic_name #struct_generics {
-            /// Create a new dynamic machine in the initial state.
+            /// Create a new dynamic machine in the declared initial state.
             pub fn new(ctx: #ctx_param_ty) -> Self {
+                Self::new_init_state(ctx, #state_enum_name::#initial_state)
+            }
+
+            /// Create a new dynamic machine in the specified state.
+            pub fn new_init_state(ctx: #ctx_param_ty, state: #state_enum_name) -> Self {
                 Self {
-                    inner: ::core::option::Option::Some(#any_state_name::#initial_state(#machine_name::new(ctx))),
+                    inner: ::core::option::Option::Some(match state {
+                        #( #state_constructor_arms, )*
+                    }),
                 }
             }
 
@@ -460,12 +606,16 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
                 Ok(())
             }
 
-            /// Get the name of the current state.
-            pub fn current_state(&self) -> &'static str {
-                self.inner.as_ref()
+            /// Get the current runtime state.
+            pub fn current_state(&self) -> #state_enum_name {
+                match self.inner.as_ref()
                     .expect("dynamic machine in invalid state")
-                    .name()
+                {
+                    #( #current_state_arms, )*
+                }
             }
+
+            #available_events_method
 
             #state_data_accessors
         }

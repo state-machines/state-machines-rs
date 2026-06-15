@@ -11,5 +11,6 @@ members = [
     "examples/async_patterns",
     "examples/hierarchical_thinking",
     "examples/dynamic_dispatch_when",
+    "examples/traffic_light",
 ]
 resolver = "2"

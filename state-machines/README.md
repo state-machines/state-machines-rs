@@ -713,13 +713,13 @@ fn main() {
 
     // Runtime event dispatch
     light.handle(TrafficLightEvent::Next).unwrap();
-    assert_eq!(light.current_state(), "Green");
+    assert_eq!(light.current_state(), TrafficLightState::Green);
 
     light.handle(TrafficLightEvent::Next).unwrap();
-    assert_eq!(light.current_state(), "Yellow");
+    assert_eq!(light.current_state(), TrafficLightState::Yellow);
 
     light.handle(TrafficLightEvent::Next).unwrap();
-    assert_eq!(light.current_state(), "Red");
+    assert_eq!(light.current_state(), TrafficLightState::Red);
 }
 ```
 
@@ -742,12 +742,40 @@ pub struct DynamicTrafficLight<C> {
     // Internal state wrapper
 }
 
-impl<C: Default> DynamicTrafficLight<C> {
-    pub fn new(ctx: C) -> Self { /* ... */ }
+pub enum TrafficLightState {
+    Red,
+    Yellow,
+    Green,
+}
+
+impl<C> DynamicTrafficLight<C> {
+    pub fn new(ctx: C) -> Self { /* Uses the declared initial state */ }
+    pub fn new_init_state(ctx: C, state: TrafficLightState) -> Self { /* ... */ }
     pub fn handle(&mut self, event: TrafficLightEvent) -> Result<(), DynamicError> { /* ... */ }
-    pub fn current_state(&self) -> &'static str { /* ... */ }
+    pub fn current_state(&self) -> TrafficLightState { /* ... */ }
+    pub fn get_available_events(&self) -> Vec<TrafficLightEvent> { /* ... */ }
 }
 ```
+
+Use `new` for the state declared by `initial`, or `new_init_state` to select one explicitly:
+
+```rust,ignore
+let red = DynamicTrafficLight::new(());
+let yellow =
+    DynamicTrafficLight::new_init_state((), TrafficLightState::Yellow);
+```
+
+`get_available_events()` returns events valid from the current state whose
+`guards` and `unless` checks pass:
+
+```rust,ignore
+let events = yellow.get_available_events();
+assert_eq!(events[0].name(), "next");
+```
+
+Payload events are omitted because their guards cannot be evaluated without a
+payload value. For async machines, use
+`machine.get_available_events().await`.
 
 3. **Conversion Methods** – Switch between modes
 ```rust,ignore
@@ -893,7 +921,7 @@ let result = machine.handle(TrafficLightEvent::Next); // Red → Green (valid)
 assert!(result.is_ok());
 
 // Machine is now in Green state, regardless of success/failure
-assert_eq!(machine.current_state(), "Green");
+assert_eq!(machine.current_state(), TrafficLightState::Green);
 ```
 
 ### State Data Accessors
@@ -959,7 +987,7 @@ impl CircuitBreaker {
 
     pub fn call(&mut self) -> Result<Response, Error> {
         match self.machine.current_state() {
-            "Closed" => {
+            CircuitState::Closed => {
                 // Execute call
                 match execute_request() {
                     Ok(resp) => Ok(resp),
@@ -976,7 +1004,7 @@ impl CircuitBreaker {
                     }
                 }
             }
-            "Open" => {
+            CircuitState::Open => {
                 // Check if timeout expired
                 if let Some(data) = self.machine.open_data() {
                     if data.opened_at.elapsed() > Duration::from_secs(60) {
@@ -992,7 +1020,7 @@ impl CircuitBreaker {
                 }
                 Err(Error::CircuitOpen)
             }
-            "HalfOpen" => {
+            CircuitState::HalfOpen => {
                 // Execute call, track successes
                 match execute_request() {
                     Ok(resp) => {
@@ -1014,7 +1042,6 @@ impl CircuitBreaker {
                     }
                 }
             }
-            _ => unreachable!(),
         }
     }
 }
