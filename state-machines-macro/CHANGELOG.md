@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-macro-v0.20.0...state-machines-macro-v0.21.0) (2026-06-27)
+
+
+### Features
+
+* add is_available_event to dynamic machines ([5547b26](https://github.com/state-machines/state-machines-rs/commit/5547b26896109cbe1e1d61979ab4e016942da694))
+
 ## [0.20.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-macro-v0.9.0...state-machines-macro-v0.20.0) (2026-06-15)
 
 
