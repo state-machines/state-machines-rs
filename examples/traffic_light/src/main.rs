@@ -34,6 +34,9 @@ fn main() {
     let available = light.get_available_events();
     println!("available: {:?}", available);
 
+    let is_available = light.is_available_event(&available[0]);
+    assert!(is_available);
+
     // Runtime event dispatch.
     light.handle(TrafficLightEvent::Next).unwrap();
     assert_eq!(light.current_state(), TrafficLightState::Red);
@@ -42,4 +45,7 @@ fn main() {
     assert_eq!(light.current_state(), TrafficLightState::Green);
 
     println!("ended at {}", light.current_state());
+
+    let is_available = light.is_available_event(&TrafficLightEvent::Next);
+    println!("is_available: {:?}", is_available);
 }
