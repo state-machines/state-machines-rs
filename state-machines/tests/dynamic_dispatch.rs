@@ -381,3 +381,120 @@ fn test_dynamic_state_data_with_typestate_conversion() {
     dynamic.running_data_mut().unwrap().count = 75;
     assert_eq!(dynamic.running_data().unwrap().count, 75);
 }
+
+// ---------------------------------------------------------------------------
+// is_available_event coverage
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_is_available_event_sync() {
+    // Guard/unless are evaluated for the current state.
+    GUARD_ALLOWED.store(true, Ordering::SeqCst);
+    GUARD_BLOCKED.store(false, Ordering::SeqCst);
+    let machine = DynamicGuarded::new(());
+    assert!(machine.is_available_event(&GuardedEvent::Proceed));
+
+    // Failing guard -> not available.
+    GUARD_ALLOWED.store(false, Ordering::SeqCst);
+    assert!(!machine.is_available_event(&GuardedEvent::Proceed));
+
+    // Passing guard but `unless` blocks -> not available.
+    GUARD_ALLOWED.store(true, Ordering::SeqCst);
+    GUARD_BLOCKED.store(true, Ordering::SeqCst);
+    assert!(!machine.is_available_event(&GuardedEvent::Proceed));
+
+    // Event whose source state is not the current state -> false (catch-all).
+    GUARD_ALLOWED.store(true, Ordering::SeqCst);
+    GUARD_BLOCKED.store(false, Ordering::SeqCst);
+    let mut moved = DynamicGuarded::new(());
+    moved.handle(GuardedEvent::Proceed).unwrap();
+    assert_eq!(moved.current_state(), GuardedState::End);
+    assert!(!moved.is_available_event(&GuardedEvent::Proceed));
+
+    // Payload-bearing events are reportable here (unlike get_available_events,
+    // which omits them) because the caller supplies the payload.
+    let payload_machine = DynamicPayloadAvailability::new(());
+    assert!(payload_machine.is_available_event(&PayloadAvailabilityEvent::Submit(Payload)));
+    assert!(payload_machine.is_available_event(&PayloadAvailabilityEvent::Cancel));
+}
+
+#[cfg(feature = "async")]
+static ASYNC_IS_ALLOWED: AtomicBool = AtomicBool::new(false);
+
+#[cfg(feature = "async")]
+#[derive(Debug)]
+pub struct AsyncToken;
+
+#[cfg(feature = "async")]
+state_machine! {
+    name: AsyncGuardedAvailability,
+    dynamic: true,
+    async: true,
+    initial: AsyncStart,
+    states: [AsyncStart, AsyncEnd],
+    events {
+        proceed {
+            guards: [is_allowed],
+            transition: { from: AsyncStart, to: AsyncEnd }
+        }
+        submit {
+            payload: AsyncToken,
+            transition: { from: AsyncStart, to: AsyncEnd }
+        }
+    }
+}
+
+#[cfg(feature = "async")]
+impl<C, S> AsyncGuardedAvailability<C, S> {
+    async fn is_allowed(&self, _ctx: &C) -> bool {
+        ASYNC_IS_ALLOWED.load(Ordering::SeqCst)
+    }
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn test_is_available_event_async() {
+    use pollster::block_on;
+
+    block_on(async {
+        let machine = DynamicAsyncGuardedAvailability::new(());
+
+        ASYNC_IS_ALLOWED.store(true, Ordering::SeqCst);
+        assert!(
+            machine
+                .is_available_event(&AsyncGuardedAvailabilityEvent::Proceed)
+                .await
+        );
+
+        ASYNC_IS_ALLOWED.store(false, Ordering::SeqCst);
+        assert!(
+            !machine
+                .is_available_event(&AsyncGuardedAvailabilityEvent::Proceed)
+                .await
+        );
+
+        // Payload-bearing event with the payload supplied.
+        assert!(
+            machine
+                .is_available_event(&AsyncGuardedAvailabilityEvent::Submit(AsyncToken))
+                .await
+        );
+
+        // Wrong current state -> false.
+        let mut moved = DynamicAsyncGuardedAvailability::new(());
+        ASYNC_IS_ALLOWED.store(true, Ordering::SeqCst);
+        moved
+            .handle(AsyncGuardedAvailabilityEvent::Proceed)
+            .await
+            .unwrap();
+        assert_eq!(
+            moved.current_state(),
+            AsyncGuardedAvailabilityState::AsyncEnd
+        );
+        assert!(
+            !moved
+                .is_available_event(&AsyncGuardedAvailabilityEvent::Proceed)
+                .await
+        );
+    });
+}

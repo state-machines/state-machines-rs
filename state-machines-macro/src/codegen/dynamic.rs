@@ -24,6 +24,50 @@ fn context_generics(machine: &StateMachine) -> (TokenStream2, TokenStream2) {
     }
 }
 
+/// The PascalCase event-enum variant ident for an edge's triggering event.
+fn edge_event_pascal(edge: &TransitionEdge) -> syn::Ident {
+    syn::Ident::new(&to_pascal_case(&edge.event.to_string()), edge.event.span())
+}
+
+/// The edges leaving `state`, flattened across the optional adjacency entry.
+fn outgoing_edges<'a>(
+    machine: &'a StateMachine,
+    state: &syn::Ident,
+) -> impl Iterator<Item = &'a TransitionEdge> {
+    machine
+        .transition_graph
+        .outgoing(state)
+        .into_iter()
+        .flatten()
+}
+
+/// The `true && guard.. && !unless..` boolean expression that decides whether an
+/// edge's transition is currently enabled.
+///
+/// `payload_ref` carries the extra argument tokens (e.g. `, payload`) passed to
+/// guards for payload-bearing events, or is empty for payload-free ones.
+fn edge_guard_condition(
+    edge: &TransitionEdge,
+    is_async: bool,
+    payload_ref: &TokenStream2,
+) -> TokenStream2 {
+    let guard_checks = edge.guards.iter().map(|guard| {
+        if is_async {
+            quote! { machine.#guard(&machine.ctx #payload_ref).await }
+        } else {
+            quote! { machine.#guard(&machine.ctx #payload_ref) }
+        }
+    });
+    let unless_checks = edge.unless.iter().map(|guard| {
+        if is_async {
+            quote! { !machine.#guard(&machine.ctx #payload_ref).await }
+        } else {
+            quote! { !machine.#guard(&machine.ctx #payload_ref) }
+        }
+    });
+    quote! { true #( && #guard_checks )* #( && #unless_checks )* }
+}
+
 /// Generate dynamic dispatch wrapper code for the state machine.
 ///
 /// This generates:
@@ -301,32 +345,13 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
     };
 
     let available_event_arms = machine.states.iter().map(|state| {
-        let checks = machine
-            .transition_graph
-            .outgoing(state)
-            .into_iter()
-            .flatten()
+        let checks = outgoing_edges(machine, state)
             .filter(|edge| edge.payload.is_none())
             .map(|edge| {
-                let event_pascal =
-                    syn::Ident::new(&to_pascal_case(&edge.event.to_string()), edge.event.span());
-                let guard_checks = edge.guards.iter().map(|guard| {
-                    if is_async {
-                        quote! { machine.#guard(&machine.ctx).await }
-                    } else {
-                        quote! { machine.#guard(&machine.ctx) }
-                    }
-                });
-                let unless_checks = edge.unless.iter().map(|guard| {
-                    if is_async {
-                        quote! { !machine.#guard(&machine.ctx).await }
-                    } else {
-                        quote! { !machine.#guard(&machine.ctx) }
-                    }
-                });
-
+                let event_pascal = edge_event_pascal(edge);
+                let condition = edge_guard_condition(edge, is_async, &quote! {});
                 quote! {
-                    if true #( && #guard_checks )* #( && #unless_checks )* {
+                    if #condition {
                         events.push(#event_name::#event_pascal);
                     }
                 }
@@ -347,42 +372,22 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
     });
 
     let is_available_event_arms = machine.states.iter().flat_map(|state| {
-        machine
-            .transition_graph
-            .outgoing(state)
-            .into_iter()
-            .flatten()
+        outgoing_edges(machine, state)
             .map(|edge| {
-                let event_pascal =
-                    syn::Ident::new(&to_pascal_case(&edge.event.to_string()), edge.event.span());
-                let event_pattern = if edge.payload.is_some() {
-                    quote! { #event_name::#event_pascal(payload) }
+                let event_pascal = edge_event_pascal(edge);
+                let (event_pattern, payload_ref) = if edge.payload.is_some() {
+                    (
+                        quote! { #event_name::#event_pascal(payload) },
+                        quote! { , payload },
+                    )
                 } else {
-                    quote! { #event_name::#event_pascal }
+                    (quote! { #event_name::#event_pascal }, quote! {})
                 };
-                let payload_ref = if edge.payload.is_some() {
-                    quote! { , payload }
-                } else {
-                    quote! {}
-                };
-                let guard_checks = edge.guards.iter().map(|guard| {
-                    if is_async {
-                        quote! { machine.#guard(&machine.ctx #payload_ref).await }
-                    } else {
-                        quote! { machine.#guard(&machine.ctx #payload_ref) }
-                    }
-                });
-                let unless_checks = edge.unless.iter().map(|guard| {
-                    if is_async {
-                        quote! { !machine.#guard(&machine.ctx #payload_ref).await }
-                    } else {
-                        quote! { !machine.#guard(&machine.ctx #payload_ref) }
-                    }
-                });
+                let condition = edge_guard_condition(edge, is_async, &payload_ref);
 
                 quote! {
                     (#any_state_name::#state(machine), #event_pattern) => {
-                        true #( && #guard_checks )* #( && #unless_checks )*
+                        #condition
                     }
                 }
             })
