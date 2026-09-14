@@ -280,6 +280,10 @@ fn generate_state_impls(machine: &StateMachine) -> Result<Vec<TokenStream2>> {
 /// }
 /// ```
 fn generate_constructor(machine: &StateMachine, _state: &Ident) -> Result<TokenStream2> {
+    // All storage starts as None — even for the initial state — so that
+    // constructing a machine never requires the data type to implement
+    // Default. Data is auto-initialised when a transition enters its state;
+    // use the Option-returning accessors before the first transition.
     let storage_inits: Vec<_> = machine
         .state_storage
         .iter()
@@ -361,19 +365,57 @@ fn transition_return_type(
     }
 }
 
+/// Check whether a storage spec's owning state covers the given leaf state.
+///
+/// A leaf spec covers only itself; a superstate spec covers every
+/// descendant leaf.
+fn spec_covers(machine: &StateMachine, spec: &StateStorageSpec, leaf: &Ident) -> bool {
+    if machine.hierarchy.is_superstate(&spec.state_name) {
+        machine
+            .hierarchy
+            .expand_state(&spec.state_name, &machine.states)
+            .iter()
+            .any(|member| member == leaf)
+    } else {
+        &spec.state_name == leaf
+    }
+}
+
 /// Build the per-field storage initialisers for the machine in its target state.
 ///
-/// The target state's data field is default-initialised; every other field is
-/// reset to `None`. Shared by leaf and superstate transition generation.
-fn storage_transfers(machine: &StateMachine, target_state: &Ident) -> Vec<TokenStream2> {
+/// Leaf-state data: the target's field is default-initialised, every other
+/// leaf field is reset to `None`.
+///
+/// Superstate data lives as long as the machine stays anywhere inside the
+/// superstate: entering from outside default-initialises it, moving between
+/// two of its substates carries the previous value over (via the
+/// `__sm_prev_*` locals bound from the source machine), and leaving clears
+/// it back to `None`.
+fn storage_transfers(
+    machine: &StateMachine,
+    source_state: &Ident,
+    target_state: &Ident,
+) -> Vec<TokenStream2> {
     machine
         .state_storage
         .iter()
         .map(|spec| {
             let field = &spec.field;
-            let state_name = &spec.state_name;
             let ty = &spec.ty;
-            if state_name == target_state {
+            if machine.hierarchy.is_superstate(&spec.state_name) {
+                let source_inside = spec_covers(machine, spec, source_state);
+                let target_inside = spec_covers(machine, spec, target_state);
+                match (source_inside, target_inside) {
+                    (true, true) => {
+                        let local = quote::format_ident!("__sm_prev_{}", field);
+                        quote! { #field: #local }
+                    }
+                    (false, true) => quote! {
+                        #field: ::core::option::Option::Some(<#ty as ::core::default::Default>::default())
+                    },
+                    _ => quote! { #field: ::core::option::Option::None },
+                }
+            } else if &spec.state_name == target_state {
                 quote! {
                     #field: ::core::option::Option::Some(<#ty as ::core::default::Default>::default())
                 }
@@ -386,9 +428,29 @@ fn storage_transfers(machine: &StateMachine, target_state: &Ident) -> Vec<TokenS
         .collect()
 }
 
+/// Fields whose previous value is moved into the new machine (superstate
+/// data on an intra-superstate transition). Rollback paths must rebind
+/// these from the new machine, since the `__sm_prev_*` local was consumed.
+fn preserved_storage_fields(
+    machine: &StateMachine,
+    source_state: &Ident,
+    target_state: &Ident,
+) -> Vec<Ident> {
+    machine
+        .state_storage
+        .iter()
+        .filter(|spec| {
+            machine.hierarchy.is_superstate(&spec.state_name)
+                && spec_covers(machine, spec, source_state)
+                && spec_covers(machine, spec, target_state)
+        })
+        .map(|spec| spec.field.clone())
+        .collect()
+}
+
 fn generate_transition_method(
     machine: &StateMachine,
-    _source_state: &Ident,
+    source_state: &Ident,
     edge: &TransitionEdge,
 ) -> Result<TokenStream2> {
     let machine_name = &machine.name;
@@ -588,7 +650,18 @@ fn generate_transition_method(
 
     let restore_source_fields = source_field_bindings.clone();
 
-    let storage_transfers = storage_transfers(machine, target_state);
+    let storage_transfers = storage_transfers(machine, source_state, target_state);
+
+    // Superstate data carried into the new machine consumed its __sm_prev_*
+    // local; rollback paths recover it from the new machine by rebinding
+    // the same local name in the destructuring pattern.
+    let preserved_rebinds: Vec<_> = preserved_storage_fields(machine, source_state, target_state)
+        .into_iter()
+        .map(|field| {
+            let local = quote::format_ident!("__sm_prev_{}", field);
+            quote! { #field: #local }
+        })
+        .collect();
 
     let make_after_call = |callback: &Ident, use_payload: bool| {
         let call = callback_call(quote! { new_machine }, callback, use_payload);
@@ -597,7 +670,7 @@ fn generate_transition_method(
                 let callback_result: ::core::result::Result<(), #error_ty> =
                     #core_path::FallibleCallbackReturn::into_result(#call);
                 if let Err(source) = callback_result {
-                    let #machine_name { ctx, .. } = new_machine;
+                    let #machine_name { ctx, #( #preserved_rebinds, )* .. } = new_machine;
                     let old_machine = #machine_name {
                         ctx,
                         _state: ::core::marker::PhantomData,
@@ -633,7 +706,7 @@ fn generate_transition_method(
         .collect();
 
     let rollback_old_machine = quote! {
-        let #machine_name { ctx, .. } = new_machine;
+        let #machine_name { ctx, #( #preserved_rebinds, )* .. } = new_machine;
         let old_machine = #machine_name {
             ctx,
             _state: ::core::marker::PhantomData,
@@ -859,37 +932,49 @@ fn generate_state_specific_accessors(machine: &StateMachine) -> Result<Vec<Token
         let data_method = syn::Ident::new(&format!("{}_data", snake), state_name.span());
         let data_mut_method = syn::Ident::new(&format!("{}_data_mut", snake), state_name.span());
 
-        // Determine impl generics and type parameters
-        let (impl_generics, type_params) = if machine.context.is_some() {
-            // Concrete context (struct is Machine<S>)
-            (quote! {}, quote! { <#state_name> })
+        // A leaf's guaranteed accessors live on that leaf's impl. Superstate
+        // data is guaranteed while inside the superstate, so its accessors
+        // are emitted on every descendant leaf instead — the superstate
+        // marker itself is never a machine's state parameter.
+        let impl_states = if machine.hierarchy.is_superstate(state_name) {
+            machine.hierarchy.expand_state(state_name, &machine.states)
         } else {
-            // Generic context (struct is Machine<C, S>)
-            (quote! { <C> }, quote! { <C, #state_name> })
+            vec![state_name.clone()]
         };
 
-        // Generate state-specific impl block
-        let impl_block = quote! {
-            impl #impl_generics #machine_name #type_params {
-                /// Access the state-associated data for this specific state.
-                ///
-                /// This method is guaranteed to return a reference because
-                /// the data is always present when in this state.
-                pub fn #data_method(&self) -> &#ty {
-                    self.#field.as_ref().unwrap()
-                }
+        for impl_state in impl_states {
+            // Determine impl generics and type parameters
+            let (impl_generics, type_params) = if machine.context.is_some() {
+                // Concrete context (struct is Machine<S>)
+                (quote! {}, quote! { <#impl_state> })
+            } else {
+                // Generic context (struct is Machine<C, S>)
+                (quote! { <C> }, quote! { <C, #impl_state> })
+            };
 
-                /// Mutably access the state-associated data for this specific state.
-                ///
-                /// This method is guaranteed to return a mutable reference because
-                /// the data is always present when in this state.
-                pub fn #data_mut_method(&mut self) -> &mut #ty {
-                    self.#field.as_mut().unwrap()
-                }
-            }
-        };
+            // Generate state-specific impl block
+            let impl_block = quote! {
+                impl #impl_generics #machine_name #type_params {
+                    /// Access the state-associated data for this specific state.
+                    ///
+                    /// This method is guaranteed to return a reference because
+                    /// the data is always present when in this state.
+                    pub fn #data_method(&self) -> &#ty {
+                        self.#field.as_ref().unwrap()
+                    }
 
-        impls.push(impl_block);
+                    /// Mutably access the state-associated data for this specific state.
+                    ///
+                    /// This method is guaranteed to return a mutable reference because
+                    /// the data is always present when in this state.
+                    pub fn #data_mut_method(&mut self) -> &mut #ty {
+                        self.#field.as_mut().unwrap()
+                    }
+                }
+            };
+
+            impls.push(impl_block);
+        }
     }
 
     Ok(impls)

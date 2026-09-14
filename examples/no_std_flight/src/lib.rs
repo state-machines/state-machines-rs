@@ -59,23 +59,12 @@ impl<C, S> FlightController<C, S> {
     }
 }
 
-// Note: Superstate data access methods like `checklist_complete_data_mut()` and
-// `engines_primed_data_mut()` are not yet fully implemented in the typestate API.
-// These would be used to access state-local storage for hierarchical states.
-//
-// When superstates are fully supported, you would access them like:
-//
-//   impl FlightController<ChecklistComplete> {
-//       pub fn set_armed(&mut self, armed: bool) {
-//           // Access ChecklistComplete state data here
-//       }
-//   }
-//
-//   impl FlightController<EnginesPrimed> {
-//       pub fn set_thrust(&mut self, thrust: u8) {
-//           // Access EnginesPrimed state data here
-//       }
-//   }
+// Superstate data (`Armed(Checklist)`) lives for as long as the machine is
+// anywhere inside the superstate: it is default-initialised when entering
+// `Armed`, carried across `verify` (ChecklistComplete -> EnginesPrimed), and
+// cleared when `launch` or `abort` leaves the superstate. While inside, the
+// guaranteed accessors `armed_data()` / `armed_data_mut()` are available on
+// every substate, alongside each leaf's own `*_data()` accessors.
 
 // Note: The typestate pattern requires consuming and returning the machine at each step.
 // The old runtime-based helper functions have been removed as they don't fit this pattern.
