@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.20.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-macro-v0.22.0...state-machines-macro-v0.20.0) (2026-09-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* `current_state()` returns the generated state enum instead of `&'static str`. Match on `{Machine}State` variants, or call `.name()` / `.to_string()` for the previous string form.
+
+### Features
+
+* add concrete context type support for embedded systems ([003500b](https://github.com/state-machines/state-machines-rs/commit/003500b9b2aeb2204dd7c060d8bbbc6fa0ca81f2))
+* add concrete context type support for embedded systems ([0fd546c](https://github.com/state-machines/state-machines-rs/commit/0fd546ccdf45797257fcaa9dfb1c8a47e6659a8e))
+* add dynamic dispatch mode for runtime event handling ([4472738](https://github.com/state-machines/state-machines-rs/commit/4472738f84252cb9db69acf68cf527825891765e))
+* add fallible async callbacks with rollback semantics ([082611f](https://github.com/state-machines/state-machines-rs/commit/082611f5ba33e668e21725bbf81442b9b4a8a005))
+* add introspection and visualization support with Mermaid/JSON export ([#5](https://github.com/state-machines/state-machines-rs/issues/5)) ([2416648](https://github.com/state-machines/state-machines-rs/commit/2416648368151caf8a07955ce96606bc7bf30d73))
+* add is_available_event to dynamic machines ([5547b26](https://github.com/state-machines/state-machines-rs/commit/5547b26896109cbe1e1d61979ab4e016942da694))
+* add state data accessors for dynamic mode (v0.6.0) ([4102b8f](https://github.com/state-machines/state-machines-rs/commit/4102b8f4d8e69e5db03439144de223af0dd94b92))
+* add state-local storage accessors for hierarchical states ([4d24314](https://github.com/state-machines/state-machines-rs/commit/4d243147771dd62b089be5a62b94deed81a49733))
+* add state-specific data accessors and automatic storage lifecycle ([d64f84f](https://github.com/state-machines/state-machines-rs/commit/d64f84fcefbd0cde802fab9352fe60e1a0fff813))
+* enforce snake_case event names with validation ([586fbda](https://github.com/state-machines/state-machines-rs/commit/586fbda2e9808e43b90a753dc192f33b6a82835a))
+* extract shared macro codegen and parser helpers ([cb8a98a](https://github.com/state-machines/state-machines-rs/commit/cb8a98a0b795f26dc4bf5b71b2c0ad2832840322))
+* generate can_&lt;event&gt; predicates in typestate mode ([38ae2d4](https://github.com/state-machines/state-machines-rs/commit/38ae2d48ca67a85cc41d0eda251632d8c5f7e615))
+* implement around callbacks with transaction-like semantics ([f117b83](https://github.com/state-machines/state-machines-rs/commit/f117b83945331c3380f2322f0e70400108a7bd1e))
+* implement global filtered callbacks block ([e7e4707](https://github.com/state-machines/state-machines-rs/commit/e7e4707ad135886a323e0899e4b4f2ff61cdebca))
+* implement Inspectable, enrich schema, drop dead introspection API ([3b6a2d8](https://github.com/state-machines/state-machines-rs/commit/3b6a2d8adc6a71cce4edfe0fe08f2461a3845df1))
+* implement SubstateOf trait and polymorphic superstate transitions ([0f95e4a](https://github.com/state-machines/state-machines-rs/commit/0f95e4aa85d4423aec8c5b475b095102e70d1e83))
+* implement superstate data lifecycle in typestate mode ([c69006b](https://github.com/state-machines/state-machines-rs/commit/c69006b5c71469f8164741b43583e71fd91d2edf))
+* typed runtime state enum for dynamic machines ([#12](https://github.com/state-machines/state-machines-rs/issues/12)) ([6f90319](https://github.com/state-machines/state-machines-rs/commit/6f903194d315679a1210b7907c97f7a437b7f0e6))
+* update criterioni package ([9d6d932](https://github.com/state-machines/state-machines-rs/commit/9d6d932fa5fc0ad4e623873fb062c7135a5b8837))
+
+
+### Bug Fixes
+
+* clippy error ([5e61436](https://github.com/state-machines/state-machines-rs/commit/5e61436e6e8af9c96ace8a544e1a122de2281dab))
+* enable cargo-workspace plugin and update internal deps to 0.7.0 ([296c963](https://github.com/state-machines/state-machines-rs/commit/296c963bb826cdc1b818edd453d31758dcf7a1fc))
+* generate superstate markers and avoid duplicate data() methods ([b0838f0](https://github.com/state-machines/state-machines-rs/commit/b0838f0312d16ff53939eaccaa8f4c8813317436))
+* inspect is optional feaature ([ed4c072](https://github.com/state-machines/state-machines-rs/commit/ed4c072243864f0602ee4df6271fd5fcdc700e89))
+* remove dead superstate blanket-impl codegen path ([6a744f9](https://github.com/state-machines/state-machines-rs/commit/6a744f9ca497e45ac2ece9b8ba664067020fc928))
+* storage rollback corruption and clippy compliance ([4e5a5fa](https://github.com/state-machines/state-machines-rs/commit/4e5a5fa980a0b2f7ebb773d7808040ce38b1180a))
+* suppress naming convention warnings in dynamic_dispatch test ([0b5cfa9](https://github.com/state-machines/state-machines-rs/commit/0b5cfa99bed7f086d1de0a962b8ae10fddd38a30))
+
 ## [0.22.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-macro-v0.21.0...state-machines-macro-v0.22.0) (2026-09-14)
 
 
