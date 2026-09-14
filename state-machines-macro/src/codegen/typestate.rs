@@ -53,14 +53,12 @@ pub fn generate_typestate_machine(machine: &StateMachine) -> Result<TokenStream2
     let machine_struct = generate_machine_struct(machine)?;
     let impls = generate_state_impls(machine)?;
     let substate_impls = generate_substate_impls(machine)?;
-    let superstate_transition_impls = generate_superstate_transition_impls(machine)?;
 
     Ok(quote! {
         #markers
         #machine_struct
         #( #impls )*
         #( #substate_impls )*
-        #( #superstate_transition_impls )*
     })
 }
 
@@ -924,110 +922,9 @@ fn generate_substate_impls(machine: &StateMachine) -> Result<Vec<TokenStream2>> 
     Ok(impls)
 }
 
-/// Generate blanket impl blocks for superstate transitions.
-///
-/// For transitions that originate from a superstate, we generate:
-/// ```rust,ignore
-/// impl<C, S: SubstateOf<Flight>> Machine<C, S> {
-///     pub fn abort(self) -> Result<Machine<C, Standby>, (Self, GuardError)> { ... }
-/// }
-/// ```
-///
-/// This allows the transition to be called from any substate of the superstate.
-fn generate_superstate_transition_impls(machine: &StateMachine) -> Result<Vec<TokenStream2>> {
-    let mut impls = Vec::new();
-    let machine_name = &machine.name;
-
-    // Group transitions by superstate
-    for superstate in machine.hierarchy.all_superstates() {
-        // Find all transitions that originate from this superstate
-        if let Some(edges) = machine.transition_graph.outgoing(&superstate) {
-            let methods: Vec<_> = edges
-                .iter()
-                .map(|edge| generate_superstate_transition_method(machine, &superstate, edge))
-                .collect::<Result<Vec<_>>>()?;
-
-            if !methods.is_empty() {
-                // Determine impl generics and type parameters for superstate transitions
-                let (impl_generics, type_params) = if machine.context.is_some() {
-                    // Concrete context (struct is Machine<S>)
-                    (
-                        quote! { <S: ::state_machines::SubstateOf<#superstate>> },
-                        quote! { <S> },
-                    )
-                } else {
-                    // Generic context (struct is Machine<C, S>)
-                    (
-                        quote! { <C, S: ::state_machines::SubstateOf<#superstate>> },
-                        quote! { <C, S> },
-                    )
-                };
-
-                let impl_block = quote! {
-                    impl #impl_generics #machine_name #type_params {
-                        #( #methods )*
-                    }
-                };
-                impls.push(impl_block);
-            }
-        }
-    }
-
-    Ok(impls)
-}
-
-/// Generate a transition method for a superstate transition.
-///
-/// Similar to generate_transition_method but works with generic substates.
-fn generate_superstate_transition_method(
-    machine: &StateMachine,
-    _superstate: &Ident,
-    edge: &TransitionEdge,
-) -> Result<TokenStream2> {
-    // This is similar to generate_transition_method but simpler
-    // since we don't have callbacks or guards at the superstate level yet
-    let machine_name = &machine.name;
-    let event_name = &edge.event;
-
-    // Convert event name to snake_case for the method name
-    let method_name = to_snake_case_ident(event_name);
-
-    let target_state = &edge.target;
-    let is_async = machine.async_mode;
-    let core_path = quote!(::state_machines::core);
-    let return_error_ty = if let Some(error_ty) = machine.error.as_ref() {
-        quote! { #core_path::EventError<#error_ty> }
-    } else {
-        quote! { #core_path::GuardError }
-    };
-
-    // Build method signature (no payload support for now)
-    let method_sig = if is_async {
-        quote! {
-            pub async fn #method_name(self)
-        }
-    } else {
-        quote! {
-            pub fn #method_name(self)
-        }
-    };
-
-    // Determine return type - depends on whether context is concrete or generic
-    let return_type = transition_return_type(machine, target_state, &return_error_ty);
-
-    // Build storage field transfers for target state
-    let storage_transfers = storage_transfers(machine, target_state);
-
-    Ok(quote! {
-        #method_sig -> #return_type {
-            // Create new machine with target state
-            let new_machine = #machine_name {
-                ctx: self.ctx,
-                _state: ::core::marker::PhantomData,
-                #( #storage_transfers, )*
-            };
-
-            ::core::result::Result::Ok(new_machine)
-        }
-    })
-}
+// Note: there is deliberately no blanket `impl<S: SubstateOf<Super>>` block
+// for superstate-sourced transitions. `build_transition_graph` expands a
+// superstate source to its descendant leaves, so each leaf gets a full
+// inherent transition method — guards, callbacks, and payloads included.
+// A blanket impl would duplicate those method names and make call sites
+// ambiguous without adding capability.
