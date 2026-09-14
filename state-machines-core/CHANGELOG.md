@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-core-v0.9.0...state-machines-core-v0.10.0) (2026-09-14)
+
+
+### Features
+
+* implement Inspectable, enrich schema, drop dead introspection API ([3b6a2d8](https://github.com/state-machines/state-machines-rs/commit/3b6a2d8adc6a71cce4edfe0fe08f2461a3845df1))
+
 ## [0.9.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-core-v0.8.0...state-machines-core-v0.9.0) (2026-03-22)
 
 
