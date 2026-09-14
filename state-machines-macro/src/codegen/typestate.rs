@@ -190,11 +190,14 @@ fn generate_state_impls(machine: &StateMachine) -> Result<Vec<TokenStream2>> {
             methods.push(constructor);
         }
 
-        // Generate transition methods for outgoing transitions
+        // Generate transition methods for outgoing transitions, plus a
+        // non-consuming can_<event>() predicate for each
         if let Some(edges) = machine.transition_graph.outgoing(state) {
             for edge in edges {
                 let method = generate_transition_method(machine, state, edge)?;
                 methods.push(method);
+                let can_method = generate_can_method(machine, edge)?;
+                methods.push(can_method);
             }
         }
 
@@ -844,6 +847,76 @@ fn generate_transition_method(
             }
         })
     }
+}
+
+/// Generate a `can_<event>()` predicate for a single edge.
+///
+/// The predicate evaluates the edge's guards and unless conditions without
+/// consuming the machine or running any callbacks, answering "would this
+/// event succeed right now?". Events with a payload take it by reference,
+/// since guards may inspect it. In async mode the predicate is async
+/// because guards are.
+fn generate_can_method(machine: &StateMachine, edge: &TransitionEdge) -> Result<TokenStream2> {
+    let event_name = &edge.event;
+    let snake = crate::codegen::utils::to_snake_case(&event_name.to_string());
+    let method_name = syn::Ident::new(&format!("can_{}", snake), event_name.span());
+    let is_async = machine.async_mode;
+
+    let (method_sig, payload_args) = if let Some(payload_ty) = &edge.payload {
+        let sig = if is_async {
+            quote! { pub async fn #method_name(&self, payload: &#payload_ty) }
+        } else {
+            quote! { pub fn #method_name(&self, payload: &#payload_ty) }
+        };
+        (sig, quote! { , payload })
+    } else {
+        let sig = if is_async {
+            quote! { pub async fn #method_name(&self) }
+        } else {
+            quote! { pub fn #method_name(&self) }
+        };
+        (sig, quote! {})
+    };
+
+    let maybe_await = if is_async {
+        quote! { .await }
+    } else {
+        quote! {}
+    };
+
+    let guard_checks: Vec<_> = edge
+        .guards
+        .iter()
+        .map(|guard| {
+            quote! {
+                if !self.#guard(&self.ctx #payload_args) #maybe_await {
+                    return false;
+                }
+            }
+        })
+        .collect();
+
+    let unless_checks: Vec<_> = edge
+        .unless
+        .iter()
+        .map(|guard| {
+            quote! {
+                if self.#guard(&self.ctx #payload_args) #maybe_await {
+                    return false;
+                }
+            }
+        })
+        .collect();
+
+    Ok(quote! {
+        /// Check whether this event's guards would allow the transition
+        /// right now, without consuming the machine or running callbacks.
+        #method_sig -> bool {
+            #( #guard_checks )*
+            #( #unless_checks )*
+            true
+        }
+    })
 }
 
 /// Generate storage accessor methods for state-local data.
