@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.21.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-v0.20.1...state-machines-v0.21.0) (2026-09-14)
+
+
+### Features
+
+* generate can_&lt;event&gt; predicates in typestate mode ([38ae2d4](https://github.com/state-machines/state-machines-rs/commit/38ae2d48ca67a85cc41d0eda251632d8c5f7e615))
+* implement global filtered callbacks block ([e7e4707](https://github.com/state-machines/state-machines-rs/commit/e7e4707ad135886a323e0899e4b4f2ff61cdebca))
+* implement Inspectable, enrich schema, drop dead introspection API ([3b6a2d8](https://github.com/state-machines/state-machines-rs/commit/3b6a2d8adc6a71cce4edfe0fe08f2461a3845df1))
+* implement superstate data lifecycle in typestate mode ([c69006b](https://github.com/state-machines/state-machines-rs/commit/c69006b5c71469f8164741b43583e71fd91d2edf))
+
+
+### Bug Fixes
+
+* remove dead superstate blanket-impl codegen path ([6a744f9](https://github.com/state-machines/state-machines-rs/commit/6a744f9ca497e45ac2ece9b8ba664067020fc928))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * state-machines-core bumped from 0.9.0 to 0.10.0
+    * state-machines-macro bumped from 0.21.0 to 0.22.0
+
 ## [0.20.1](https://github.com/state-machines/state-machines-rs/compare/state-machines-v0.20.0...state-machines-v0.20.1) (2026-06-27)
 
 
