@@ -1,14 +1,14 @@
 {
-  "state-machines": "0.21.0",
+  "state-machines": "0.21.1",
   "state-machines-core": "0.10.0",
-  "state-machines-macro": "0.22.0",
-  "examples/async_patterns": "0.1.7",
-  "examples/basic_transitions": "0.1.7",
-  "examples/callbacks_lifecycle": "0.1.7",
-  "examples/dynamic_dispatch_when": "0.1.7",
-  "examples/guards_and_validation": "0.1.7",
-  "examples/hierarchical_thinking": "0.1.7",
-  "examples/no_std_flight": "0.0.7",
+  "state-machines-macro": "0.20.0",
+  "examples/async_patterns": "0.1.8",
+  "examples/basic_transitions": "0.1.8",
+  "examples/callbacks_lifecycle": "0.1.8",
+  "examples/dynamic_dispatch_when": "0.1.8",
+  "examples/guards_and_validation": "0.1.8",
+  "examples/hierarchical_thinking": "0.1.8",
+  "examples/no_std_flight": "0.0.8",
   "state-machines-cli": "0.1.3",
-  "examples/traffic_light": "0.1.7"
+  "examples/traffic_light": "0.1.8"
 }
