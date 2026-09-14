@@ -24,9 +24,60 @@ pub struct StateMachine {
     pub state_storage: Vec<StateStorageSpec>,
     pub hierarchy: Hierarchy,
     pub events: Vec<Event>,
+    pub callbacks: GlobalCallbacks,
     pub async_mode: bool,
     pub dynamic_mode: bool,
     pub transition_graph: TransitionGraph,
+}
+
+/// A global callback with optional `from`/`to`/`on` filters.
+///
+/// Declared in the `callbacks:` block. A missing filter matches everything;
+/// `from`/`to` entries may name superstates, which match any descendant leaf.
+pub struct GlobalCallback {
+    pub name: Ident,
+    pub from: Option<Vec<Ident>>,
+    pub to: Option<Vec<Ident>>,
+    pub on: Option<Vec<Ident>>,
+}
+
+/// The `callbacks:` block: machine-wide callbacks applied to every
+/// transition that matches their filters.
+#[derive(Default)]
+pub struct GlobalCallbacks {
+    pub before: Vec<GlobalCallback>,
+    pub after: Vec<GlobalCallback>,
+    pub around: Vec<GlobalCallback>,
+}
+
+impl GlobalCallback {
+    /// Check whether this callback applies to a concrete edge.
+    ///
+    /// `source` and `target` are resolved leaf states; filter entries that
+    /// name a superstate are expanded to their descendant leaves.
+    pub fn matches(
+        &self,
+        hierarchy: &Hierarchy,
+        leaves: &[Ident],
+        source: &Ident,
+        target: &Ident,
+        event: &Ident,
+    ) -> bool {
+        let state_matches = |filter: &Option<Vec<Ident>>, state: &Ident| match filter {
+            None => true,
+            Some(entries) => entries.iter().any(|entry| {
+                hierarchy
+                    .expand_state(entry, leaves)
+                    .iter()
+                    .any(|leaf| leaf == state)
+            }),
+        };
+        let event_matches = match &self.on {
+            None => true,
+            Some(events) => events.iter().any(|e| e == event),
+        };
+        state_matches(&self.from, source) && state_matches(&self.to, target) && event_matches
+    }
 }
 
 /// Graph of all possible transitions between states.
@@ -40,6 +91,13 @@ pub struct TransitionGraph {
 }
 
 /// A single edge in the transition graph.
+///
+/// `before`/`after` hold event- and transition-level callbacks, which receive
+/// the event payload when one is declared. `global_before`/`global_after` hold
+/// matching callbacks from the `callbacks:` block; those are always invoked
+/// without a payload so a single method can serve every matching event.
+/// Matching global around callbacks are merged into `around` directly, since
+/// around callbacks never receive payloads.
 #[derive(Clone)]
 pub struct TransitionEdge {
     pub target: Ident,
@@ -49,37 +107,15 @@ pub struct TransitionEdge {
     pub before: Vec<Ident>,
     pub after: Vec<Ident>,
     pub around: Vec<Ident>,
+    pub global_before: Vec<Ident>,
+    pub global_after: Vec<Ident>,
     pub payload: Option<Type>,
 }
 
 impl TransitionGraph {
     /// Add a transition edge to the graph.
-    #[allow(clippy::too_many_arguments)]
-    pub fn add_edge(
-        &mut self,
-        source: &Ident,
-        target: Ident,
-        event: Ident,
-        guards: Vec<Ident>,
-        unless: Vec<Ident>,
-        before: Vec<Ident>,
-        after: Vec<Ident>,
-        around: Vec<Ident>,
-        payload: Option<Type>,
-    ) {
-        self.edges
-            .entry(source.to_string())
-            .or_default()
-            .push(TransitionEdge {
-                target,
-                event,
-                guards,
-                unless,
-                before,
-                after,
-                around,
-                payload,
-            });
+    pub fn add_edge(&mut self, source: &Ident, edge: TransitionEdge) {
+        self.edges.entry(source.to_string()).or_default().push(edge);
     }
 
     /// Get all outgoing transitions from a state.

@@ -200,6 +200,37 @@ impl StateMachine {
             }
         }
 
+        // Validate global callback filters
+
+        // Every state referenced in a `from`/`to` filter must be a declared
+        // leaf or superstate, and every event in an `on` filter must be a
+        // declared event. Otherwise a typo would silently never match.
+        let buckets = [
+            &self.callbacks.before,
+            &self.callbacks.after,
+            &self.callbacks.around,
+        ];
+        for callback in buckets.iter().copied().flatten() {
+            for filter in [&callback.from, &callback.to].into_iter().flatten() {
+                for state in filter {
+                    let is_leaf = self.states.iter().any(|s| s == state);
+                    let is_super = self.hierarchy.is_superstate(state);
+                    err_if(
+                        !(is_leaf || is_super),
+                        state.span(),
+                        "callback filter references a state not declared in `states` or superstates",
+                    )?;
+                }
+            }
+            for filter_event in callback.on.iter().flatten() {
+                err_if(
+                    !self.events.iter().any(|e| &e.name == filter_event),
+                    filter_event.span(),
+                    "callback `on` filter references an undeclared event",
+                )?;
+            }
+        }
+
         // All validation passed!
         Ok(())
     }

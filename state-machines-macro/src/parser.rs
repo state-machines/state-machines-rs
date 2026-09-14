@@ -29,6 +29,7 @@ impl Parse for StateMachine {
         let mut error = None;
         let mut states = None;
         let mut events = None;
+        let mut callbacks = GlobalCallbacks::default();
         let mut async_mode = false;
         let mut dynamic_mode = false;
         let mut state_storage = Vec::new();
@@ -86,8 +87,17 @@ impl Parse for StateMachine {
                         braced!(content in input);
                         events = Some(parse_events(&content)?);
                     }
+                    "callbacks" => {
+                        // Optional colon, mirroring `events`
+                        if input.peek(Token![:]) {
+                            input.parse::<Token![:]>()?;
+                        }
+                        let content;
+                        braced!(content in input);
+                        callbacks = parse_global_callbacks(&content)?;
+                    }
                     // Legacy fields - parse but ignore
-                    "state" | "action" | "callbacks" => {
+                    "state" | "action" => {
                         input.parse::<Token![:]>()?;
                         if input.peek(syn::token::Brace) {
                             let _content;
@@ -118,6 +128,7 @@ impl Parse for StateMachine {
             state_storage,
             hierarchy,
             events: events.unwrap_or_default(),
+            callbacks,
             async_mode,
             dynamic_mode,
             transition_graph: TransitionGraph::default(),
@@ -411,6 +422,107 @@ pub fn parse_events(input: &ParseBuffer<'_>) -> Result<Vec<Event>> {
     Ok(events)
 }
 
+/// Parse the `callbacks:` block of global, filterable callbacks.
+///
+/// ```ignore
+/// callbacks: {
+///     before_transition [
+///         { name: log_exit, from: [Active], on: [shutdown] }
+///     ],
+///     after_transition [
+///         { name: on_enter_ready, to: Ready }
+///     ],
+///     around_transition [
+///         { name: wrap_all }
+///     ]
+/// }
+/// ```
+///
+/// Each hook key takes a bracketed list of `{ name: ..., from: ..., to: ..., on: ... }`
+/// entries. `name` is required; the filters are optional and accept a single
+/// identifier or a bracketed list. `from`/`to` may name superstates.
+pub fn parse_global_callbacks(input: &ParseBuffer<'_>) -> Result<GlobalCallbacks> {
+    let mut callbacks = GlobalCallbacks::default();
+
+    while !input.is_empty() {
+        let key: Ident = input.parse()?;
+        let key_str = key.to_string();
+
+        let bucket = match key_str.as_str() {
+            "before_transition" => &mut callbacks.before,
+            "after_transition" => &mut callbacks.after,
+            "around_transition" => &mut callbacks.around,
+            _ => {
+                return Err(syn::Error::new(
+                    key.span(),
+                    format!(
+                        "unexpected key `{}` in `callbacks` (expected `before_transition`, `after_transition`, or `around_transition`)",
+                        key
+                    ),
+                ));
+            }
+        };
+
+        // Optional colon before the bracketed list
+        if input.peek(Token![:]) {
+            input.parse::<Token![:]>()?;
+        }
+
+        let list;
+        bracketed!(list in input);
+        while !list.is_empty() {
+            let entry;
+            braced!(entry in list);
+            bucket.push(parse_global_callback_entry(&entry)?);
+            skip_optional_comma(&list)?;
+        }
+
+        skip_optional_comma(input)?;
+    }
+
+    Ok(callbacks)
+}
+
+/// Parse a single `{ name: cb, from: ..., to: ..., on: ... }` entry.
+fn parse_global_callback_entry(input: &ParseBuffer<'_>) -> Result<GlobalCallback> {
+    let mut name = None;
+    let mut from = None;
+    let mut to = None;
+    let mut on = None;
+
+    while !input.is_empty() {
+        let key: Ident = input.parse()?;
+        let key_str = key.to_string();
+        input.parse::<Token![:]>()?;
+
+        match key_str.as_str() {
+            "name" => name = Some(input.parse()?),
+            "from" => from = Some(parse_state_set(input)?),
+            "to" => to = Some(parse_state_set(input)?),
+            "on" => on = Some(parse_ident_list_value(input)?),
+            _ => {
+                return Err(syn::Error::new(
+                    key.span(),
+                    format!(
+                        "unexpected key `{}` in callback entry (expected `name`, `from`, `to`, or `on`)",
+                        key
+                    ),
+                ));
+            }
+        }
+
+        skip_optional_comma(input)?;
+    }
+
+    Ok(GlobalCallback {
+        name: name
+            .ok_or_else(|| syn::Error::new(Span::call_site(), "callback entry missing `name`"))?,
+        from,
+        to,
+        on,
+    })
+}
+
 pub fn parse_transition(input: &ParseBuffer<'_>) -> Result<Transition> {
     let mut sources = None;
     let mut target = None;
@@ -587,19 +699,47 @@ impl StateMachine {
                         let mut all_after = event.after.clone();
                         all_after.extend(transition.after.clone());
 
-                        let mut all_around = event.around.clone();
+                        // Global callbacks whose filters match this concrete
+                        // edge. Around callbacks take no payload, so global
+                        // ones can share the around list; they are prepended
+                        // so machine-wide wrappers run outermost.
+                        let matching_globals = |bucket: &[GlobalCallback]| -> Vec<Ident> {
+                            bucket
+                                .iter()
+                                .filter(|cb| {
+                                    cb.matches(
+                                        &self.hierarchy,
+                                        &self.states,
+                                        &actual_source,
+                                        &resolved_target,
+                                        &event.name,
+                                    )
+                                })
+                                .map(|cb| cb.name.clone())
+                                .collect()
+                        };
+
+                        let global_before = matching_globals(&self.callbacks.before);
+                        let global_after = matching_globals(&self.callbacks.after);
+
+                        let mut all_around = matching_globals(&self.callbacks.around);
+                        all_around.extend(event.around.clone());
                         all_around.extend(transition.around.clone());
 
                         self.transition_graph.add_edge(
                             &actual_source,
-                            resolved_target.clone(),
-                            event.name.clone(),
-                            all_guards,
-                            all_unless,
-                            all_before,
-                            all_after,
-                            all_around,
-                            event.payload.clone(),
+                            TransitionEdge {
+                                target: resolved_target.clone(),
+                                event: event.name.clone(),
+                                guards: all_guards,
+                                unless: all_unless,
+                                before: all_before,
+                                after: all_after,
+                                around: all_around,
+                                global_before,
+                                global_after,
+                                payload: event.payload.clone(),
+                            },
                         );
                     }
                 }

@@ -461,8 +461,10 @@ fn generate_transition_method(
         }
     };
 
-    let callback_call = |receiver: TokenStream2, callback: &Ident| {
-        if edge.payload.is_some() {
+    // Global callbacks are always invoked without the payload so one method
+    // can serve every event its filters match, payload-carrying or not.
+    let callback_call = |receiver: TokenStream2, callback: &Ident, use_payload: bool| {
+        if use_payload && edge.payload.is_some() {
             if is_async {
                 quote! { #receiver.#callback(#payload_ref).await }
             } else {
@@ -540,32 +542,40 @@ fn generate_transition_method(
         guard_checks.push(check);
     }
 
+    let make_before_call = |callback: &Ident, use_payload: bool| {
+        let call = callback_call(quote! { self }, callback, use_payload);
+        if let Some(error_ty) = error_ty {
+            quote! {
+                let callback_result: ::core::result::Result<(), #error_ty> =
+                    #core_path::FallibleCallbackReturn::into_result(#call);
+                if let Err(source) = callback_result {
+                    return ::core::result::Result::Err((
+                        self,
+                        #core_path::EventError::callback(
+                            stringify!(#callback),
+                            stringify!(#event_name),
+                            source,
+                        ),
+                    ));
+                }
+            }
+        } else {
+            quote! {
+                let (): () = #call;
+            }
+        }
+    };
+
+    let global_before_calls: Vec<_> = edge
+        .global_before
+        .iter()
+        .map(|callback| make_before_call(callback, false))
+        .collect();
+
     let before_calls: Vec<_> = edge
         .before
         .iter()
-        .map(|callback| {
-            let call = callback_call(quote! { self }, callback);
-            if let Some(error_ty) = error_ty {
-                quote! {
-                    let callback_result: ::core::result::Result<(), #error_ty> =
-                        #core_path::FallibleCallbackReturn::into_result(#call);
-                    if let Err(source) = callback_result {
-                        return ::core::result::Result::Err((
-                            self,
-                            #core_path::EventError::callback(
-                                stringify!(#callback),
-                                stringify!(#event_name),
-                                source,
-                            ),
-                        ));
-                    }
-                }
-            } else {
-                quote! {
-                    let (): () = #call;
-                }
-            }
-        })
+        .map(|callback| make_before_call(callback, true))
         .collect();
 
     let source_field_bindings: Vec<_> = machine
@@ -582,38 +592,46 @@ fn generate_transition_method(
 
     let storage_transfers = storage_transfers(machine, target_state);
 
+    let make_after_call = |callback: &Ident, use_payload: bool| {
+        let call = callback_call(quote! { new_machine }, callback, use_payload);
+        if let Some(error_ty) = error_ty {
+            quote! {
+                let callback_result: ::core::result::Result<(), #error_ty> =
+                    #core_path::FallibleCallbackReturn::into_result(#call);
+                if let Err(source) = callback_result {
+                    let #machine_name { ctx, .. } = new_machine;
+                    let old_machine = #machine_name {
+                        ctx,
+                        _state: ::core::marker::PhantomData,
+                        #( #restore_source_fields, )*
+                    };
+                    return ::core::result::Result::Err((
+                        old_machine,
+                        #core_path::EventError::callback(
+                            stringify!(#callback),
+                            stringify!(#event_name),
+                            source,
+                        ),
+                    ));
+                }
+            }
+        } else {
+            quote! {
+                let (): () = #call;
+            }
+        }
+    };
+
     let after_calls: Vec<_> = edge
         .after
         .iter()
-        .map(|callback| {
-            let call = callback_call(quote! { new_machine }, callback);
-            if let Some(error_ty) = error_ty {
-                quote! {
-                    let callback_result: ::core::result::Result<(), #error_ty> =
-                        #core_path::FallibleCallbackReturn::into_result(#call);
-                    if let Err(source) = callback_result {
-                        let #machine_name { ctx, .. } = new_machine;
-                        let old_machine = #machine_name {
-                            ctx,
-                            _state: ::core::marker::PhantomData,
-                            #( #restore_source_fields, )*
-                        };
-                        return ::core::result::Result::Err((
-                            old_machine,
-                            #core_path::EventError::callback(
-                                stringify!(#callback),
-                                stringify!(#event_name),
-                                source,
-                            ),
-                        ));
-                    }
-                }
-            } else {
-                quote! {
-                    let (): () = #call;
-                }
-            }
-        })
+        .map(|callback| make_after_call(callback, true))
+        .collect();
+
+    let global_after_calls: Vec<_> = edge
+        .global_after
+        .iter()
+        .map(|callback| make_after_call(callback, false))
         .collect();
 
     let rollback_old_machine = quote! {
@@ -707,6 +725,7 @@ fn generate_transition_method(
             #method_sig -> #return_type {
                 #( #around_before_checks )*
                 #( #guard_checks )*
+                #( #global_before_calls )*
                 #( #before_calls )*
 
                 let #machine_name {
@@ -722,6 +741,7 @@ fn generate_transition_method(
                 };
 
                 #( #after_calls )*
+                #( #global_after_calls )*
                 #( #around_after_checks )*
 
                 ::core::result::Result::Ok(new_machine)
@@ -731,6 +751,7 @@ fn generate_transition_method(
         Ok(quote! {
             #method_sig -> #return_type {
                 #( #guard_checks )*
+                #( #global_before_calls )*
                 #( #before_calls )*
 
                 let #machine_name {
@@ -746,6 +767,7 @@ fn generate_transition_method(
                 };
 
                 #( #after_calls )*
+                #( #global_after_calls )*
 
                 ::core::result::Result::Ok(new_machine)
             }
