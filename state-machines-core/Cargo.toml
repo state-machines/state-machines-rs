@@ -18,6 +18,5 @@ serde_json = { version = "1.0", optional = true }
 
 [features]
 default = []
-typestate = []
 inspect = ["serde"]
 std = ["inspect", "serde_json"]

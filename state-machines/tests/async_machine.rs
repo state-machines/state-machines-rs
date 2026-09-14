@@ -110,10 +110,3 @@ fn async_engage_sequence_requires_authorization_and_stability() {
         assert!(AFTER_ENGAGE_CALLED.load(Ordering::SeqCst));
     });
 }
-
-// Metadata test commented out - typestate pattern doesn't use runtime metadata in the same way
-// #[test]
-// fn metadata_reflects_hyperdrive_machine() {
-//     let definition = HyperdriveController::definition();
-//     // ... metadata assertions
-// }

@@ -37,9 +37,11 @@ While learning Rust, I chose to port something familiar and widely used—so I c
 
 **Typestate Pattern** – Compile-time state safety using Rust's type system with zero runtime overhead
 
-**Guards & Unless** – Conditional transitions at event and transition levels
+**Guards & Unless** – Conditional transitions at event and transition levels, plus non-consuming `can_<event>()` predicates
 
-**Callbacks** – `before`/`after` hooks at event level
+**Callbacks** – `before`/`after` hooks at event and transition level
+
+**Global Filtered Callbacks** – Machine-wide `callbacks:` block with `from`/`to`/`on` filters; filtering on `to:`/`from:` doubles as state enter/exit hooks
 
 **Around Callbacks** – Wrap transitions with Before/AfterSuccess stages for transaction-like semantics
 
@@ -51,9 +53,11 @@ While learning Rust, I chose to port something familiar and widely used—so I c
 
 **Type-safe** – Invalid transitions become compile errors, not runtime errors
 
-**Hierarchical States** – Superstates with polymorphic transitions via SubstateOf trait
+**Hierarchical States** – Superstates with polymorphic transitions via SubstateOf trait, and superstate data that lives for the whole region
 
 **Dynamic Dispatch** – Runtime event dispatch for event-driven systems (opt-in via feature flag or explicit config)
+
+**Introspection** – `schema()` metadata with JSON and Mermaid rendering (via the `inspect` feature)
 
 ---
 

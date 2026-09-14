@@ -15,9 +15,8 @@ pub mod core {
 }
 
 pub use state_machines_core::{
-    AroundOutcome, AroundStage, CallbackError, DynamicError, EventDefinition, EventError, Machine,
-    MachineDefinition, MachineState, SubstateOf, SuperstateDefinition, TransitionContext,
-    TransitionDefinition, TransitionError, TransitionErrorKind, TransitionResult,
+    AroundOutcome, AroundStage, CallbackError, DynamicError, EventError, MachineState, SubstateOf,
+    TransitionError, TransitionErrorKind,
 };
 pub use state_machines_macro::state_machine;
 
@@ -26,55 +25,59 @@ pub use state_machines_core::{
     EventSchema, Inspectable, MachineSchema, SuperstateSchema, TransitionSchema,
 };
 
-/// Convenience macro for aborting an around callback with a guard-style error.
+/// Abort an around callback with a guard-style error.
+///
+/// Around callbacks receive an [`AroundStage`] and return an
+/// [`AroundOutcome`]; this macro builds the `Abort` arm without spelling
+/// out the [`TransitionError`](core::TransitionError) by hand.
 ///
 /// ```rust,ignore
-/// use state_machines::{abort_guard, core::{AroundOutcome, AroundStage, TransitionContext}};
+/// use state_machines::{abort_guard, core::{AroundOutcome, AroundStage}};
 ///
-/// fn guard(
-///     ctx: &TransitionContext<MyState>,
-///     stage: AroundStage,
-/// ) -> AroundOutcome<MyState> {
-///     if matches!(stage, AroundStage::Before) && !check_resources() {
-///         return abort_guard!(ctx, check_resources);
+/// fn resource_wrapper(&self, stage: AroundStage) -> AroundOutcome<Idle> {
+///     if matches!(stage, AroundStage::Before) && !self.check_resources() {
+///         // state marker, event name, failing guard
+///         return abort_guard!(Idle, "provision", check_resources);
 ///     }
 ///     AroundOutcome::Proceed
 /// }
 /// ```
 #[macro_export]
 macro_rules! abort_guard {
-    ($ctx:expr, $guard:ident) => {
+    ($from:expr, $event:expr, $guard:ident) => {
         $crate::core::AroundOutcome::Abort($crate::core::TransitionError::guard_failed(
-            $ctx.from,
-            $ctx.event,
+            $from,
+            $event,
             stringify!($guard),
         ))
     };
-    ($ctx:expr, $guard:expr) => {
+    ($from:expr, $event:expr, $guard:expr) => {
         $crate::core::AroundOutcome::Abort($crate::core::TransitionError::guard_failed(
-            $ctx.from, $ctx.event, $guard,
+            $from, $event, $guard,
         ))
     };
 }
 
-/// Build a custom transition error from within an around callback.
+/// Abort an around callback with a custom [`TransitionErrorKind`](core::TransitionErrorKind).
 ///
 /// ```rust,ignore
-/// use state_machines::{abort_with, core::{AroundOutcome, TransitionContext, TransitionErrorKind}};
+/// use state_machines::{abort_with, core::{AroundOutcome, AroundStage, TransitionErrorKind}};
 ///
-/// fn guard(ctx: &TransitionContext<MyState>) -> AroundOutcome<MyState> {
-///     if quota_exceeded() {
-///         return abort_with!(ctx, TransitionErrorKind::ActionFailed { action: "quota_check" });
+/// fn quota_wrapper(&self, stage: AroundStage) -> AroundOutcome<Idle> {
+///     if matches!(stage, AroundStage::Before) && self.quota_exceeded() {
+///         return abort_with!(Idle, "provision", TransitionErrorKind::ActionFailed {
+///             action: "quota_check",
+///         });
 ///     }
 ///     AroundOutcome::Proceed
 /// }
 /// ```
 #[macro_export]
 macro_rules! abort_with {
-    ($ctx:expr, $kind:expr) => {
+    ($from:expr, $event:expr, $kind:expr) => {
         $crate::core::AroundOutcome::Abort($crate::core::TransitionError {
-            from: $ctx.from,
-            event: $ctx.event,
+            from: $from,
+            event: $event,
             kind: $kind,
         })
     };

@@ -70,10 +70,3 @@ fn launch_sequence_obeys_guards() {
     // Invalid transitions don't compile in typestate, so we can't test them
     // The type system prevents request_clearance from being called on InFlight
 }
-
-// Metadata test commented out - typestate pattern doesn't use runtime metadata in the same way
-// #[test]
-// fn metadata_reflects_flight_deck_machine() {
-//     let definition = FlightDeckController::definition();
-//     // ... metadata assertions
-// }

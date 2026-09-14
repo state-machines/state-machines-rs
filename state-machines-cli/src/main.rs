@@ -106,56 +106,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         Commands::Example => {
+            use state_machines_core::schema::{EventSchema, TransitionSchema};
+
+            let simple_event = |name: &str, from: &str, to: &str| EventSchema {
+                name: name.into(),
+                transitions: vec![TransitionSchema {
+                    sources: vec![from.into()],
+                    target: to.into(),
+                    ..TransitionSchema::default()
+                }],
+                ..EventSchema::default()
+            };
+
             let example = MachineSchema {
                 name: "Door".into(),
                 initial: "Closed".into(),
                 states: vec!["Open".into(), "Closed".into(), "Locked".into()],
                 superstates: vec![],
                 events: vec![
-                    state_machines_core::schema::EventSchema {
-                        name: "open".into(),
-                        transitions: vec![state_machines_core::schema::TransitionSchema {
-                            sources: vec!["Closed".into()],
-                            target: "Open".into(),
-                            guards: vec![],
-                            unless: vec![],
-                        }],
-                        guards: vec![],
-                        payload: None,
-                    },
-                    state_machines_core::schema::EventSchema {
-                        name: "close".into(),
-                        transitions: vec![state_machines_core::schema::TransitionSchema {
-                            sources: vec!["Open".into()],
-                            target: "Closed".into(),
-                            guards: vec![],
-                            unless: vec![],
-                        }],
-                        guards: vec![],
-                        payload: None,
-                    },
-                    state_machines_core::schema::EventSchema {
-                        name: "lock".into(),
-                        transitions: vec![state_machines_core::schema::TransitionSchema {
-                            sources: vec!["Closed".into()],
-                            target: "Locked".into(),
-                            guards: vec![],
-                            unless: vec![],
-                        }],
-                        guards: vec![],
-                        payload: None,
-                    },
-                    state_machines_core::schema::EventSchema {
-                        name: "unlock".into(),
-                        transitions: vec![state_machines_core::schema::TransitionSchema {
-                            sources: vec!["Locked".into()],
-                            target: "Closed".into(),
-                            guards: vec![],
-                            unless: vec![],
-                        }],
-                        guards: vec![],
-                        payload: None,
-                    },
+                    simple_event("open", "Closed", "Open"),
+                    simple_event("close", "Open", "Closed"),
+                    simple_event("lock", "Closed", "Locked"),
+                    simple_event("unlock", "Locked", "Closed"),
                 ],
                 async_mode: false,
             };

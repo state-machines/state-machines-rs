@@ -74,12 +74,8 @@ fn around_callback_can_abort_at_before_stage() {
         fn abort_guard(&self, stage: AroundStage) -> AroundOutcome<Start> {
             match stage {
                 AroundStage::Before => {
-                    // Abort at Before stage
-                    AroundOutcome::Abort(state_machines::core::TransitionError::guard_failed(
-                        Start,
-                        "advance",
-                        "abort_guard",
-                    ))
+                    // Abort at Before stage using the helper macro
+                    state_machines::abort_guard!(Start, "advance", abort_guard)
                 }
                 AroundStage::AfterSuccess => {
                     // Should not be called

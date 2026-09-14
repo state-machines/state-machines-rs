@@ -69,8 +69,6 @@ pub enum TransitionErrorKind {
     ActionFailed { action: &'static str },
 }
 
-pub type TransitionResult<S> = Result<(), TransitionError<S>>;
-
 /// Error returned when a guard or around callback fails in typestate mode.
 ///
 /// In typestate machines, guards and around callbacks can fail even though the transition is valid.
@@ -246,31 +244,6 @@ impl<E> DynamicError<E> {
     }
 }
 
-pub trait Machine {
-    type State: MachineState;
-
-    fn state(&self) -> Self::State;
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TransitionContext<S>
-where
-    S: MachineState,
-{
-    pub from: S,
-    pub to: S,
-    pub event: &'static str,
-}
-
-impl<S> TransitionContext<S>
-where
-    S: MachineState,
-{
-    pub const fn new(from: S, to: S, event: &'static str) -> Self {
-        Self { from, to, event }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AroundStage {
     Before,
@@ -284,55 +257,4 @@ where
 {
     Proceed,
     Abort(TransitionError<S>),
-}
-
-#[derive(Debug, Clone)]
-pub struct TransitionDefinition<S>
-where
-    S: MachineState,
-{
-    pub sources: &'static [S],
-    pub target: S,
-    pub guards: &'static [&'static str],
-    pub unless: &'static [&'static str],
-    pub before: &'static [&'static str],
-    pub after: &'static [&'static str],
-    pub around: &'static [&'static str],
-}
-
-#[derive(Debug, Clone)]
-pub struct EventDefinition<S>
-where
-    S: MachineState,
-{
-    pub name: &'static str,
-    pub guards: &'static [&'static str],
-    pub before: &'static [&'static str],
-    pub after: &'static [&'static str],
-    pub around: &'static [&'static str],
-    pub payload: Option<&'static str>,
-    pub transitions: &'static [TransitionDefinition<S>],
-}
-
-#[derive(Debug, Clone)]
-pub struct SuperstateDefinition<S>
-where
-    S: MachineState,
-{
-    pub name: &'static str,
-    pub descendants: &'static [S],
-    pub initial: S,
-}
-
-#[derive(Debug, Clone)]
-pub struct MachineDefinition<S>
-where
-    S: MachineState,
-{
-    pub name: &'static str,
-    pub states: &'static [S],
-    pub initial: S,
-    pub async_mode: bool,
-    pub superstates: &'static [SuperstateDefinition<S>],
-    pub events: &'static [EventDefinition<S>],
 }

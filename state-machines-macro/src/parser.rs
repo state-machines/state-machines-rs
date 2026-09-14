@@ -96,16 +96,20 @@ impl Parse for StateMachine {
                         braced!(content in input);
                         callbacks = parse_global_callbacks(&content)?;
                     }
-                    // Legacy fields - parse but ignore
-                    "state" | "action" => {
-                        input.parse::<Token![:]>()?;
-                        if input.peek(syn::token::Brace) {
-                            let _content;
-                            braced!(_content in input);
-                            // Consume but ignore
-                        } else {
-                            let _: Ident = input.parse()?;
-                        }
+                    // Fields from the Ruby-era design that were never
+                    // implemented. Error loudly instead of silently
+                    // swallowing configuration the user expects to work.
+                    "state" => {
+                        return Err(syn::Error::new(
+                            key.span(),
+                            "`state` is not supported: states are types, not an enum; remove this field",
+                        ));
+                    }
+                    "action" => {
+                        return Err(syn::Error::new(
+                            key.span(),
+                            "`action` is not supported: use `callbacks: { before_transition [...] }` for machine-wide hooks",
+                        ));
                     }
                     _ => {
                         return Err(unexpected_key(&key));

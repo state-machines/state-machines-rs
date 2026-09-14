@@ -53,7 +53,13 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
         .iter()
         .map(|event| {
             let event_name = event.name.to_string();
-            let guards: Vec<String> = event.guards.iter().map(|g| g.to_string()).collect();
+            let to_strings =
+                |idents: &[syn::Ident]| idents.iter().map(|i| i.to_string()).collect::<Vec<_>>();
+            let guards = to_strings(&event.guards);
+            let unless = to_strings(&event.unless);
+            let before = to_strings(&event.before);
+            let after = to_strings(&event.after);
+            let around = to_strings(&event.around);
 
             // Generate transition schemas for this event
             let transition_schemas: Vec<TokenStream2> = event
@@ -63,10 +69,11 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
                     let sources: Vec<String> =
                         trans.sources.iter().map(|s| s.to_string()).collect();
                     let target_str = trans.target.to_string();
-                    let trans_guards: Vec<String> =
-                        trans.guards.iter().map(|g| g.to_string()).collect();
-                    let unless_guards: Vec<String> =
-                        trans.unless.iter().map(|g| g.to_string()).collect();
+                    let trans_guards = to_strings(&trans.guards);
+                    let trans_unless = to_strings(&trans.unless);
+                    let trans_before = to_strings(&trans.before);
+                    let trans_after = to_strings(&trans.after);
+                    let trans_around = to_strings(&trans.around);
 
                     quote! {
                         ::state_machines::TransitionSchema {
@@ -78,7 +85,16 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
                                 #( __sm_alloc::string::String::from(#trans_guards), )*
                             ],
                             unless: __sm_alloc::vec![
-                                #( __sm_alloc::string::String::from(#unless_guards), )*
+                                #( __sm_alloc::string::String::from(#trans_unless), )*
+                            ],
+                            before: __sm_alloc::vec![
+                                #( __sm_alloc::string::String::from(#trans_before), )*
+                            ],
+                            after: __sm_alloc::vec![
+                                #( __sm_alloc::string::String::from(#trans_after), )*
+                            ],
+                            around: __sm_alloc::vec![
+                                #( __sm_alloc::string::String::from(#trans_around), )*
                             ],
                         }
                     }
@@ -100,6 +116,18 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
                     ],
                     guards: __sm_alloc::vec![
                         #( __sm_alloc::string::String::from(#guards), )*
+                    ],
+                    unless: __sm_alloc::vec![
+                        #( __sm_alloc::string::String::from(#unless), )*
+                    ],
+                    before: __sm_alloc::vec![
+                        #( __sm_alloc::string::String::from(#before), )*
+                    ],
+                    after: __sm_alloc::vec![
+                        #( __sm_alloc::string::String::from(#after), )*
+                    ],
+                    around: __sm_alloc::vec![
+                        #( __sm_alloc::string::String::from(#around), )*
                     ],
                     payload: #payload_expr,
                 }
@@ -146,6 +174,14 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
                         ],
                         async_mode: #async_mode,
                     }
+                }
+            }
+
+            impl #impl_generics ::state_machines::Inspectable for #machine_name #type_params {
+                fn schema() -> ::state_machines::MachineSchema {
+                    // Delegates to the inherent method above (inherent
+                    // methods win over trait methods in path resolution).
+                    <#machine_name #type_params>::schema()
                 }
             }
         };

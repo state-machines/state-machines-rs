@@ -1,7 +1,8 @@
 //! Serializable schema types for state machine introspection.
 //!
-//! These types are decoupled from the generic `MachineDefinition<S>` types,
-//! allowing serialization to JSON, Mermaid, and other formats.
+//! Generated machines expose these through `schema()` (and the
+//! [`Inspectable`] trait) when the `inspect` feature is enabled, allowing
+//! serialization to JSON, Mermaid, and other formats.
 
 extern crate alloc;
 
@@ -14,7 +15,7 @@ fn is_false(b: &bool) -> bool {
 }
 
 /// Serializable representation of a state machine.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MachineSchema {
     pub name: String,
     pub initial: String,
@@ -27,7 +28,7 @@ pub struct MachineSchema {
 }
 
 /// Serializable representation of a superstate (hierarchical state).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SuperstateSchema {
     pub name: String,
     pub descendants: Vec<String>,
@@ -35,18 +36,26 @@ pub struct SuperstateSchema {
 }
 
 /// Serializable representation of an event.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EventSchema {
     pub name: String,
     pub transitions: Vec<TransitionSchema>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub guards: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unless: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub before: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub after: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub around: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload: Option<String>,
 }
 
 /// Serializable representation of a transition.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TransitionSchema {
     pub sources: Vec<String>,
     pub target: String,
@@ -54,6 +63,12 @@ pub struct TransitionSchema {
     pub guards: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unless: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub before: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub after: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub around: Vec<String>,
 }
 
 /// Trait for types that can provide their schema for introspection.
@@ -133,8 +148,15 @@ mod tests {
                         target: "Vacuum".into(),
                         guards: vec![],
                         unless: vec![],
+                        before: vec![],
+                        after: vec![],
+                        around: vec![],
                     }],
                     guards: vec![],
+                    unless: vec![],
+                    before: vec![],
+                    after: vec![],
+                    around: vec![],
                     payload: None,
                 },
                 EventSchema {
@@ -144,8 +166,15 @@ mod tests {
                         target: "Pressurized".into(),
                         guards: vec![],
                         unless: vec![],
+                        before: vec![],
+                        after: vec![],
+                        around: vec![],
                     }],
                     guards: vec![],
+                    unless: vec![],
+                    before: vec![],
+                    after: vec![],
+                    around: vec![],
                     payload: None,
                 },
             ],

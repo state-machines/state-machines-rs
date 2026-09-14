@@ -19,7 +19,6 @@
 //!
 //! state_machine! {
 //!     name: Door,
-//!     state: DoorState,
 //!     initial: Closed,
 //!     states: [Open, Closed],
 //!     events: {
@@ -44,27 +43,33 @@ mod validation;
 /// Define a state machine with compile-time guarantees.
 ///
 /// This macro generates:
-/// - A state enum with all defined states
-/// - A state machine struct with transition methods
+/// - A zero-sized marker type per state (typestate pattern)
+/// - A machine struct parameterized by state, with transition methods
+///   that consume the machine and return it typed to the target state
 /// - Event methods for triggering transitions (e.g., `open()`)
-/// - Can methods for checking if transitions are allowed (e.g., `can_open()`)
-/// - Default implementations
-/// - Machine trait implementation for introspection
+/// - Can methods for checking whether guards would allow a transition
+///   (e.g., `can_open()`)
+/// - Storage accessors for state- and superstate-associated data
+/// - With the `inspect` feature: a `schema()` method and an `Inspectable`
+///   impl exposing the machine's structure for JSON/Mermaid rendering
+/// - With `dynamic: true` (or the `dynamic` feature): a runtime-dispatch
+///   wrapper with an event enum, `handle()`, and availability queries
 ///
 /// # Syntax
 ///
 /// ```ignore
 /// state_machine! {
-///     name: MachineName,           // Required: name of the generated struct
-///     state: StateName,             // Required: name of the state enum
-///     initial: InitialState,        // Required: initial state
+///     name: MachineName,            // Required: name of the generated struct
+///     initial: InitialState,        // Required: initial state (a leaf)
+///     context: ContextType,         // Optional: concrete context type
+///     error: ErrorType,             // Optional: fallible callback error type
 ///     async: true,                  // Optional: enable async support
-///     action: action_method,        // Optional: method called on every transition
+///     dynamic: true,                // Optional: also generate dynamic wrapper
 ///
 ///     states: [                     // Required: list of states
 ///         StateA,
 ///         StateB(DataType),         // States can have associated data
-///         superstate Parent {       // Superstates for hierarchical machines
+///         superstate Parent(Data) { // Superstates for hierarchical machines
 ///             state Child1,
 ///             state Child2,
 ///             initial: Child1,      // Superstate's initial child
@@ -78,24 +83,26 @@ mod validation;
 ///             unless: [guard2],     // Optional: inverted guards
 ///             before: [callback1],  // Optional: before callbacks
 ///             after: [callback2],   // Optional: after callbacks
+///             around: [wrapper],    // Optional: around callbacks
 ///
 ///             transition: {
-///                 from: SourceState,
-///                 to: TargetState,
+///                 from: SourceState,    // Leaf, superstate, or [list]
+///                 to: TargetState,      // Leaf or superstate (initial child)
 ///                 guards: [guard3], // Optional: transition-level guards
 ///                 unless: [guard4], // Optional: transition-level unless
 ///                 before: [cb3],    // Optional: transition-level before
 ///                 after: [cb4],     // Optional: transition-level after
+///                 around: [cb5],    // Optional: transition-level around
 ///             }
 ///         }
 ///     },
 ///
-///     callbacks: {                  // Optional: global callbacks
+///     callbacks: {                  // Optional: global filtered callbacks
 ///         before_transition [
 ///             { name: log_transition, from: [StateA], to: [StateB], on: [event] }
 ///         ],
 ///         after_transition [
-///             { name: after_cb }
+///             { name: after_cb }    // No filters: every transition
 ///         ],
 ///         around_transition [
 ///             { name: wrap_cb }
@@ -104,29 +111,23 @@ mod validation;
 /// }
 /// ```
 ///
-/// # Generated Code
-///
-/// The macro generates:
-///
-/// 1. A state enum with all variants
-/// 2. A machine struct with:
-///    - `new()` constructor
-///    - `state()` accessor
-///    - Event methods (e.g., `activate()`)
-///    - Can methods (e.g., `can_activate()`)
-///    - Storage accessors for state-associated data
-/// 3. A `DEFINITION` constant for runtime introspection
-/// 4. Trait implementations (Machine, Default, Debug)
+/// Global callbacks run outermost: matching `before_transition` entries run
+/// before event/transition `before` callbacks, and `after_transition`
+/// entries run after the local `after` callbacks. Their filters accept
+/// superstates (matching any descendant), and they are always invoked
+/// without the event payload. Filtering on `to:` / `from:` provides state
+/// enter/exit hooks.
 ///
 /// # Features
 ///
 /// - **Type-safe transitions**: Invalid transitions are compile errors
 /// - **Guards**: Conditional transitions with guard methods
-/// - **Callbacks**: Execute code before/after/around transitions
-/// - **State data**: Associate data with specific states
+/// - **Callbacks**: Execute code before/after/around transitions, locally
+///   or machine-wide with filters
+/// - **State data**: Associate data with specific states or superstates
 /// - **Hierarchical states**: Superstates containing child states
 /// - **Async support**: Async guards, callbacks, and transitions
-/// - **Introspection**: Runtime metadata about the machine structure
+/// - **Introspection**: `schema()` metadata (with the `inspect` feature)
 ///
 /// # Learning Resource
 ///

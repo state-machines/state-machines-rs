@@ -17,7 +17,6 @@ use syn::{Ident, Type};
 pub struct StateMachine {
     pub name: Ident,
     pub initial: Ident,
-    #[allow(dead_code)]
     pub context: Option<Type>,
     pub error: Option<Type>,
     pub states: Vec<Ident>,

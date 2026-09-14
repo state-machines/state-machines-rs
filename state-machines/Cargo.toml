@@ -29,7 +29,6 @@ harness = false
 [features]
 default = []
 async = ["state-machines-macro/async"]
-typestate = []
 dynamic = ["state-machines-macro/dynamic"]
 inspect = ["state-machines-core/inspect"]
 std = ["inspect", "state-machines-core/std"]
