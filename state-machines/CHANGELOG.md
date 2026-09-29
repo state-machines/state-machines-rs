@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.21.1](https://github.com/state-machines/state-machines-rs/compare/state-machines-v0.21.0...state-machines-v0.21.1) (2026-09-29)
+
+
+### Bug Fixes
+
+* gate introspection on the linked state-machines inspect feature ([7dae9a4](https://github.com/state-machines/state-machines-rs/commit/7dae9a499fed6121028d7ebe4a29bb0d893a1256))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * state-machines-macro bumped from 0.22.0 to 0.22.1
+
 ## [0.21.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-v0.20.1...state-machines-v0.21.0) (2026-09-14)
 
 

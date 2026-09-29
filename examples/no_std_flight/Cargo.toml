@@ -1,6 +1,6 @@
 [package]
 name = "no_std_flight"
-version = "0.0.7"
+version = "0.0.8"
 edition = "2021"
 publish = false
 
