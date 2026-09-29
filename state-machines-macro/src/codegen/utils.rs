@@ -10,7 +10,9 @@
 //! And thus, this module was born, converting between PascalCase and snake_case
 //! so both the compiler and developers can live in harmony.
 
-use proc_macro2::Ident;
+use crate::types::StateMachine;
+use proc_macro2::{Ident, TokenStream as TokenStream2};
+use quote::{ToTokens, quote};
 
 /// Convert PascalCase or camelCase to snake_case.
 ///
@@ -80,6 +82,68 @@ pub fn to_pascal_case(s: &str) -> String {
                 None => String::new(),
                 Some(first) => first.to_uppercase().chain(chars).collect(),
             }
+        })
+        .collect()
+}
+
+/// The PascalCase event-enum variant for a snake_case event name.
+pub fn event_pascal(event: &Ident) -> Ident {
+    Ident::new(&to_pascal_case(&event.to_string()), event.span())
+}
+
+/// `<C>` when the context type is generic, nothing when it is concrete.
+pub fn ctx_generics(machine: &StateMachine) -> TokenStream2 {
+    if machine.context.is_some() {
+        quote! {}
+    } else {
+        quote! { <C> }
+    }
+}
+
+/// The type of the machine's `ctx` field: the concrete context, or `C`.
+pub fn ctx_ty(machine: &StateMachine) -> TokenStream2 {
+    match &machine.context {
+        Some(ctx) => quote! { #ctx },
+        None => quote! { C },
+    }
+}
+
+/// Type arguments of the machine struct in `state`: `<state>` with a
+/// concrete context, `<C, state>` with a generic one.
+pub fn machine_params(machine: &StateMachine, state: impl ToTokens) -> TokenStream2 {
+    if machine.context.is_some() {
+        quote! { <#state> }
+    } else {
+        quote! { <C, #state> }
+    }
+}
+
+/// `async` in async mode, nothing otherwise.
+pub fn maybe_async(is_async: bool) -> TokenStream2 {
+    if is_async {
+        quote! { async }
+    } else {
+        quote! {}
+    }
+}
+
+/// `.await` in async mode, nothing otherwise.
+pub fn maybe_await(is_async: bool) -> TokenStream2 {
+    if is_async {
+        quote! { .await }
+    } else {
+        quote! {}
+    }
+}
+
+/// Field initialisers that start every state-data slot empty.
+pub fn empty_storage_inits(machine: &StateMachine) -> Vec<TokenStream2> {
+    machine
+        .state_storage
+        .iter()
+        .map(|spec| {
+            let field = &spec.field;
+            quote! { #field: ::core::option::Option::None }
         })
         .collect()
 }

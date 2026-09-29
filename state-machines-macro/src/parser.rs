@@ -358,51 +358,28 @@ pub fn parse_events(input: &ParseBuffer<'_>) -> Result<Vec<Event>> {
         braced!(content in input);
 
         let mut transitions = Vec::new();
-        let mut guards = Vec::new();
-        let mut unless = Vec::new();
-        let mut before = Vec::new();
-        let mut after = Vec::new();
-        let mut around = Vec::new();
+        let mut hooks = Hooks::default();
         let mut payload = None;
 
         // Parse each field in the event block
         while !content.is_empty() {
             let key: Ident = content.parse()?;
             let key_str = key.to_string();
+            content.parse::<Token![:]>()?;
 
             match key_str.as_str() {
                 "transition" => {
-                    content.parse::<Token![:]>()?;
                     let block;
                     braced!(block in content);
                     transitions.push(parse_transition(&block)?);
                 }
-                "guards" => {
-                    content.parse::<Token![:]>()?;
-                    guards = parse_ident_list_value(&content)?;
-                }
-                "unless" => {
-                    content.parse::<Token![:]>()?;
-                    unless = parse_ident_list_value(&content)?;
-                }
-                "before" => {
-                    content.parse::<Token![:]>()?;
-                    before = parse_ident_list_value(&content)?;
-                }
-                "after" => {
-                    content.parse::<Token![:]>()?;
-                    after = parse_ident_list_value(&content)?;
-                }
-                "around" => {
-                    content.parse::<Token![:]>()?;
-                    around = parse_ident_list_value(&content)?;
-                }
                 "payload" => {
-                    content.parse::<Token![:]>()?;
                     payload = Some(content.parse()?);
                 }
-                _ => {
-                    return Err(unexpected_key(&key));
+                other => {
+                    if !hooks.parse_field(other, &content)? {
+                        return Err(unexpected_key(&key));
+                    }
                 }
             }
 
@@ -413,11 +390,7 @@ pub fn parse_events(input: &ParseBuffer<'_>) -> Result<Vec<Event>> {
             name,
             payload,
             transitions,
-            guards,
-            unless,
-            before,
-            after,
-            around,
+            hooks,
         });
 
         skip_optional_comma(input)?;
@@ -457,12 +430,10 @@ pub fn parse_global_callbacks(input: &ParseBuffer<'_>) -> Result<GlobalCallbacks
             "after_transition" => &mut callbacks.after,
             "around_transition" => &mut callbacks.around,
             _ => {
-                return Err(syn::Error::new(
-                    key.span(),
-                    format!(
-                        "unexpected key `{}` in `callbacks` (expected `before_transition`, `after_transition`, or `around_transition`)",
-                        key
-                    ),
+                return Err(unexpected_key_in(
+                    &key,
+                    "`callbacks`",
+                    "`before_transition`, `after_transition`, or `around_transition`",
                 ));
             }
         };
@@ -505,12 +476,10 @@ fn parse_global_callback_entry(input: &ParseBuffer<'_>) -> Result<GlobalCallback
             "to" => to = Some(parse_state_set(input)?),
             "on" => on = Some(parse_ident_list_value(input)?),
             _ => {
-                return Err(syn::Error::new(
-                    key.span(),
-                    format!(
-                        "unexpected key `{}` in callback entry (expected `name`, `from`, `to`, or `on`)",
-                        key
-                    ),
+                return Err(unexpected_key_in(
+                    &key,
+                    "callback entry",
+                    "`name`, `from`, `to`, or `on`",
                 ));
             }
         }
@@ -530,11 +499,7 @@ fn parse_global_callback_entry(input: &ParseBuffer<'_>) -> Result<GlobalCallback
 pub fn parse_transition(input: &ParseBuffer<'_>) -> Result<Transition> {
     let mut sources = None;
     let mut target = None;
-    let mut guards = Vec::new();
-    let mut unless = Vec::new();
-    let mut before = Vec::new();
-    let mut after = Vec::new();
-    let mut around = Vec::new();
+    let mut hooks = Hooks::default();
 
     while !input.is_empty() {
         let key: Ident = input.parse()?;
@@ -548,23 +513,10 @@ pub fn parse_transition(input: &ParseBuffer<'_>) -> Result<Transition> {
             "to" => {
                 target = Some(input.parse()?);
             }
-            "guards" => {
-                guards = parse_ident_list_value(input)?;
-            }
-            "unless" => {
-                unless = parse_ident_list_value(input)?;
-            }
-            "before" => {
-                before = parse_ident_list_value(input)?;
-            }
-            "after" => {
-                after = parse_ident_list_value(input)?;
-            }
-            "around" => {
-                around = parse_ident_list_value(input)?;
-            }
-            _ => {
-                return Err(unexpected_key(&key));
+            other => {
+                if !hooks.parse_field(other, input)? {
+                    return Err(unexpected_key(&key));
+                }
             }
         }
 
@@ -576,12 +528,27 @@ pub fn parse_transition(input: &ParseBuffer<'_>) -> Result<Transition> {
             .ok_or_else(|| syn::Error::new(Span::call_site(), "transition missing `from`"))?,
         target: target
             .ok_or_else(|| syn::Error::new(Span::call_site(), "transition missing `to`"))?,
-        guards,
-        unless,
-        before,
-        after,
-        around,
+        hooks,
     })
+}
+
+impl Hooks {
+    /// Parse the value of a hook-list key into its slot.
+    ///
+    /// Returns `false` without consuming input when `key` is not one of
+    /// `guards`, `unless`, `before`, `after`, or `around`.
+    fn parse_field(&mut self, key: &str, input: &ParseBuffer<'_>) -> Result<bool> {
+        let slot = match key {
+            "guards" => &mut self.guards,
+            "unless" => &mut self.unless,
+            "before" => &mut self.before,
+            "after" => &mut self.after,
+            "around" => &mut self.around,
+            _ => return Ok(false),
+        };
+        *slot = parse_ident_list_value(input)?;
+        Ok(true)
+    }
 }
 
 // ========== Helper Functions ==========
@@ -597,6 +564,17 @@ fn skip_optional_comma(input: &ParseBuffer<'_>) -> Result<()> {
 /// Build the standard "unexpected key" error anchored at the key's span.
 fn unexpected_key(key: &Ident) -> syn::Error {
     syn::Error::new(key.span(), format!("unexpected key `{}`", key))
+}
+
+/// Like [`unexpected_key`], naming the enclosing block and the accepted keys.
+fn unexpected_key_in(key: &Ident, block: &str, expected: &str) -> syn::Error {
+    syn::Error::new(
+        key.span(),
+        format!(
+            "unexpected key `{}` in {} (expected {})",
+            key, block, expected
+        ),
+    )
 }
 
 /// Parse an optional `(Type)` suffix used to attach data to a state.
@@ -681,6 +659,9 @@ impl StateMachine {
     pub fn build_transition_graph(&mut self) {
         for event in &self.events {
             for transition in &event.transitions {
+                // Event-level guards/callbacks run before transition-level ones
+                let hooks = event.hooks.merged(&transition.hooks);
+
                 // Expand source states (handle superstates)
                 for source in &transition.sources {
                     let expanded_sources = self.hierarchy.expand_state(source, &self.states);
@@ -690,19 +671,6 @@ impl StateMachine {
                         .unwrap_or_else(|| transition.target.clone());
 
                     for actual_source in expanded_sources {
-                        // Merge event-level and transition-level guards/callbacks
-                        let mut all_guards = event.guards.clone();
-                        all_guards.extend(transition.guards.clone());
-
-                        let mut all_unless = event.unless.clone();
-                        all_unless.extend(transition.unless.clone());
-
-                        let mut all_before = event.before.clone();
-                        all_before.extend(transition.before.clone());
-
-                        let mut all_after = event.after.clone();
-                        all_after.extend(transition.after.clone());
-
                         // Global callbacks whose filters match this concrete
                         // edge. Around callbacks take no payload, so global
                         // ones can share the around list; they are prepended
@@ -726,20 +694,17 @@ impl StateMachine {
                         let global_before = matching_globals(&self.callbacks.before);
                         let global_after = matching_globals(&self.callbacks.after);
 
-                        let mut all_around = matching_globals(&self.callbacks.around);
-                        all_around.extend(event.around.clone());
-                        all_around.extend(transition.around.clone());
+                        let mut edge_hooks = hooks.clone();
+                        edge_hooks
+                            .around
+                            .splice(0..0, matching_globals(&self.callbacks.around));
 
                         self.transition_graph.add_edge(
                             &actual_source,
                             TransitionEdge {
                                 target: resolved_target.clone(),
                                 event: event.name.clone(),
-                                guards: all_guards,
-                                unless: all_unless,
-                                before: all_before,
-                                after: all_after,
-                                around: all_around,
+                                hooks: edge_hooks,
                                 global_before,
                                 global_after,
                                 payload: event.payload.clone(),

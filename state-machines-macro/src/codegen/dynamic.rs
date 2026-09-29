@@ -5,29 +5,14 @@
 //! - The `dynamic` feature flag is enabled, OR
 //! - The macro explicitly specifies `dynamic: true`
 
-use crate::codegen::utils::{to_pascal_case, to_snake_case, to_snake_case_ident};
+use crate::codegen::utils::{
+    ctx_generics, ctx_ty, empty_storage_inits, event_pascal, machine_params, maybe_async,
+    maybe_await, to_snake_case, to_snake_case_ident,
+};
 use crate::types::*;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::Result;
-
-/// Generic parameters for the dynamic wrappers, as `(decl, decl)`.
-///
-/// Empty when the machine has a concrete context type; `<C>` when the context
-/// is generic. Both elements are identical and returned as a pair for ergonomic
-/// destructuring at call sites.
-fn context_generics(machine: &StateMachine) -> (TokenStream2, TokenStream2) {
-    if machine.context.is_some() {
-        (quote! {}, quote! {})
-    } else {
-        (quote! { <C> }, quote! { <C> })
-    }
-}
-
-/// The PascalCase event-enum variant ident for an edge's triggering event.
-fn edge_event_pascal(edge: &TransitionEdge) -> syn::Ident {
-    syn::Ident::new(&to_pascal_case(&edge.event.to_string()), edge.event.span())
-}
 
 /// The edges leaving `state`, flattened across the optional adjacency entry.
 fn outgoing_edges<'a>(
@@ -51,19 +36,12 @@ fn edge_guard_condition(
     is_async: bool,
     payload_ref: &TokenStream2,
 ) -> TokenStream2 {
-    let guard_checks = edge.guards.iter().map(|guard| {
-        if is_async {
-            quote! { machine.#guard(&machine.ctx #payload_ref).await }
-        } else {
-            quote! { machine.#guard(&machine.ctx #payload_ref) }
-        }
+    let maybe_await = maybe_await(is_async);
+    let guard_checks = edge.hooks.guards.iter().map(|guard| {
+        quote! { machine.#guard(&machine.ctx #payload_ref) #maybe_await }
     });
-    let unless_checks = edge.unless.iter().map(|guard| {
-        if is_async {
-            quote! { !machine.#guard(&machine.ctx #payload_ref).await }
-        } else {
-            quote! { !machine.#guard(&machine.ctx #payload_ref) }
-        }
+    let unless_checks = edge.hooks.unless.iter().map(|guard| {
+        quote! { !machine.#guard(&machine.ctx #payload_ref) #maybe_await }
     });
     quote! { true #( && #guard_checks )* #( && #unless_checks )* }
 }
@@ -105,8 +83,7 @@ fn generate_event_enum(machine: &StateMachine) -> Result<TokenStream2> {
     let event_name = quote::format_ident!("{}Event", machine_name);
 
     let enum_variants = machine.events.iter().map(|event| {
-        let pascal_name =
-            syn::Ident::new(&to_pascal_case(&event.name.to_string()), event.name.span());
+        let pascal_name = event_pascal(&event.name);
         if let Some(payload_ty) = &event.payload {
             quote! { #pascal_name(#payload_ty) }
         } else {
@@ -115,8 +92,7 @@ fn generate_event_enum(machine: &StateMachine) -> Result<TokenStream2> {
     });
 
     let match_arms = machine.events.iter().map(|event| {
-        let pascal_name =
-            syn::Ident::new(&to_pascal_case(&event.name.to_string()), event.name.span());
+        let pascal_name = event_pascal(&event.name);
         let name_str = event.name.to_string();
         if event.payload.is_some() {
             quote! { Self::#pascal_name(_) => #name_str }
@@ -157,25 +133,10 @@ fn generate_any_state_enum(machine: &StateMachine) -> Result<TokenStream2> {
     let any_state_name = quote::format_ident!("Any{}State", machine_name);
 
     // Generate enum variants for each state
-    let variants = if machine.context.is_some() {
-        // Concrete context: Machine<S> only
-        machine
-            .states
-            .iter()
-            .map(|state| {
-                quote! { #state(#machine_name<#state>) }
-            })
-            .collect::<Vec<_>>()
-    } else {
-        // Generic context: Machine<C, S>
-        machine
-            .states
-            .iter()
-            .map(|state| {
-                quote! { #state(#machine_name<C, #state>) }
-            })
-            .collect::<Vec<_>>()
-    };
+    let variants = machine.states.iter().map(|state| {
+        let params = machine_params(machine, state);
+        quote! { #state(#machine_name #params) }
+    });
 
     // Generate match arms for the name() method
     let name_arms = machine.states.iter().map(|state| {
@@ -183,8 +144,7 @@ fn generate_any_state_enum(machine: &StateMachine) -> Result<TokenStream2> {
         quote! { Self::#state(_) => #state_str }
     });
 
-    // Determine enum generics
-    let (enum_generics, impl_generics) = context_generics(machine);
+    let generics = ctx_generics(machine);
 
     Ok(quote! {
         /// Internal enum wrapping all typed state machines.
@@ -192,11 +152,11 @@ fn generate_any_state_enum(machine: &StateMachine) -> Result<TokenStream2> {
         /// This enables runtime polymorphism over different states while
         /// preserving the compile-time safety of the typestate pattern.
         #[derive(Debug)]
-        enum #any_state_name #enum_generics {
+        enum #any_state_name #generics {
             #(#variants,)*
         }
 
-        impl #impl_generics #any_state_name #enum_generics {
+        impl #generics #any_state_name #generics {
             /// Get the name of the current state.
             fn name(&self) -> &'static str {
                 match self {
@@ -229,15 +189,17 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
     let state_enum_name = quote::format_ident!("{}State", machine_name);
     let initial_state = &machine.initial;
     let is_async = machine.async_mode;
-    let dynamic_error_ty = if let Some(error_ty) = machine.error.as_ref() {
-        quote! { state_machines::DynamicError<#error_ty> }
-    } else {
-        quote! { state_machines::DynamicError }
-    };
-    let dynamic_error_ctor = if let Some(error_ty) = machine.error.as_ref() {
-        quote! { state_machines::DynamicError::<#error_ty> }
-    } else {
-        quote! { state_machines::DynamicError }
+    let maybe_async = maybe_async(is_async);
+    let maybe_await = maybe_await(is_async);
+    let (dynamic_error_ty, dynamic_error_ctor) = match &machine.error {
+        Some(error_ty) => (
+            quote! { state_machines::DynamicError<#error_ty> },
+            quote! { state_machines::DynamicError::<#error_ty> },
+        ),
+        None => (
+            quote! { state_machines::DynamicError },
+            quote! { state_machines::DynamicError },
+        ),
     };
     let map_event_error = if machine.error.is_some() {
         quote! { state_machines::DynamicError::from_event_error(err) }
@@ -250,10 +212,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
 
     for event in &machine.events {
         let event_snake = &event.name; // snake_case from macro definition
-        let event_pascal = syn::Ident::new(
-            &to_pascal_case(&event_snake.to_string()),
-            event_snake.span(),
-        );
+        let event_pascal = event_pascal(event_snake);
         let event_method = to_snake_case_ident(event_snake); // method name (already snake_case)
 
         // Get all transitions for this event from the transition graph
@@ -267,53 +226,18 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
                         // Generate the match arm for this transition
                         // Use event_pascal for enum variant matching
                         // Use event_method for calling the snake_case typestate method
-                        let arm = if event.payload.is_some() {
-                            if is_async {
-                                quote! {
-                                    (#any_state_name::#source_state(m), #event_name::#event_pascal(payload)) => {
-                                        match m.#event_method(payload).await {
-                                            Ok(new_machine) => #any_state_name::#target_state(new_machine),
-                                            Err((old_machine, err)) => {
-                                                self.inner = ::core::option::Option::Some(#any_state_name::#source_state(old_machine));
-                                                return Err(#map_event_error);
-                                            }
-                                        }
-                                    }
-                                }
-                            } else {
-                                quote! {
-                                    (#any_state_name::#source_state(m), #event_name::#event_pascal(payload)) => {
-                                        match m.#event_method(payload) {
-                                            Ok(new_machine) => #any_state_name::#target_state(new_machine),
-                                            Err((old_machine, err)) => {
-                                                self.inner = ::core::option::Option::Some(#any_state_name::#source_state(old_machine));
-                                                return Err(#map_event_error);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        } else if is_async {
-                            quote! {
-                                (#any_state_name::#source_state(m), #event_name::#event_pascal) => {
-                                    match m.#event_method().await {
-                                        Ok(new_machine) => #any_state_name::#target_state(new_machine),
-                                        Err((old_machine, err)) => {
-                                            self.inner = ::core::option::Option::Some(#any_state_name::#source_state(old_machine));
-                                            return Err(#map_event_error);
-                                        }
-                                    }
-                                }
-                            }
+                        let (payload_pattern, payload_arg) = if event.payload.is_some() {
+                            (quote! { (payload) }, quote! { payload })
                         } else {
-                            quote! {
-                                (#any_state_name::#source_state(m), #event_name::#event_pascal) => {
-                                    match m.#event_method() {
-                                        Ok(new_machine) => #any_state_name::#target_state(new_machine),
-                                        Err((old_machine, err)) => {
-                                            self.inner = ::core::option::Option::Some(#any_state_name::#source_state(old_machine));
-                                            return Err(#map_event_error);
-                                        }
+                            (quote! {}, quote! {})
+                        };
+                        let arm = quote! {
+                            (#any_state_name::#source_state(m), #event_name::#event_pascal #payload_pattern) => {
+                                match m.#event_method(#payload_arg) #maybe_await {
+                                    Ok(new_machine) => #any_state_name::#target_state(new_machine),
+                                    Err((old_machine, err)) => {
+                                        self.inner = ::core::option::Option::Some(#any_state_name::#source_state(old_machine));
+                                        return Err(#map_event_error);
                                     }
                                 }
                             }
@@ -338,17 +262,15 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
         }
     };
 
-    let handle_sig = if is_async {
-        quote! { pub async fn handle(&mut self, event: #event_name) -> Result<(), #dynamic_error_ty> }
-    } else {
-        quote! { pub fn handle(&mut self, event: #event_name) -> Result<(), #dynamic_error_ty> }
+    let handle_sig = quote! {
+        pub #maybe_async fn handle(&mut self, event: #event_name) -> Result<(), #dynamic_error_ty>
     };
 
     let available_event_arms = machine.states.iter().map(|state| {
         let checks = outgoing_edges(machine, state)
             .filter(|edge| edge.payload.is_none())
             .map(|edge| {
-                let event_pascal = edge_event_pascal(edge);
+                let event_pascal = event_pascal(&edge.event);
                 let condition = edge_guard_condition(edge, is_async, &quote! {});
                 quote! {
                     if #condition {
@@ -374,7 +296,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
     let is_available_event_arms = machine.states.iter().flat_map(|state| {
         outgoing_edges(machine, state)
             .map(|edge| {
-                let event_pascal = edge_event_pascal(edge);
+                let event_pascal = event_pascal(&edge.event);
                 let (event_pattern, payload_ref) = if edge.payload.is_some() {
                     (
                         quote! { #event_name::#event_pascal(payload) },
@@ -394,79 +316,39 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
             .collect::<Vec<_>>()
     });
 
-    let available_events_method = if is_async {
-        quote! {
-            /// Return the payload-free events currently enabled by state and guards.
-            ///
-            /// Events with payloads are omitted because their guards cannot be
-            /// evaluated without a payload value.
-            pub async fn get_available_events(
-                &self,
-            ) -> ::state_machines::__private::Vec<#event_name> {
-                #[allow(unused_mut)]
-                let mut events = ::state_machines::__private::Vec::new();
-                match self.inner.as_ref()
-                    .expect("dynamic machine in invalid state")
-                {
-                    #( #available_event_arms, )*
-                }
-                events
+    let available_events_method = quote! {
+        /// Return the payload-free events currently enabled by state and guards.
+        ///
+        /// Events with payloads are omitted because their guards cannot be
+        /// evaluated without a payload value.
+        pub #maybe_async fn get_available_events(
+            &self,
+        ) -> ::state_machines::__private::Vec<#event_name> {
+            #[allow(unused_mut)]
+            let mut events = ::state_machines::__private::Vec::new();
+            match self.inner.as_ref()
+                .expect("dynamic machine in invalid state")
+            {
+                #( #available_event_arms, )*
             }
-
-            /// Return whether this event is enabled by the current state and guards.
-            pub async fn is_available_event(&self, event: &#event_name) -> bool {
-                match (
-                    self.inner.as_ref()
-                        .expect("dynamic machine in invalid state"),
-                    event,
-                ) {
-                    #( #is_available_event_arms, )*
-                    _ => false,
-                }
-            }
+            events
         }
-    } else {
-        quote! {
-            /// Return the payload-free events currently enabled by state and guards.
-            ///
-            /// Events with payloads are omitted because their guards cannot be
-            /// evaluated without a payload value.
-            pub fn get_available_events(
-                &self,
-            ) -> ::state_machines::__private::Vec<#event_name> {
-                #[allow(unused_mut)]
-                let mut events = ::state_machines::__private::Vec::new();
-                match self.inner.as_ref()
-                    .expect("dynamic machine in invalid state")
-                {
-                    #( #available_event_arms, )*
-                }
-                events
-            }
 
-            /// Return whether this event is enabled by the current state and guards.
-            pub fn is_available_event(&self, event: &#event_name) -> bool {
-                match (
-                    self.inner.as_ref()
-                        .expect("dynamic machine in invalid state"),
-                    event,
-                ) {
-                    #( #is_available_event_arms, )*
-                    _ => false,
-                }
+        /// Return whether this event is enabled by the current state and guards.
+        pub #maybe_async fn is_available_event(&self, event: &#event_name) -> bool {
+            match (
+                self.inner.as_ref()
+                    .expect("dynamic machine in invalid state"),
+                event,
+            ) {
+                #( #is_available_event_arms, )*
+                _ => false,
             }
         }
     };
 
-    // Determine struct and impl generics based on context
-    let (struct_generics, impl_generics, ctx_param_ty, any_state_generics) =
-        if let Some(concrete_ctx) = &machine.context {
-            // Concrete context: no generics, specific context type
-            (quote! {}, quote! {}, quote! { #concrete_ctx }, quote! {})
-        } else {
-            // Generic context
-            (quote! { <C> }, quote! { <C> }, quote! { C }, quote! { <C> })
-        };
+    let generics = ctx_generics(machine);
+    let ctx_param_ty = ctx_ty(machine);
 
     let state_variants = &machine.states;
     let state_name_arms = machine.states.iter().map(|state| {
@@ -486,12 +368,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
                 #state_enum_name::#state => #any_state_name::#state(#machine_name::new(ctx))
             };
         }
-        let storage_inits = machine.state_storage.iter().map(|spec| {
-            let field = &spec.field;
-            quote! {
-                #field: ::core::option::Option::None
-            }
-        });
+        let storage_inits = empty_storage_inits(machine);
         quote! {
             #state_enum_name::#state => #any_state_name::#state(
                 #machine_name {
@@ -644,11 +521,11 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
         /// for dispatching events at runtime. Use this when events come from external
         /// sources and can't be determined at compile time.
         #[derive(Debug)]
-        pub struct #dynamic_name #struct_generics {
-            inner: ::core::option::Option<#any_state_name #any_state_generics>,
+        pub struct #dynamic_name #generics {
+            inner: ::core::option::Option<#any_state_name #generics>,
         }
 
-        impl #impl_generics #dynamic_name #struct_generics {
+        impl #generics #dynamic_name #generics {
             /// Create a new dynamic machine in the declared initial state.
             pub fn new(ctx: #ctx_param_ty) -> Self {
                 Self {
@@ -720,104 +597,51 @@ fn generate_conversions(machine: &StateMachine) -> Result<TokenStream2> {
     let dynamic_name = quote::format_ident!("Dynamic{}", machine_name);
     let any_state_name = quote::format_ident!("Any{}State", machine_name);
 
-    // Determine context type for conversions
-    let (impl_generics, dynamic_generics) = context_generics(machine);
+    let generics = ctx_generics(machine);
 
     // Generate into_dynamic() methods for each state
-    let into_dynamic_methods =
-        if machine.context.is_some() {
-            // Concrete context: Machine<S>
-            machine.states.iter().map(|state| {
-            quote! {
-                impl #machine_name<#state> {
-                    /// Convert this typestate machine into a dynamic wrapper.
-                    ///
-                    /// This allows runtime event dispatch at the cost of losing
-                    /// compile-time guarantees about state transitions.
-                    pub fn into_dynamic(self) -> #dynamic_name {
-                        #dynamic_name {
-                            inner: ::core::option::Option::Some(#any_state_name::#state(self)),
-                        }
+    let into_dynamic_methods = machine.states.iter().map(|state| {
+        let params = machine_params(machine, state);
+        quote! {
+            impl #generics #machine_name #params {
+                /// Convert this typestate machine into a dynamic wrapper.
+                ///
+                /// This allows runtime event dispatch at the cost of losing
+                /// compile-time guarantees about state transitions.
+                pub fn into_dynamic(self) -> #dynamic_name #generics {
+                    #dynamic_name {
+                        inner: ::core::option::Option::Some(#any_state_name::#state(self)),
                     }
                 }
             }
-        }).collect::<Vec<_>>()
-        } else {
-            // Generic context: Machine<C, S>
-            machine.states.iter().map(|state| {
-            quote! {
-                impl<C> #machine_name<C, #state> {
-                    /// Convert this typestate machine into a dynamic wrapper.
-                    ///
-                    /// This allows runtime event dispatch at the cost of losing
-                    /// compile-time guarantees about state transitions.
-                    pub fn into_dynamic(self) -> #dynamic_name<C> {
-                        #dynamic_name {
-                            inner: ::core::option::Option::Some(#any_state_name::#state(self)),
-                        }
-                    }
-                }
-            }
-        }).collect::<Vec<_>>()
-        };
+        }
+    });
 
     // Generate into_{state}() methods for extracting typed machines
-    let extract_methods = if machine.context.is_some() {
-        // Concrete context: Machine<S>
-        machine
-            .states
-            .iter()
-            .map(|state| {
-                let method_name =
-                    quote::format_ident!("into_{}", to_snake_case(&state.to_string()));
-                quote! {
-                    /// Try to extract a typestate machine in the `#state` state.
-                    ///
-                    /// Returns `Ok` if the machine is currently in this state,
-                    /// otherwise returns `Err(self)` so you can try another state.
-                    pub fn #method_name(mut self) -> Result<#machine_name<#state>, Self> {
-                        match self.inner.take() {
-                            ::core::option::Option::Some(#any_state_name::#state(m)) => Ok(m),
-                            other => {
-                                self.inner = other;
-                                Err(self)
-                            }
-                        }
+    let extract_methods = machine.states.iter().map(|state| {
+        let method_name = quote::format_ident!("into_{}", to_snake_case(&state.to_string()));
+        let params = machine_params(machine, state);
+        quote! {
+            /// Try to extract a typestate machine in the `#state` state.
+            ///
+            /// Returns `Ok` if the machine is currently in this state,
+            /// otherwise returns `Err(self)` so you can try another state.
+            pub fn #method_name(mut self) -> Result<#machine_name #params, Self> {
+                match self.inner.take() {
+                    ::core::option::Option::Some(#any_state_name::#state(m)) => Ok(m),
+                    other => {
+                        self.inner = other;
+                        Err(self)
                     }
                 }
-            })
-            .collect::<Vec<_>>()
-    } else {
-        // Generic context: Machine<C, S>
-        machine
-            .states
-            .iter()
-            .map(|state| {
-                let method_name =
-                    quote::format_ident!("into_{}", to_snake_case(&state.to_string()));
-                quote! {
-                    /// Try to extract a typestate machine in the `#state` state.
-                    ///
-                    /// Returns `Ok` if the machine is currently in this state,
-                    /// otherwise returns `Err(self)` so you can try another state.
-                    pub fn #method_name(mut self) -> Result<#machine_name<C, #state>, Self> {
-                        match self.inner.take() {
-                            ::core::option::Option::Some(#any_state_name::#state(m)) => Ok(m),
-                            other => {
-                                self.inner = other;
-                                Err(self)
-                            }
-                        }
-                    }
-                }
-            })
-            .collect::<Vec<_>>()
-    };
+            }
+        }
+    });
 
     Ok(quote! {
         #(#into_dynamic_methods)*
 
-        impl #impl_generics #dynamic_name #dynamic_generics {
+        impl #generics #dynamic_name #generics {
             #(#extract_methods)*
         }
     })

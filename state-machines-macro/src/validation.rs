@@ -3,7 +3,6 @@
 //! This module ensures that the state machine definition is valid
 //! before we try to generate code. It checks for:
 //! - Valid initial state (must be a leaf, not a superstate)
-//! - No duplicate states
 //! - Event names follow snake_case convention
 //! - Event names don't claim `schema` (reserved for introspection)
 //! - All events have at least one transition
@@ -14,7 +13,6 @@
 use crate::codegen::utils::to_snake_case;
 use crate::types::*;
 use proc_macro2::Span;
-use std::collections::HashSet;
 use syn::Result;
 
 /// Return a spanned validation error when `cond` holds.
@@ -103,16 +101,8 @@ impl StateMachine {
             "`initial` must be a member of `states`",
         )?;
 
-        // Validate states
-
-        // Check for duplicate state names
-        // Using a HashSet to track seen names
-        let mut seen = HashSet::new();
-        for state in &self.states {
-            if !seen.insert(state.to_string()) {
-                return Err(syn::Error::new(state.span(), "duplicate state"));
-            }
-        }
+        // Duplicate states are rejected while parsing, with the offending
+        // span, so they never reach validation.
 
         // Validate events and transitions
 
@@ -269,6 +259,28 @@ mod tests {
         .unwrap_err();
 
         assert!(err.to_string().contains("`schema` is reserved"), "{err}");
+    }
+
+    #[test]
+    fn rejects_duplicate_states() {
+        let top_level = validate(quote! {
+            name: Doc,
+            initial: Draft,
+            states: [Draft, Draft],
+        })
+        .unwrap_err();
+        assert!(
+            top_level.to_string().contains("duplicate state"),
+            "{top_level}"
+        );
+
+        let nested = validate(quote! {
+            name: Doc,
+            initial: Draft,
+            states: [Draft, superstate Review { state Draft }],
+        })
+        .unwrap_err();
+        assert!(nested.to_string().contains("duplicate state"), "{nested}");
     }
 
     #[test]

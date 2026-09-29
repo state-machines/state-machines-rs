@@ -91,21 +91,18 @@ pub struct TransitionGraph {
 
 /// A single edge in the transition graph.
 ///
-/// `before`/`after` hold event- and transition-level callbacks, which receive
-/// the event payload when one is declared. `global_before`/`global_after` hold
-/// matching callbacks from the `callbacks:` block; those are always invoked
-/// without a payload so a single method can serve every matching event.
-/// Matching global around callbacks are merged into `around` directly, since
-/// around callbacks never receive payloads.
+/// `hooks` merges event- and transition-level lists; its `before`/`after`
+/// callbacks receive the event payload when one is declared.
+/// `global_before`/`global_after` hold matching callbacks from the
+/// `callbacks:` block; those are always invoked without a payload so a single
+/// method can serve every matching event. Matching global around callbacks
+/// are merged into `hooks.around` directly, since around callbacks never
+/// receive payloads.
 #[derive(Clone)]
 pub struct TransitionEdge {
     pub target: Ident,
     pub event: Ident,
-    pub guards: Vec<Ident>,
-    pub unless: Vec<Ident>,
-    pub before: Vec<Ident>,
-    pub after: Vec<Ident>,
-    pub around: Vec<Ident>,
+    pub hooks: Hooks,
     pub global_before: Vec<Ident>,
     pub global_after: Vec<Ident>,
     pub payload: Option<Type>,
@@ -135,11 +132,7 @@ pub struct Event {
     pub name: Ident,
     pub payload: Option<Type>,
     pub transitions: Vec<Transition>,
-    pub guards: Vec<Ident>,
-    pub unless: Vec<Ident>,
-    pub before: Vec<Ident>,
-    pub after: Vec<Ident>,
-    pub around: Vec<Ident>,
+    pub hooks: Hooks,
 }
 
 /// A single transition within an event.
@@ -149,11 +142,33 @@ pub struct Event {
 pub struct Transition {
     pub sources: Vec<Ident>,
     pub target: Ident,
+    pub hooks: Hooks,
+}
+
+/// The guard and callback lists declarable on an event or a transition.
+#[derive(Clone, Default)]
+pub struct Hooks {
     pub guards: Vec<Ident>,
     pub unless: Vec<Ident>,
     pub before: Vec<Ident>,
     pub after: Vec<Ident>,
     pub around: Vec<Ident>,
+}
+
+impl Hooks {
+    /// These hooks followed by `inner`'s, list by list, so event-level
+    /// entries run before transition-level ones.
+    pub fn merged(&self, inner: &Hooks) -> Hooks {
+        let concat =
+            |outer: &[Ident], inner: &[Ident]| outer.iter().chain(inner).cloned().collect();
+        Hooks {
+            guards: concat(&self.guards, &inner.guards),
+            unless: concat(&self.unless, &inner.unless),
+            before: concat(&self.before, &inner.before),
+            after: concat(&self.after, &inner.after),
+            around: concat(&self.around, &inner.around),
+        }
+    }
 }
 
 /// Specification for state-associated storage.

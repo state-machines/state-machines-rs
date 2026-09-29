@@ -38,7 +38,10 @@
 //! }
 //! ```
 
-use crate::codegen::utils::to_snake_case_ident;
+use crate::codegen::utils::{
+    ctx_generics, ctx_ty, empty_storage_inits, machine_params, maybe_async, maybe_await,
+    to_snake_case, to_snake_case_ident,
+};
 use crate::types::*;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
@@ -146,18 +149,12 @@ fn generate_machine_struct(machine: &StateMachine) -> Result<TokenStream2> {
         })
         .collect();
 
-    // Determine struct generics and context field type
-    let (struct_generics, ctx_ty) = if let Some(concrete_ctx) = &machine.context {
-        // Concrete context: only generic over state
-        (quote! { <S> }, quote! { #concrete_ctx })
-    } else {
-        // Generic context: generic over both context and state
-        (quote! { <C, S> }, quote! { C })
-    };
+    let struct_params = machine_params(machine, quote! { S });
+    let ctx_ty = ctx_ty(machine);
 
     Ok(quote! {
         #[derive(Debug)]
-        pub struct #machine_name #struct_generics {
+        pub struct #machine_name #struct_params {
             ctx: #ctx_ty,
             _state: ::core::marker::PhantomData<S>,
             #( #storage_fields, )*
@@ -180,6 +177,8 @@ fn generate_machine_struct(machine: &StateMachine) -> Result<TokenStream2> {
 /// 5. Returns Result with new typed machine or original machine with error
 fn generate_state_impls(machine: &StateMachine) -> Result<Vec<TokenStream2>> {
     let mut impls = Vec::new();
+    let machine_name = &machine.name;
+    let generics = ctx_generics(machine);
 
     for state in &machine.states {
         let mut methods = Vec::new();
@@ -201,19 +200,9 @@ fn generate_state_impls(machine: &StateMachine) -> Result<Vec<TokenStream2>> {
             }
         }
 
-        let machine_name = &machine.name;
-
-        // Determine impl generics and type parameters
-        let (impl_generics, type_params) = if machine.context.is_some() {
-            // Concrete context: impl for specific state only (struct is Machine<S>)
-            (quote! {}, quote! { <#state> })
-        } else {
-            // Generic context: impl generic over C (struct is Machine<C, S>)
-            (quote! { <C> }, quote! { <C, #state> })
-        };
-
+        let params = machine_params(machine, state);
         let impl_block = quote! {
-            impl #impl_generics #machine_name #type_params {
+            impl #generics #machine_name #params {
                 #( #methods )*
             }
         };
@@ -224,19 +213,10 @@ fn generate_state_impls(machine: &StateMachine) -> Result<Vec<TokenStream2>> {
     // Generate generic impl block with storage accessors (Option-based)
     if !machine.state_storage.is_empty() {
         let storage_accessors = generate_storage_accessors(machine)?;
-        let machine_name = &machine.name;
-
-        // Determine impl generics for storage accessors
-        let (impl_generics, type_params) = if machine.context.is_some() {
-            // Concrete context: impl generic only over state (struct is Machine<S>)
-            (quote! { <S> }, quote! { <S> })
-        } else {
-            // Generic context: impl generic over both (struct is Machine<C, S>)
-            (quote! { <C, S> }, quote! { <C, S> })
-        };
+        let params = machine_params(machine, quote! { S });
 
         let generic_impl = quote! {
-            impl #impl_generics #machine_name #type_params {
+            impl #params #machine_name #params {
                 #( #storage_accessors )*
             }
         };
@@ -287,23 +267,8 @@ fn generate_constructor(machine: &StateMachine, _state: &Ident) -> Result<TokenS
     // constructing a machine never requires the data type to implement
     // Default. Data is auto-initialised when a transition enters its state;
     // use the Option-returning accessors before the first transition.
-    let storage_inits: Vec<_> = machine
-        .state_storage
-        .iter()
-        .map(|spec| {
-            let field = &spec.field;
-            quote! {
-                #field: ::core::option::Option::None
-            }
-        })
-        .collect();
-
-    // Determine context parameter type
-    let ctx_param_ty = if let Some(concrete_ctx) = &machine.context {
-        quote! { #concrete_ctx }
-    } else {
-        quote! { C }
-    };
+    let storage_inits = empty_storage_inits(machine);
+    let ctx_param_ty = ctx_ty(machine);
 
     Ok(quote! {
         pub fn new(ctx: #ctx_param_ty) -> Self {
@@ -314,6 +279,104 @@ fn generate_constructor(machine: &StateMachine, _state: &Ident) -> Result<TokenS
             }
         }
     })
+}
+
+/// Check whether a storage spec's owning state covers the given leaf state.
+///
+/// A leaf spec covers only itself; a superstate spec covers every
+/// descendant leaf.
+fn spec_covers(machine: &StateMachine, spec: &StateStorageSpec, leaf: &Ident) -> bool {
+    if machine.hierarchy.is_superstate(&spec.state_name) {
+        machine
+            .hierarchy
+            .expand_state(&spec.state_name, &machine.states)
+            .iter()
+            .any(|member| member == leaf)
+    } else {
+        &spec.state_name == leaf
+    }
+}
+
+/// `field: __sm_prev_field` — moves a storage field through the local it was
+/// destructured into, in either direction.
+fn prev_binding(field: &Ident) -> TokenStream2 {
+    let local = quote::format_ident!("__sm_prev_{}", field);
+    quote! { #field: #local }
+}
+
+/// Build the per-field storage initialisers for the machine in its target state.
+///
+/// Leaf-state data: the target's field is default-initialised, every other
+/// leaf field is reset to `None`.
+///
+/// Superstate data lives as long as the machine stays anywhere inside the
+/// superstate: entering from outside default-initialises it, moving between
+/// two of its substates carries the previous value over (via the
+/// `__sm_prev_*` locals bound from the source machine), and leaving clears
+/// it back to `None`.
+fn storage_transfers(
+    machine: &StateMachine,
+    source_state: &Ident,
+    target_state: &Ident,
+) -> Vec<TokenStream2> {
+    machine
+        .state_storage
+        .iter()
+        .map(|spec| {
+            let field = &spec.field;
+            let ty = &spec.ty;
+            let init = quote! {
+                #field: ::core::option::Option::Some(<#ty as ::core::default::Default>::default())
+            };
+            let clear = quote! { #field: ::core::option::Option::None };
+            if machine.hierarchy.is_superstate(&spec.state_name) {
+                let source_inside = spec_covers(machine, spec, source_state);
+                let target_inside = spec_covers(machine, spec, target_state);
+                match (source_inside, target_inside) {
+                    (true, true) => prev_binding(field),
+                    (false, true) => init,
+                    _ => clear,
+                }
+            } else if &spec.state_name == target_state {
+                init
+            } else {
+                clear
+            }
+        })
+        .collect()
+}
+
+/// Fields whose previous value is moved into the new machine (superstate
+/// data on an intra-superstate transition). Rollback paths must rebind
+/// these from the new machine, since the `__sm_prev_*` local was consumed.
+fn preserved_storage_fields(
+    machine: &StateMachine,
+    source_state: &Ident,
+    target_state: &Ident,
+) -> Vec<Ident> {
+    machine
+        .state_storage
+        .iter()
+        .filter(|spec| {
+            machine.hierarchy.is_superstate(&spec.state_name)
+                && spec_covers(machine, spec, source_state)
+                && spec_covers(machine, spec, target_state)
+        })
+        .map(|spec| spec.field.clone())
+        .collect()
+}
+
+/// One side of a transition method: before the machine is moved into its
+/// target state, or after.
+struct Phase {
+    /// The machine callbacks are invoked on.
+    receiver: TokenStream2,
+    /// The `AroundStage` variant passed to around callbacks.
+    stage: TokenStream2,
+    /// Statements that rebuild `owner` before an early return.
+    rollback: TokenStream2,
+    /// The pre-transition machine handed back in the `Err` tuple.
+    owner: TokenStream2,
 }
 
 /// Generate a transition method for a single edge in the transition graph.
@@ -346,111 +409,6 @@ fn generate_constructor(machine: &StateMachine, _state: &Ident) -> Result<TokenS
 ///     Ok(new_machine)
 /// }
 /// ```
-/// Build the `Result<...>` return type for a transition method.
-///
-/// The success variant is the machine specialised to `target_state`; the error
-/// variant carries `(Self, return_error_ty)`. The generic `C` context parameter
-/// is included only when the machine has no concrete context type.
-fn transition_return_type(
-    machine: &StateMachine,
-    target_state: &Ident,
-    return_error_ty: &TokenStream2,
-) -> TokenStream2 {
-    let machine_name = &machine.name;
-    if machine.context.is_some() {
-        quote! {
-            ::core::result::Result<#machine_name<#target_state>, (Self, #return_error_ty)>
-        }
-    } else {
-        quote! {
-            ::core::result::Result<#machine_name<C, #target_state>, (Self, #return_error_ty)>
-        }
-    }
-}
-
-/// Check whether a storage spec's owning state covers the given leaf state.
-///
-/// A leaf spec covers only itself; a superstate spec covers every
-/// descendant leaf.
-fn spec_covers(machine: &StateMachine, spec: &StateStorageSpec, leaf: &Ident) -> bool {
-    if machine.hierarchy.is_superstate(&spec.state_name) {
-        machine
-            .hierarchy
-            .expand_state(&spec.state_name, &machine.states)
-            .iter()
-            .any(|member| member == leaf)
-    } else {
-        &spec.state_name == leaf
-    }
-}
-
-/// Build the per-field storage initialisers for the machine in its target state.
-///
-/// Leaf-state data: the target's field is default-initialised, every other
-/// leaf field is reset to `None`.
-///
-/// Superstate data lives as long as the machine stays anywhere inside the
-/// superstate: entering from outside default-initialises it, moving between
-/// two of its substates carries the previous value over (via the
-/// `__sm_prev_*` locals bound from the source machine), and leaving clears
-/// it back to `None`.
-fn storage_transfers(
-    machine: &StateMachine,
-    source_state: &Ident,
-    target_state: &Ident,
-) -> Vec<TokenStream2> {
-    machine
-        .state_storage
-        .iter()
-        .map(|spec| {
-            let field = &spec.field;
-            let ty = &spec.ty;
-            if machine.hierarchy.is_superstate(&spec.state_name) {
-                let source_inside = spec_covers(machine, spec, source_state);
-                let target_inside = spec_covers(machine, spec, target_state);
-                match (source_inside, target_inside) {
-                    (true, true) => {
-                        let local = quote::format_ident!("__sm_prev_{}", field);
-                        quote! { #field: #local }
-                    }
-                    (false, true) => quote! {
-                        #field: ::core::option::Option::Some(<#ty as ::core::default::Default>::default())
-                    },
-                    _ => quote! { #field: ::core::option::Option::None },
-                }
-            } else if &spec.state_name == target_state {
-                quote! {
-                    #field: ::core::option::Option::Some(<#ty as ::core::default::Default>::default())
-                }
-            } else {
-                quote! {
-                    #field: ::core::option::Option::None
-                }
-            }
-        })
-        .collect()
-}
-
-/// Fields whose previous value is moved into the new machine (superstate
-/// data on an intra-superstate transition). Rollback paths must rebind
-/// these from the new machine, since the `__sm_prev_*` local was consumed.
-fn preserved_storage_fields(
-    machine: &StateMachine,
-    source_state: &Ident,
-    target_state: &Ident,
-) -> Vec<Ident> {
-    machine
-        .state_storage
-        .iter()
-        .filter(|spec| {
-            machine.hierarchy.is_superstate(&spec.state_name)
-                && spec_covers(machine, spec, source_state)
-                && spec_covers(machine, spec, target_state)
-        })
-        .map(|spec| spec.field.clone())
-        .collect()
-}
-
 fn generate_transition_method(
     machine: &StateMachine,
     source_state: &Ident,
@@ -460,33 +418,22 @@ fn generate_transition_method(
     let event_name = &edge.event;
     let method_name = to_snake_case_ident(event_name);
     let target_state = &edge.target;
-    let is_async = machine.async_mode;
+    let maybe_async = maybe_async(machine.async_mode);
+    let maybe_await = maybe_await(machine.async_mode);
     let core_path = quote!(::state_machines::core);
     let error_ty = machine.error.as_ref();
 
-    let (method_sig, payload_ref) = if let Some(payload_ty) = &edge.payload {
-        let sig = if is_async {
-            quote! {
-                pub async fn #method_name(mut self, payload: #payload_ty)
-            }
-        } else {
-            quote! {
-                pub fn #method_name(mut self, payload: #payload_ty)
-            }
-        };
-        (sig, quote! { &payload })
-    } else {
-        let sig = if is_async {
-            quote! {
-                pub async fn #method_name(mut self)
-            }
-        } else {
-            quote! {
-                pub fn #method_name(mut self)
-            }
-        };
-        (sig, quote! {})
+    // Guards and local callbacks borrow the payload; the method takes it by value.
+    let (payload_param, payload_ref) = match &edge.payload {
+        Some(payload_ty) => (quote! { , payload: #payload_ty }, quote! { &payload }),
+        None => (quote! {}, quote! {}),
     };
+    let guard_args = if edge.payload.is_some() {
+        quote! { , #payload_ref }
+    } else {
+        quote! {}
+    };
+    let method_sig = quote! { pub #maybe_async fn #method_name(mut self #payload_param) };
 
     let return_error_ty = if let Some(error_ty) = error_ty {
         quote! { #core_path::EventError<#error_ty> }
@@ -494,164 +441,54 @@ fn generate_transition_method(
         quote! { #core_path::GuardError }
     };
 
-    let return_type = transition_return_type(machine, target_state, &return_error_ty);
+    let target_params = machine_params(machine, target_state);
+    let return_type = quote! {
+        ::core::result::Result<#machine_name #target_params, (Self, #return_error_ty)>
+    };
 
-    let guard_error = |guard: &Ident| {
+    // With a declared error type, guard failures travel inside `EventError`.
+    let wrap_guard_error = |err: TokenStream2| {
         if error_ty.is_some() {
-            quote! {
-                #core_path::EventError::guard(
-                    #core_path::GuardError::new(stringify!(#guard), stringify!(#event_name))
-                )
-            }
+            quote! { #core_path::EventError::guard(#err) }
         } else {
-            quote! {
-                #core_path::GuardError::new(stringify!(#guard), stringify!(#event_name))
+            err
+        }
+    };
+
+    let kind_error = wrap_guard_error(quote! {
+        #core_path::GuardError::with_kind(callback_name, stringify!(#event_name), err.kind)
+    });
+
+    // `guards` reject when they return false, `unless` when they return true.
+    let guard_check = |guard: &Ident, reject_when: TokenStream2| {
+        let guard_error = wrap_guard_error(quote! {
+            #core_path::GuardError::new(stringify!(#guard), stringify!(#event_name))
+        });
+        quote! {
+            if #reject_when self.#guard(&self.ctx #guard_args) #maybe_await {
+                return ::core::result::Result::Err((self, #guard_error));
             }
         }
     };
 
-    let kind_error = || {
-        if error_ty.is_some() {
-            quote! {
-                #core_path::EventError::guard(
-                    #core_path::GuardError::with_kind(callback_name, stringify!(#event_name), err.kind)
-                )
-            }
-        } else {
-            quote! {
-                #core_path::GuardError::with_kind(callback_name, stringify!(#event_name), err.kind)
-            }
-        }
-    };
-
-    // Global callbacks are always invoked without the payload so one method
-    // can serve every event its filters match, payload-carrying or not.
-    let callback_call = |receiver: TokenStream2, callback: &Ident, use_payload: bool| {
-        if use_payload && edge.payload.is_some() {
-            if is_async {
-                quote! { #receiver.#callback(#payload_ref).await }
-            } else {
-                quote! { #receiver.#callback(#payload_ref) }
-            }
-        } else if is_async {
-            quote! { #receiver.#callback().await }
-        } else {
-            quote! { #receiver.#callback() }
-        }
-    };
-
-    let mut guard_checks = Vec::new();
-    for guard in &edge.guards {
-        let guard_error = guard_error(guard);
-        let check = if edge.payload.is_some() {
-            if is_async {
-                quote! {
-                    if !self.#guard(&self.ctx, #payload_ref).await {
-                        return ::core::result::Result::Err((self, #guard_error));
-                    }
-                }
-            } else {
-                quote! {
-                    if !self.#guard(&self.ctx, #payload_ref) {
-                        return ::core::result::Result::Err((self, #guard_error));
-                    }
-                }
-            }
-        } else if is_async {
-            quote! {
-                if !self.#guard(&self.ctx).await {
-                    return ::core::result::Result::Err((self, #guard_error));
-                }
-            }
-        } else {
-            quote! {
-                if !self.#guard(&self.ctx) {
-                    return ::core::result::Result::Err((self, #guard_error));
-                }
-            }
-        };
-        guard_checks.push(check);
-    }
-
-    for guard in &edge.unless {
-        let guard_error = guard_error(guard);
-        let check = if edge.payload.is_some() {
-            if is_async {
-                quote! {
-                    if self.#guard(&self.ctx, #payload_ref).await {
-                        return ::core::result::Result::Err((self, #guard_error));
-                    }
-                }
-            } else {
-                quote! {
-                    if self.#guard(&self.ctx, #payload_ref) {
-                        return ::core::result::Result::Err((self, #guard_error));
-                    }
-                }
-            }
-        } else if is_async {
-            quote! {
-                if self.#guard(&self.ctx).await {
-                    return ::core::result::Result::Err((self, #guard_error));
-                }
-            }
-        } else {
-            quote! {
-                if self.#guard(&self.ctx) {
-                    return ::core::result::Result::Err((self, #guard_error));
-                }
-            }
-        };
-        guard_checks.push(check);
-    }
-
-    let make_before_call = |callback: &Ident, use_payload: bool| {
-        let call = callback_call(quote! { self }, callback, use_payload);
-        if let Some(error_ty) = error_ty {
-            quote! {
-                let callback_result: ::core::result::Result<(), #error_ty> =
-                    #core_path::FallibleCallbackReturn::into_result(#call);
-                if let Err(source) = callback_result {
-                    return ::core::result::Result::Err((
-                        self,
-                        #core_path::EventError::callback(
-                            stringify!(#callback),
-                            stringify!(#event_name),
-                            source,
-                        ),
-                    ));
-                }
-            }
-        } else {
-            quote! {
-                let (): () = #call;
-            }
-        }
-    };
-
-    let global_before_calls: Vec<_> = edge
-        .global_before
+    let guard_checks: Vec<_> = edge
+        .hooks
+        .guards
         .iter()
-        .map(|callback| make_before_call(callback, false))
-        .collect();
-
-    let before_calls: Vec<_> = edge
-        .before
-        .iter()
-        .map(|callback| make_before_call(callback, true))
+        .map(|guard| guard_check(guard, quote! { ! }))
+        .chain(
+            edge.hooks
+                .unless
+                .iter()
+                .map(|guard| guard_check(guard, quote! {})),
+        )
         .collect();
 
     let source_field_bindings: Vec<_> = machine
         .state_storage
         .iter()
-        .map(|spec| {
-            let field = &spec.field;
-            let local = quote::format_ident!("__sm_prev_{}", field);
-            quote! { #field: #local }
-        })
+        .map(|spec| prev_binding(&spec.field))
         .collect();
-
-    let restore_source_fields = source_field_bindings.clone();
 
     let storage_transfers = storage_transfers(machine, source_state, target_state);
 
@@ -659,28 +496,53 @@ fn generate_transition_method(
     // local; rollback paths recover it from the new machine by rebinding
     // the same local name in the destructuring pattern.
     let preserved_rebinds: Vec<_> = preserved_storage_fields(machine, source_state, target_state)
-        .into_iter()
-        .map(|field| {
-            let local = quote::format_ident!("__sm_prev_{}", field);
-            quote! { #field: #local }
-        })
+        .iter()
+        .map(prev_binding)
         .collect();
 
-    let make_after_call = |callback: &Ident, use_payload: bool| {
-        let call = callback_call(quote! { new_machine }, callback, use_payload);
+    let before = Phase {
+        receiver: quote! { self },
+        stage: quote! { Before },
+        rollback: quote! {},
+        owner: quote! { self },
+    };
+    let after = Phase {
+        receiver: quote! { new_machine },
+        stage: quote! { AfterSuccess },
+        rollback: quote! {
+            let #machine_name { ctx, #( #preserved_rebinds, )* .. } = new_machine;
+            let old_machine = #machine_name {
+                ctx,
+                _state: ::core::marker::PhantomData,
+                #( #source_field_bindings, )*
+            };
+        },
+        owner: quote! { old_machine },
+    };
+
+    // Global callbacks are always invoked without the payload so one method
+    // can serve every event its filters match, payload-carrying or not.
+    let callback_step = |phase: &Phase, callback: &Ident, use_payload: bool| {
+        let Phase {
+            receiver,
+            rollback,
+            owner,
+            ..
+        } = phase;
+        let args = if use_payload {
+            payload_ref.clone()
+        } else {
+            quote! {}
+        };
+        let call = quote! { #receiver.#callback(#args) #maybe_await };
         if let Some(error_ty) = error_ty {
             quote! {
                 let callback_result: ::core::result::Result<(), #error_ty> =
                     #core_path::FallibleCallbackReturn::into_result(#call);
                 if let Err(source) = callback_result {
-                    let #machine_name { ctx, #( #preserved_rebinds, )* .. } = new_machine;
-                    let old_machine = #machine_name {
-                        ctx,
-                        _state: ::core::marker::PhantomData,
-                        #( #restore_source_fields, )*
-                    };
+                    #rollback
                     return ::core::result::Result::Err((
-                        old_machine,
+                        #owner,
                         #core_path::EventError::callback(
                             stringify!(#callback),
                             stringify!(#event_name),
@@ -696,157 +558,76 @@ fn generate_transition_method(
         }
     };
 
-    let after_calls: Vec<_> = edge
-        .after
-        .iter()
-        .map(|callback| make_after_call(callback, true))
-        .collect();
-
-    let global_after_calls: Vec<_> = edge
-        .global_after
-        .iter()
-        .map(|callback| make_after_call(callback, false))
-        .collect();
-
-    let rollback_old_machine = quote! {
-        let #machine_name { ctx, #( #preserved_rebinds, )* .. } = new_machine;
-        let old_machine = #machine_name {
-            ctx,
-            _state: ::core::marker::PhantomData,
-            #( #restore_source_fields, )*
-        };
+    let around_step = |phase: &Phase, callback: &Ident| {
+        let Phase {
+            receiver,
+            stage,
+            rollback,
+            owner,
+        } = phase;
+        quote! {
+            match #receiver.#callback(#core_path::AroundStage::#stage) #maybe_await {
+                #core_path::AroundOutcome::Proceed => {},
+                #core_path::AroundOutcome::Abort(err) => {
+                    let callback_name = match &err.kind {
+                        #core_path::TransitionErrorKind::GuardFailed { guard } => *guard,
+                        #core_path::TransitionErrorKind::ActionFailed { action } => *action,
+                        #core_path::TransitionErrorKind::InvalidTransition => stringify!(#callback),
+                    };
+                    #rollback
+                    return ::core::result::Result::Err((#owner, #kind_error));
+                }
+            }
+        }
     };
 
-    let has_around = !edge.around.is_empty();
-    if has_around {
-        let around_before_checks: Vec<_> = edge
-            .around
-            .iter()
-            .map(|callback| {
-                let kind_error = kind_error();
-                if is_async {
-                    quote! {
-                        match self.#callback(#core_path::AroundStage::Before).await {
-                            #core_path::AroundOutcome::Proceed => {},
-                            #core_path::AroundOutcome::Abort(err) => {
-                                let callback_name = match &err.kind {
-                                    #core_path::TransitionErrorKind::GuardFailed { guard } => *guard,
-                                    #core_path::TransitionErrorKind::ActionFailed { action } => *action,
-                                    #core_path::TransitionErrorKind::InvalidTransition => stringify!(#callback),
-                                };
-                                return ::core::result::Result::Err((self, #kind_error));
-                            }
-                        }
-                    }
-                } else {
-                    quote! {
-                        match self.#callback(#core_path::AroundStage::Before) {
-                            #core_path::AroundOutcome::Proceed => {},
-                            #core_path::AroundOutcome::Abort(err) => {
-                                let callback_name = match &err.kind {
-                                    #core_path::TransitionErrorKind::GuardFailed { guard } => *guard,
-                                    #core_path::TransitionErrorKind::ActionFailed { action } => *action,
-                                    #core_path::TransitionErrorKind::InvalidTransition => stringify!(#callback),
-                                };
-                                return ::core::result::Result::Err((self, #kind_error));
-                            }
-                        }
-                    }
-                }
-            })
-            .collect();
+    let around_before_checks = edge.hooks.around.iter().map(|cb| around_step(&before, cb));
+    let global_before_calls = edge
+        .global_before
+        .iter()
+        .map(|cb| callback_step(&before, cb, false));
+    let before_calls = edge
+        .hooks
+        .before
+        .iter()
+        .map(|cb| callback_step(&before, cb, true));
+    let after_calls = edge
+        .hooks
+        .after
+        .iter()
+        .map(|cb| callback_step(&after, cb, true));
+    let global_after_calls = edge
+        .global_after
+        .iter()
+        .map(|cb| callback_step(&after, cb, false));
+    let around_after_checks = edge.hooks.around.iter().map(|cb| around_step(&after, cb));
 
-        let around_after_checks: Vec<_> = edge
-            .around
-            .iter()
-            .map(|callback| {
-                let kind_error = kind_error();
-                if is_async {
-                    quote! {
-                        match new_machine.#callback(#core_path::AroundStage::AfterSuccess).await {
-                            #core_path::AroundOutcome::Proceed => {},
-                            #core_path::AroundOutcome::Abort(err) => {
-                                let callback_name = match &err.kind {
-                                    #core_path::TransitionErrorKind::GuardFailed { guard } => *guard,
-                                    #core_path::TransitionErrorKind::ActionFailed { action } => *action,
-                                    #core_path::TransitionErrorKind::InvalidTransition => stringify!(#callback),
-                                };
-                                #rollback_old_machine
-                                return ::core::result::Result::Err((old_machine, #kind_error));
-                            }
-                        }
-                    }
-                } else {
-                    quote! {
-                        match new_machine.#callback(#core_path::AroundStage::AfterSuccess) {
-                            #core_path::AroundOutcome::Proceed => {},
-                            #core_path::AroundOutcome::Abort(err) => {
-                                let callback_name = match &err.kind {
-                                    #core_path::TransitionErrorKind::GuardFailed { guard } => *guard,
-                                    #core_path::TransitionErrorKind::ActionFailed { action } => *action,
-                                    #core_path::TransitionErrorKind::InvalidTransition => stringify!(#callback),
-                                };
-                                #rollback_old_machine
-                                return ::core::result::Result::Err((old_machine, #kind_error));
-                            }
-                        }
-                    }
-                }
-            })
-            .collect();
+    Ok(quote! {
+        #method_sig -> #return_type {
+            #( #around_before_checks )*
+            #( #guard_checks )*
+            #( #global_before_calls )*
+            #( #before_calls )*
 
-        Ok(quote! {
-            #method_sig -> #return_type {
-                #( #around_before_checks )*
-                #( #guard_checks )*
-                #( #global_before_calls )*
-                #( #before_calls )*
+            let #machine_name {
+                ctx,
+                _state: _,
+                #( #source_field_bindings, )*
+            } = self;
 
-                let #machine_name {
-                    ctx,
-                    _state: _,
-                    #( #source_field_bindings, )*
-                } = self;
+            let mut new_machine = #machine_name {
+                ctx,
+                _state: ::core::marker::PhantomData,
+                #( #storage_transfers, )*
+            };
 
-                let mut new_machine = #machine_name {
-                    ctx,
-                    _state: ::core::marker::PhantomData,
-                    #( #storage_transfers, )*
-                };
+            #( #after_calls )*
+            #( #global_after_calls )*
+            #( #around_after_checks )*
 
-                #( #after_calls )*
-                #( #global_after_calls )*
-                #( #around_after_checks )*
-
-                ::core::result::Result::Ok(new_machine)
-            }
-        })
-    } else {
-        Ok(quote! {
-            #method_sig -> #return_type {
-                #( #guard_checks )*
-                #( #global_before_calls )*
-                #( #before_calls )*
-
-                let #machine_name {
-                    ctx,
-                    _state: _,
-                    #( #source_field_bindings, )*
-                } = self;
-
-                let mut new_machine = #machine_name {
-                    ctx,
-                    _state: ::core::marker::PhantomData,
-                    #( #storage_transfers, )*
-                };
-
-                #( #after_calls )*
-                #( #global_after_calls )*
-
-                ::core::result::Result::Ok(new_machine)
-            }
-        })
-    }
+            ::core::result::Result::Ok(new_machine)
+        }
+    })
 }
 
 /// Generate a `can_<event>()` predicate for a single edge.
@@ -858,33 +639,19 @@ fn generate_transition_method(
 /// because guards are.
 fn generate_can_method(machine: &StateMachine, edge: &TransitionEdge) -> Result<TokenStream2> {
     let event_name = &edge.event;
-    let snake = crate::codegen::utils::to_snake_case(&event_name.to_string());
+    let snake = to_snake_case(&event_name.to_string());
     let method_name = syn::Ident::new(&format!("can_{}", snake), event_name.span());
-    let is_async = machine.async_mode;
+    let maybe_async = maybe_async(machine.async_mode);
+    let maybe_await = maybe_await(machine.async_mode);
 
-    let (method_sig, payload_args) = if let Some(payload_ty) = &edge.payload {
-        let sig = if is_async {
-            quote! { pub async fn #method_name(&self, payload: &#payload_ty) }
-        } else {
-            quote! { pub fn #method_name(&self, payload: &#payload_ty) }
-        };
-        (sig, quote! { , payload })
-    } else {
-        let sig = if is_async {
-            quote! { pub async fn #method_name(&self) }
-        } else {
-            quote! { pub fn #method_name(&self) }
-        };
-        (sig, quote! {})
+    let (payload_param, payload_args) = match &edge.payload {
+        Some(payload_ty) => (quote! { , payload: &#payload_ty }, quote! { , payload }),
+        None => (quote! {}, quote! {}),
     };
-
-    let maybe_await = if is_async {
-        quote! { .await }
-    } else {
-        quote! {}
-    };
+    let method_sig = quote! { pub #maybe_async fn #method_name(&self #payload_param) };
 
     let guard_checks: Vec<_> = edge
+        .hooks
         .guards
         .iter()
         .map(|guard| {
@@ -897,6 +664,7 @@ fn generate_can_method(machine: &StateMachine, edge: &TransitionEdge) -> Result<
         .collect();
 
     let unless_checks: Vec<_> = edge
+        .hooks
         .unless
         .iter()
         .map(|guard| {
@@ -993,6 +761,7 @@ fn generate_storage_accessors(machine: &StateMachine) -> Result<Vec<TokenStream2
 fn generate_state_specific_accessors(machine: &StateMachine) -> Result<Vec<TokenStream2>> {
     let mut impls = Vec::new();
     let machine_name = &machine.name;
+    let generics = ctx_generics(machine);
 
     for spec in &machine.state_storage {
         let state_name = &spec.state_name;
@@ -1000,8 +769,7 @@ fn generate_state_specific_accessors(machine: &StateMachine) -> Result<Vec<Token
         let ty = &spec.ty;
 
         // Generate method names from state name: LaunchPrep -> launch_prep_data
-        let state_str = state_name.to_string();
-        let snake = crate::codegen::utils::to_snake_case(&state_str);
+        let snake = to_snake_case(&state_name.to_string());
         let data_method = syn::Ident::new(&format!("{}_data", snake), state_name.span());
         let data_mut_method = syn::Ident::new(&format!("{}_data_mut", snake), state_name.span());
 
@@ -1016,18 +784,9 @@ fn generate_state_specific_accessors(machine: &StateMachine) -> Result<Vec<Token
         };
 
         for impl_state in impl_states {
-            // Determine impl generics and type parameters
-            let (impl_generics, type_params) = if machine.context.is_some() {
-                // Concrete context (struct is Machine<S>)
-                (quote! {}, quote! { <#impl_state> })
-            } else {
-                // Generic context (struct is Machine<C, S>)
-                (quote! { <C> }, quote! { <C, #impl_state> })
-            };
-
-            // Generate state-specific impl block
+            let params = machine_params(machine, &impl_state);
             let impl_block = quote! {
-                impl #impl_generics #machine_name #type_params {
+                impl #generics #machine_name #params {
                     /// Access the state-associated data for this specific state.
                     ///
                     /// This method is guaranteed to return a reference because
