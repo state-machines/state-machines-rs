@@ -10,8 +10,10 @@ use syn::Result;
 
 /// Generate the `Inspectable` trait implementation.
 ///
-/// This generates code wrapped in `#[cfg(feature = "inspect")]` so it only
-/// compiles when the user has enabled the inspect feature.
+/// The output is wrapped in `::state_machines::__sm_if_inspect!`, so it only
+/// compiles when the `state-machines` crate the caller links has its `inspect`
+/// feature on. A `#[cfg(feature = "inspect")]` here would test the calling
+/// crate's features instead, and `cfg!` in the macro would test the host build.
 pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2> {
     let machine_name = &machine.name;
     let machine_name_str = machine_name.to_string();
@@ -37,11 +39,11 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
 
             quote! {
                 ::state_machines::SuperstateSchema {
-                    name: __sm_alloc::string::String::from(#name_str),
-                    descendants: __sm_alloc::vec![
-                        #( __sm_alloc::string::String::from(#descendants_strs), )*
+                    name: ::state_machines::__private::String::from(#name_str),
+                    descendants: ::state_machines::__private::vec![
+                        #( ::state_machines::__private::String::from(#descendants_strs), )*
                     ],
-                    initial: __sm_alloc::string::String::from(#initial_str),
+                    initial: ::state_machines::__private::String::from(#initial_str),
                 }
             }
         })
@@ -77,24 +79,24 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
 
                     quote! {
                         ::state_machines::TransitionSchema {
-                            sources: __sm_alloc::vec![
-                                #( __sm_alloc::string::String::from(#sources), )*
+                            sources: ::state_machines::__private::vec![
+                                #( ::state_machines::__private::String::from(#sources), )*
                             ],
-                            target: __sm_alloc::string::String::from(#target_str),
-                            guards: __sm_alloc::vec![
-                                #( __sm_alloc::string::String::from(#trans_guards), )*
+                            target: ::state_machines::__private::String::from(#target_str),
+                            guards: ::state_machines::__private::vec![
+                                #( ::state_machines::__private::String::from(#trans_guards), )*
                             ],
-                            unless: __sm_alloc::vec![
-                                #( __sm_alloc::string::String::from(#trans_unless), )*
+                            unless: ::state_machines::__private::vec![
+                                #( ::state_machines::__private::String::from(#trans_unless), )*
                             ],
-                            before: __sm_alloc::vec![
-                                #( __sm_alloc::string::String::from(#trans_before), )*
+                            before: ::state_machines::__private::vec![
+                                #( ::state_machines::__private::String::from(#trans_before), )*
                             ],
-                            after: __sm_alloc::vec![
-                                #( __sm_alloc::string::String::from(#trans_after), )*
+                            after: ::state_machines::__private::vec![
+                                #( ::state_machines::__private::String::from(#trans_after), )*
                             ],
-                            around: __sm_alloc::vec![
-                                #( __sm_alloc::string::String::from(#trans_around), )*
+                            around: ::state_machines::__private::vec![
+                                #( ::state_machines::__private::String::from(#trans_around), )*
                             ],
                         }
                     }
@@ -103,31 +105,31 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
 
             let payload_expr = if let Some(payload) = &event.payload {
                 let payload_str = quote!(#payload).to_string();
-                quote! { ::core::option::Option::Some(__sm_alloc::string::String::from(#payload_str)) }
+                quote! { ::core::option::Option::Some(::state_machines::__private::String::from(#payload_str)) }
             } else {
                 quote! { ::core::option::Option::None }
             };
 
             quote! {
                 ::state_machines::EventSchema {
-                    name: __sm_alloc::string::String::from(#event_name),
-                    transitions: __sm_alloc::vec![
+                    name: ::state_machines::__private::String::from(#event_name),
+                    transitions: ::state_machines::__private::vec![
                         #( #transition_schemas, )*
                     ],
-                    guards: __sm_alloc::vec![
-                        #( __sm_alloc::string::String::from(#guards), )*
+                    guards: ::state_machines::__private::vec![
+                        #( ::state_machines::__private::String::from(#guards), )*
                     ],
-                    unless: __sm_alloc::vec![
-                        #( __sm_alloc::string::String::from(#unless), )*
+                    unless: ::state_machines::__private::vec![
+                        #( ::state_machines::__private::String::from(#unless), )*
                     ],
-                    before: __sm_alloc::vec![
-                        #( __sm_alloc::string::String::from(#before), )*
+                    before: ::state_machines::__private::vec![
+                        #( ::state_machines::__private::String::from(#before), )*
                     ],
-                    after: __sm_alloc::vec![
-                        #( __sm_alloc::string::String::from(#after), )*
+                    after: ::state_machines::__private::vec![
+                        #( ::state_machines::__private::String::from(#after), )*
                     ],
-                    around: __sm_alloc::vec![
-                        #( __sm_alloc::string::String::from(#around), )*
+                    around: ::state_machines::__private::vec![
+                        #( ::state_machines::__private::String::from(#around), )*
                     ],
                     payload: #payload_expr,
                 }
@@ -149,11 +151,7 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
     };
 
     Ok(quote! {
-        #[allow(unexpected_cfgs)]
-        #[cfg(feature = "inspect")]
-        const _: () = {
-            extern crate alloc as __sm_alloc;
-
+        ::state_machines::__sm_if_inspect! {
             impl #impl_generics #machine_name #type_params {
                 /// Returns the schema describing this state machine.
                 ///
@@ -161,15 +159,15 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
                 /// and transitions for visualization or debugging purposes.
                 pub fn schema() -> ::state_machines::MachineSchema {
                     ::state_machines::MachineSchema {
-                        name: __sm_alloc::string::String::from(#machine_name_str),
-                        initial: __sm_alloc::string::String::from(#initial_str),
-                        states: __sm_alloc::vec![
-                            #( __sm_alloc::string::String::from(#state_strs), )*
+                        name: ::state_machines::__private::String::from(#machine_name_str),
+                        initial: ::state_machines::__private::String::from(#initial_str),
+                        states: ::state_machines::__private::vec![
+                            #( ::state_machines::__private::String::from(#state_strs), )*
                         ],
-                        superstates: __sm_alloc::vec![
+                        superstates: ::state_machines::__private::vec![
                             #( #superstate_schemas, )*
                         ],
-                        events: __sm_alloc::vec![
+                        events: ::state_machines::__private::vec![
                             #( #event_schemas, )*
                         ],
                         async_mode: #async_mode,
@@ -184,6 +182,6 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
                     <#machine_name #type_params>::schema()
                 }
             }
-        };
+        }
     })
 }

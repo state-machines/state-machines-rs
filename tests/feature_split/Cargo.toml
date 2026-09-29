@@ -1,0 +1,12 @@
+[package]
+name = "feature_split"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Regression fixture: host and target link state-machines with different features"
+
+[dependencies]
+state-machines = { path = "../../state-machines" }
+
+[build-dependencies]
+state-machines = { path = "../../state-machines", features = ["std"] }

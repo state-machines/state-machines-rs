@@ -7,7 +7,29 @@ extern crate alloc;
 
 #[doc(hidden)]
 pub mod __private {
+    pub use alloc::string::String;
+    pub use alloc::vec;
     pub use alloc::vec::Vec;
+}
+
+/// Emit the macro-generated introspection code only when this crate's
+/// `inspect` feature is on.
+///
+/// The gate has to live here, not in the proc-macro: the macro is built once
+/// for the host with features unified across build-dependencies, so it cannot
+/// tell whether the `state-machines` a caller links exports `MachineSchema`.
+#[doc(hidden)]
+#[cfg(feature = "inspect")]
+#[macro_export]
+macro_rules! __sm_if_inspect {
+    ($($item:tt)*) => { $($item)* };
+}
+
+#[doc(hidden)]
+#[cfg(not(feature = "inspect"))]
+#[macro_export]
+macro_rules! __sm_if_inspect {
+    ($($item:tt)*) => {};
 }
 
 pub mod core {

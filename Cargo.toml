@@ -12,5 +12,6 @@ members = [
     "examples/hierarchical_thinking",
     "examples/dynamic_dispatch_when",
     "examples/traffic_light",
+    "tests/feature_split",
 ]
 resolver = "2"

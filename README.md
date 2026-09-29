@@ -57,7 +57,9 @@ While learning Rust, I chose to port something familiar and widely used—so I c
 
 **Dynamic Dispatch** – Runtime event dispatch for event-driven systems (opt-in via feature flag or explicit config)
 
-**Introspection** – `schema()` metadata with JSON and Mermaid rendering (via the `inspect` feature)
+**State Data Accessors** – Access and mutate per-state data in dynamic mode
+
+**Introspection** – `schema()` metadata with JSON and Mermaid rendering (via the `inspect` feature, implied by `std`)
 
 ---
 
@@ -67,7 +69,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-state-machines = "0.20"
+state-machines = "0.21"
 ```
 
 ### Basic Example
@@ -259,11 +261,11 @@ See `examples/guards_and_validation` for a complete example using concrete conte
 
 ### Async Support
 
-Async state machines are feature-gated in `0.9`:
+Async state machines are behind the `async` feature:
 
 ```toml
 [dependencies]
-state-machines = { version = "0.9", features = ["async"] }
+state-machines = { version = "0.21", features = ["async"] }
 ```
 
 The typestate pattern works seamlessly with async Rust:
@@ -299,18 +301,6 @@ impl<C, S> HttpRequest<C, S> {
     }
 }
 
-#[tokio::main]
-async fn main() {
-    // Type: HttpRequest<Idle>
-    let request = HttpRequest::new(());
-
-    // Type: HttpRequest<Pending>
-    let request = request.send().await.unwrap();
-
-    // Type: HttpRequest<Success>
-    let request = request.succeed().await.unwrap();
-}
-
 // If callbacks can fail, declare an error type for the machine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum HttpError {
@@ -337,13 +327,25 @@ impl<C, S> AuthRecovery<C, S> {
     }
 }
 
-// `before`/`after` callback failures do not advance the state.
-match AuthRecovery::new(()).refresh().await {
-    Err((_machine, state_machines::EventError::Callback(err))) => {
-        assert_eq!(err.action, "refresh_token");
-        assert_eq!(err.source, HttpError::Timeout);
+#[tokio::main]
+async fn main() {
+    // Type: HttpRequest<Idle>
+    let request = HttpRequest::new(());
+
+    // Type: HttpRequest<Pending>
+    let request = request.send().await.unwrap();
+
+    // Type: HttpRequest<Success>
+    let request = request.succeed().await.unwrap();
+
+    // `before`/`after` callback failures do not advance the state.
+    match AuthRecovery::new(()).refresh().await {
+        Err((_machine, state_machines::EventError::Callback(err))) => {
+            assert_eq!(err.action, "refresh_token");
+            assert_eq!(err.source, HttpError::Timeout);
+        }
+        _ => unreachable!(),
     }
-    _ => unreachable!(),
 }
 ```
 
@@ -776,7 +778,7 @@ state_machine! {
 **Option 2: Cargo feature flag (conditional compilation)**
 ```toml
 [dependencies]
-state-machines = { version = "0.6", features = ["dynamic"] }
+state-machines = { version = "0.21", features = ["dynamic"] }
 ```
 
 With the feature flag enabled, ALL state machines get dynamic dispatch without explicit `dynamic: true`.
@@ -1017,6 +1019,137 @@ assert!(result.is_ok());
 assert_eq!(machine.current_state(), TrafficLightState::Green);
 ```
 
+### State Data Accessors
+
+Dynamic machines can access and mutate per-state data, enabling patterns like circuit breakers that need runtime counters and timestamps.
+
+When states have associated data (e.g., `Open(OpenData)`), the macro generates three accessor types on the dynamic wrapper:
+
+```rust,ignore
+// Read-only access (returns None if not in this state)
+pub fn open_data(&self) -> Option<&OpenData>
+
+// Mutable access for updating counters/timestamps
+pub fn open_data_mut(&mut self) -> Option<&mut OpenData>
+
+// Direct setter (returns WrongState error if not in this state)
+pub fn set_open_data(&mut self, data: OpenData) -> Result<(), DynamicError>
+```
+
+**Example: Circuit Breaker Pattern**
+
+```rust,ignore
+use std::time::Instant;
+
+#[derive(Debug, Clone)]
+struct OpenData {
+    opened_at: Instant,
+    failure_count: u32,
+}
+
+#[derive(Debug, Clone)]
+struct HalfOpenData {
+    consecutive_successes: u32,
+}
+
+state_machine! {
+    name: Circuit,
+    dynamic: true,
+    initial: Closed,
+    states: [
+        Closed,
+        Open(OpenData),
+        HalfOpen(HalfOpenData),
+    ],
+    events {
+        trip { transition: { from: Closed, to: Open } }
+        attempt_reset { transition: { from: Open, to: HalfOpen } }
+        reset { transition: { from: HalfOpen, to: Closed } }
+        fail_again { transition: { from: HalfOpen, to: Open } }
+    }
+}
+
+struct CircuitBreaker {
+    machine: DynamicCircuit,
+}
+
+impl CircuitBreaker {
+    pub fn new() -> Self {
+        Self {
+            machine: DynamicCircuit::new(()),
+        }
+    }
+
+    pub fn call(&mut self) -> Result<Response, Error> {
+        match self.machine.current_state() {
+            CircuitState::Closed => {
+                // Execute call
+                match execute_request() {
+                    Ok(resp) => Ok(resp),
+                    Err(e) => {
+                        // Trip circuit on failure
+                        self.machine.handle(CircuitEvent::Trip).unwrap();
+                        self.machine
+                            .set_open_data(OpenData {
+                                opened_at: Instant::now(),
+                                failure_count: 1,
+                            })
+                            .unwrap();
+                        Err(e)
+                    }
+                }
+            }
+            CircuitState::Open => {
+                // Check if timeout expired
+                if let Some(data) = self.machine.open_data() {
+                    if data.opened_at.elapsed() > Duration::from_secs(60) {
+                        // Try half-open
+                        self.machine.handle(CircuitEvent::AttemptReset).unwrap();
+                        self.machine
+                            .set_half_open_data(HalfOpenData {
+                                consecutive_successes: 0,
+                            })
+                            .unwrap();
+                        return self.call(); // Retry
+                    }
+                }
+                Err(Error::CircuitOpen)
+            }
+            CircuitState::HalfOpen => {
+                // Execute call, track successes
+                match execute_request() {
+                    Ok(resp) => {
+                        // Increment success counter
+                        if let Some(data) = self.machine.half_open_data_mut() {
+                            data.consecutive_successes += 1;
+
+                            // Reset after 3 successes
+                            if data.consecutive_successes >= 3 {
+                                self.machine.handle(CircuitEvent::Reset).unwrap();
+                            }
+                        }
+                        Ok(resp)
+                    }
+                    Err(e) => {
+                        // Back to Open
+                        self.machine.handle(CircuitEvent::FailAgain).unwrap();
+                        Err(e)
+                    }
+                }
+            }
+        }
+    }
+}
+```
+
+**Key Points:**
+
+- **Read accessors** return `Option<&T>` - None when not in that state
+- **Mutable accessors** return `Option<&mut T>` - allows in-place updates
+- **Setters** return `Result<(), DynamicError>` - errors with `WrongState` if not in target state
+- Works seamlessly with hierarchical states (substates can access parent state data)
+- Zero overhead - delegates directly to typestate machine's field access
+
 ### Performance Considerations
 
 | Mode | Overhead | Safety | Use Case |
@@ -1139,7 +1272,7 @@ fn embedded_main() {
 # fn main() {} // For doctest
 ```
 
-- Disable default features: `state-machines = { version = "0.6", default-features = false }`
+- Disable default features: `state-machines = { version = "0.21", default-features = false }`
 - The library uses no allocator - purely stack-based with zero-sized state markers
 - CI runs `cargo build --no-default-features` to prevent std regressions
 - See `examples/no_std_flight/` for a complete embedded example

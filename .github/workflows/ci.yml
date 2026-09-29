@@ -53,6 +53,9 @@ jobs:
         run: cargo build -p state-machines-macro --no-default-features
       - name: Build main (no_std)
         run: cargo build -p state-machines --no-default-features
+      # Built alone: a workspace build unifies features and hides the split
+      - name: Build feature-split fixture (host inspect, target without)
+        run: cargo build -p feature_split
 
   build:
     name: Build (Release)

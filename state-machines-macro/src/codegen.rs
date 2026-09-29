@@ -26,7 +26,7 @@ impl StateMachine {
         // Always generate typestate-based machine
         let typestate_code = typestate::generate_typestate_machine(self)?;
 
-        // Generate Inspectable impl (conditionally compiled via cfg in generated code)
+        // Generate Inspectable impl (gated on the linked facade's `inspect` feature)
         let inspect_code = inspect::generate_inspectable_impl(self)?;
 
         // Conditionally generate dynamic dispatch wrapper
