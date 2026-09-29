@@ -676,9 +676,13 @@ fn generate_can_method(machine: &StateMachine, edge: &TransitionEdge) -> Result<
         })
         .collect();
 
+    // The payload is borrowed as `&T` whatever `T` is, so a `String` or
+    // `Vec` payload trips `ptr_arg` in the caller's crate even though the
+    // user cannot choose a slice type here.
     Ok(quote! {
         /// Check whether this event's guards would allow the transition
         /// right now, without consuming the machine or running callbacks.
+        #[allow(clippy::ptr_arg)]
         #method_sig -> bool {
             #( #guard_checks )*
             #( #unless_checks )*
