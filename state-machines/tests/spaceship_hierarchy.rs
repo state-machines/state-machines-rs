@@ -124,11 +124,11 @@ mod guarded_superstate_transitions {
     }
 
     impl<C, S> EvacDrill<C, S> {
-        fn abort_allowed(&self, _ctx: &C, _reason: &String) -> bool {
+        fn abort_allowed(&self, _ctx: &C, _reason: &str) -> bool {
             ABORT_ALLOWED.load(Ordering::SeqCst)
         }
 
-        fn note_before(&self, reason: &String) {
+        fn note_before(&self, reason: &str) {
             LAST_REASON_LEN.store(reason.len(), Ordering::SeqCst);
             BEFORE_COUNT.fetch_add(1, Ordering::SeqCst);
         }

@@ -126,7 +126,7 @@ state_machine! {
     states: [FullIdle, FullActive],
     events {
         activate {
-            guards: [can_activate],
+            guards: [activation_allowed],
             before: [prepare],
             after: [notify],
             transition: { from: FullIdle, to: FullActive }
@@ -138,7 +138,7 @@ state_machine! {
 }
 
 impl<C, S> FullFeatured<C, S> {
-    fn can_activate(&self, _ctx: &C) -> bool {
+    fn activation_allowed(&self, _ctx: &C) -> bool {
         true
     }
 

@@ -17,7 +17,7 @@ fn take_log() -> Vec<&'static str> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct BurnPlan {
+pub struct BurnPlan {
     delta_v: u32,
 }
 

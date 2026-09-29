@@ -9,7 +9,7 @@ static HATCH_SEALED: AtomicBool = AtomicBool::new(false);
 static ALARM_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug)]
-struct Cargo {
+pub struct Cargo {
     mass_kg: u32,
 }
 
