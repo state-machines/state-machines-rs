@@ -17,6 +17,20 @@ pub fn generate(machine: &StateMachine) -> TokenStream {
     let any = format_ident!("Any{}State", name);
     let generics = ctx_generics(machine);
     let context = ctx_ty(machine);
+    let state_names = machine
+        .states
+        .iter()
+        .map(|state| state.to_string())
+        .collect::<Vec<_>>();
+    let history_fields = super::history::fields(machine);
+    let history_declarations = super::history::regions(machine).into_iter().map(|region| {
+        let field = super::history::field(region);
+        let key = format!("history_{region}");
+        quote! {
+            #[serde(default, rename = #key)]
+            pub #field: ::core::option::Option<::state_machines::__private::String>,
+        }
+    });
     let fields: Vec<_> = machine
         .state_storage
         .iter()
@@ -33,14 +47,51 @@ pub fn generate(machine: &StateMachine) -> TokenStream {
     });
     let capture = machine.states.iter().map(|state| {
         let state_str = state.to_string();
+        let history = super::history::regions(machine).into_iter().map(|region| {
+            let field = super::history::field(region);
+            let cases = machine.states.iter().enumerate().map(|(index, state)| {
+                let state = state.to_string();
+                quote! { #index => ::state_machines::__private::String::from(#state) }
+            });
+            quote! { machine.#field.map(|index| match index {
+                #( #cases, )*
+                _ => unreachable!("invalid history index"),
+            }) }
+        });
         quote! {
             #any::#state(machine) => (
                 ::state_machines::__private::String::from(#state_str),
                 machine.ctx,
                 #( machine.#fields, )*
+                #( #history, )*
             )
         }
     });
+    let history_checks = super::history::regions(machine).into_iter().map(|region| {
+        let field = super::history::field(region);
+        let region_str = region.to_string();
+        let leaves = machine.hierarchy.expand_state(region, &machine.states).into_iter()
+            .map(|state| state.to_string()).collect::<Vec<_>>();
+        quote! {
+            if snapshot.#field.as_ref().is_some_and(|leaf| ![#( #leaves, )*].contains(&leaf.as_str())) {
+                return Err((snapshot, ::state_machines::SnapshotError::InvalidHistory { region: #region_str }));
+            }
+        }
+    });
+    let history_restores: Vec<_> = super::history::regions(machine)
+        .into_iter()
+        .map(|region| {
+            let field = super::history::field(region);
+            let cases = machine.states.iter().enumerate().map(|(index, state)| {
+                let state = state.to_string();
+                quote! { #state => #index }
+            });
+            quote! { #field: snapshot.#field.map(|leaf| match leaf.as_str() {
+                #( #cases, )*
+                _ => unreachable!("validated history"),
+            }) }
+        })
+        .collect();
     let checks = machine.state_storage.iter().map(|spec| {
         let field = &spec.field;
         let owner = spec.state_name.to_string();
@@ -59,6 +110,7 @@ pub fn generate(machine: &StateMachine) -> TokenStream {
                 ctx: snapshot.ctx,
                 _state: ::core::marker::PhantomData,
                 #( #fields: snapshot.#fields, )*
+                #( #history_restores, )*
             })
         }
     });
@@ -73,12 +125,13 @@ pub fn generate(machine: &StateMachine) -> TokenStream {
                 pub state: ::state_machines::__private::String,
                 pub ctx: #context,
                 #( #declarations )*
+                #( #history_declarations )*
             }
 
             impl #generics #dynamic #generics {
                 /// Consume the wrapper without requiring Clone on its data.
                 pub fn into_snapshot(mut self) -> #snapshot_name #generics {
-                    let (state, ctx, #( #fields, )*) = match self.inner.take()
+                    let (state, ctx, #( #fields, )* #( #history_fields, )*) = match self.inner.take()
                         .expect("dynamic machine in invalid state")
                     {
                         #( #capture, )*
@@ -88,6 +141,7 @@ pub fn generate(machine: &StateMachine) -> TokenStream {
                         machine: ::state_machines::__private::String::from(#name_str),
                         state, ctx,
                         #( #fields, )*
+                        #( #history_fields, )*
                     }
                 }
 
@@ -101,7 +155,11 @@ pub fn generate(machine: &StateMachine) -> TokenStream {
                     if snapshot.machine != #name_str {
                         return Err((snapshot, ::state_machines::SnapshotError::WrongMachine));
                     }
+                    if ![#( #state_names, )*].contains(&snapshot.state.as_str()) {
+                        return Err((snapshot, ::state_machines::SnapshotError::UnknownState));
+                    }
                     #( #checks )*
+                    #( #history_checks )*
                     let inner = match snapshot.state.as_str() {
                         #( #restore, )*
                         _ => return Err((snapshot, ::state_machines::SnapshotError::UnknownState)),

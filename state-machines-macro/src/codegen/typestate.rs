@@ -150,6 +150,9 @@ fn generate_machine_struct(machine: &StateMachine) -> Result<TokenStream2> {
             }
         })
         .collect();
+    let history_fields = super::history::fields(machine)
+        .into_iter()
+        .map(|field| quote! { #field: ::core::option::Option<usize> });
 
     let struct_params = machine_params(machine, quote! { S });
     let ctx_ty = ctx_ty(machine);
@@ -160,6 +163,7 @@ fn generate_machine_struct(machine: &StateMachine) -> Result<TokenStream2> {
             ctx: #ctx_ty,
             _state: ::core::marker::PhantomData<S>,
             #( #storage_fields, )*
+            #( #history_fields, )*
         }
     })
 }
@@ -515,17 +519,22 @@ pub(super) fn generate_transition_method(
         .filter(|_| check_guards)
         .collect();
 
-    let source_field_bindings: Vec<_> = machine
+    let mut source_field_bindings: Vec<_> = machine
         .state_storage
         .iter()
         .map(|spec| prev_binding(&spec.field))
         .collect();
+    let history_fields = super::history::fields(machine);
+    source_field_bindings.extend(history_fields.iter().map(prev_binding));
 
-    let storage_transfers = if edge.internal {
+    let mut storage_transfers = if edge.internal {
         source_field_bindings.clone()
     } else {
         storage_transfers(machine, source_state, target_state)
     };
+    if !edge.internal {
+        storage_transfers.extend(history_fields.iter().map(prev_binding));
+    }
 
     // Superstate data carried into the new machine consumed its __sm_prev_*
     // local; rollback paths recover it from the new machine by rebinding
@@ -659,6 +668,7 @@ pub(super) fn generate_transition_method(
         })
         .flat_map(|hooks| &hooks.complete)
         .map(|cb| callback_step(&after, cb, false));
+    let history_update = super::history::record_exit(machine, source_state, edge);
 
     Ok(quote! {
         #method_sig -> #return_type {
@@ -685,6 +695,7 @@ pub(super) fn generate_transition_method(
             #( #global_after_calls )*
             #( #around_after_checks )*
             #( #complete_calls )*
+            #history_update
 
             ::core::result::Result::Ok(new_machine)
         }

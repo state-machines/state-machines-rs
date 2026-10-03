@@ -14,9 +14,14 @@ static AFTER_ENGAGE_CALLED: AtomicBool = AtomicBool::new(false);
 
 state_machine! {
     name: HyperdriveController,
+    dynamic: true,
     initial: Offline,
     async: true,
-    states: [Offline, Charging, Spooling, Online, Failsafe],
+    states: [Offline, superstate Active {
+        state Charging,
+        state Spooling,
+        state Online,
+    }, Failsafe],
     events {
         begin_charge {
             transition: { from: Offline, to: Charging }
@@ -32,6 +37,9 @@ state_machine! {
         }
         trigger_failsafe {
             transition: { from: [Offline, Charging, Spooling, Online], to: Failsafe }
+        }
+        recover {
+            transition: { from: Failsafe, to: Active, history: deep }
         }
     }
 }
@@ -101,12 +109,31 @@ fn async_engage_sequence_requires_authorization_and_stability() {
         assert_eq!(guard_err.event, "engage");
 
         HyperdriveController::<(), Spooling>::stabilize_core(true);
-        let _controller = controller
+        let controller = controller
             .engage()
             .await
             .expect("engage should succeed once guards pass");
         // Type is HyperdriveController<(), Online>
         assert!(BEFORE_ENGAGE_CALLED.load(Ordering::SeqCst));
         assert!(AFTER_ENGAGE_CALLED.load(Ordering::SeqCst));
+        let controller = controller.trigger_failsafe().await.unwrap();
+        let HyperdriveControllerFailsafeRecoverOutcome::Online(controller) =
+            controller.recover().await.unwrap()
+        else {
+            panic!("async history must resume Online");
+        };
+        let mut controller = controller.into_dynamic();
+        controller
+            .handle(HyperdriveControllerEvent::TriggerFailsafe)
+            .await
+            .unwrap();
+        controller
+            .handle(HyperdriveControllerEvent::Recover)
+            .await
+            .unwrap();
+        assert_eq!(
+            controller.current_state(),
+            HyperdriveControllerState::Online
+        );
     });
 }

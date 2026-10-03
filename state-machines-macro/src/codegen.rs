@@ -6,6 +6,7 @@
 pub mod branching;
 pub mod dynamic;
 pub mod finality;
+pub mod history;
 pub mod inspect;
 pub mod snapshot;
 pub mod typestate;

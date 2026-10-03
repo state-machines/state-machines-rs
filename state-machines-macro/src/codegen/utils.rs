@@ -138,14 +138,20 @@ pub fn maybe_await(is_async: bool) -> TokenStream2 {
 
 /// Field initialisers that start every state-data slot empty.
 pub fn empty_storage_inits(machine: &StateMachine) -> Vec<TokenStream2> {
-    machine
+    let mut inits: Vec<_> = machine
         .state_storage
         .iter()
         .map(|spec| {
             let field = &spec.field;
             quote! { #field: ::core::option::Option::None }
         })
-        .collect()
+        .collect();
+    inits.extend(
+        super::history::fields(machine)
+            .iter()
+            .map(|field| quote! { #field: None }),
+    );
+    inits
 }
 
 #[cfg(test)]

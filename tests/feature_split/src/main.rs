@@ -9,6 +9,8 @@ use state_machines::state_machine;
 
 state_machine! {
     name: Probe,
+    dynamic: true,
+    snapshot: true,
     initial: Idle,
     states: [Idle, Scanning],
     events {

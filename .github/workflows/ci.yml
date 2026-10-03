@@ -51,6 +51,8 @@ jobs:
         run: cargo build -p state-machines-macro --no-default-features
       - name: Build main (no_std)
         run: cargo build -p state-machines --no-default-features
+      - name: Build snapshots (no_std + alloc)
+        run: cargo build -p state-machines --no-default-features --features serde,dynamic
       # Built alone: a workspace build unifies features and hides the split
       - name: Build feature-split fixture (host inspect, target without)
         run: cargo build -p feature_split

@@ -93,6 +93,11 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
                     let trans_hooks = hook_schema_fields(&trans.hooks);
                     let internal = trans.internal;
                     let fallback = trans.fallback;
+                    let history = match trans.history {
+                        Some(HistoryMode::Shallow) => quote! { Some(::state_machines::__private::String::from("shallow")) },
+                        Some(HistoryMode::Deep) => quote! { Some(::state_machines::__private::String::from("deep")) },
+                        None => quote! { None },
+                    };
 
                     quote! {
                         ::state_machines::TransitionSchema {
@@ -100,6 +105,7 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
                             target: ::state_machines::__private::String::from(#target_str),
                             internal: #internal,
                             fallback: #fallback,
+                            history: #history,
                             #trans_hooks
                         }
                     }

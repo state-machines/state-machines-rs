@@ -46,6 +46,7 @@ pub enum SnapshotError {
     WrongMachine,
     UnknownState,
     InactiveData { state: &'static str },
+    InvalidHistory { region: &'static str },
 }
 
 /// Represents an error that occurred while attempting a transition.

@@ -118,6 +118,17 @@ Active data may be `None`, matching the existing constructors' lazy data
 initialization. Version 1 describes the snapshot format, not automatic
 application-schema migration. The feature works with `no_std` + `alloc`.
 
+**History States** – `transition: { from: Paused, to: Running, history: deep }`
+resumes a superstate's last active leaf; `history: shallow` resumes its last
+direct child, entering that child's initial leaf if it is composite. Unvisited
+history uses the region's initial child. History is recorded only on successful
+exits, survives typestate/dynamic conversions and snapshots, and is validated
+on restore. Multi-destination history returns the same generated typed outcome
+enums as branching. Guards, lifecycle hooks, and async dispatch still apply.
+History remembers control state only: exited state data is cleared and
+re-entered data is initialized normally. Only regions used as history targets
+gain optional, allocation-free history storage.
+
 ---
 
 ## Quick Start

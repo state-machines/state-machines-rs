@@ -2,25 +2,36 @@
 #![allow(non_snake_case)]
 
 use state_machines::state_machine;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-#[derive(Default, Debug, Clone, PartialEq)]
+static FAIL_PAUSE: AtomicBool = AtomicBool::new(false);
+
+#[derive(Default, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct MissionLog {
     entries: u32,
 }
 
-#[derive(Default, Debug, Clone, PartialEq)]
+#[derive(Default, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct ExecData {
     step: u8,
 }
 
 state_machine! {
     name: MissionRunner,
+    dynamic: true,
+    snapshot: true,
+    error: String,
     initial: Idle,
     states: [
         Idle,
         superstate Mission(MissionLog) {
             state Planning,
-            state Executing(ExecData),
+            superstate Work {
+                state Executing(ExecData),
+                state Verifying,
+            },
         },
         Done,
     ],
@@ -32,10 +43,33 @@ state_machine! {
             transition: { from: Planning, to: Executing }
         }
         replan {
-            transition: { from: Executing, to: Planning }
+            transition: { from: [Executing, Verifying], to: Planning }
         }
         finish {
             transition: { from: Mission, to: Done }
+        }
+        verify {
+            transition: { from: Executing, to: Verifying }
+        }
+        pause {
+            after: [confirm_pause],
+            transition: { from: Mission, to: Idle }
+        }
+        resume_deep {
+            transition: { from: Idle, to: Mission, history: deep }
+        }
+        resume_shallow {
+            transition: { from: Idle, to: Mission, history: shallow }
+        }
+    }
+}
+
+impl<C, S> MissionRunner<C, S> {
+    fn confirm_pause(&self) -> Result<(), String> {
+        if FAIL_PAUSE.load(Ordering::SeqCst) {
+            Err("pause rejected".into())
+        } else {
+            Ok(())
         }
     }
 }
@@ -64,6 +98,70 @@ fn superstate_data_lifecycle() {
     // Leaving the superstate clears its data
     let runner = runner.finish().expect("finish");
     assert!(runner.state_data_mission().is_none());
+
+    // Before any exit, history falls back to the initial child.
+    let MissionRunnerIdleResumeDeepOutcome::Planning(runner) =
+        MissionRunner::new(()).resume_deep().unwrap()
+    else {
+        panic!("unvisited history must use initial child");
+    };
+    let runner = runner.execute().unwrap().verify().unwrap().pause().unwrap();
+
+    // Shallow history restores Work, whose initial child is Executing.
+    let MissionRunnerIdleResumeShallowOutcome::Executing(mut runner) =
+        runner.resume_shallow().unwrap()
+    else {
+        panic!("shallow history restores the direct child");
+    };
+    assert_eq!(
+        runner.executing_data().step,
+        0,
+        "history restores control state, not old data"
+    );
+    runner.mission_data_mut().entries = 9;
+
+    // Failed exits must not replace remembered Verifying with Executing.
+    FAIL_PAUSE.store(true, Ordering::SeqCst);
+    let (runner, _) = runner.pause().unwrap_err();
+    assert_eq!(runner.mission_data().entries, 9);
+    let runner = {
+        #[cfg(feature = "serde")]
+        {
+            let json = serde_json::to_string(&runner.into_dynamic().into_snapshot()).unwrap();
+            let snapshot: MissionRunnerSnapshot<()> = serde_json::from_str(&json).unwrap();
+            assert_eq!(snapshot.__sm_history_mission.as_deref(), Some("Verifying"));
+            DynamicMissionRunner::from_snapshot(snapshot)
+                .unwrap()
+                .into_executing()
+                .unwrap()
+        }
+        #[cfg(not(feature = "serde"))]
+        {
+            runner
+        }
+    };
+    FAIL_PAUSE.store(false, Ordering::SeqCst);
+    let runner = runner.verify().unwrap().pause().unwrap();
+
+    // Persist history while the region is inactive, then resume through
+    // dynamic dispatch. Invalid history is rejected without losing data.
+    let mut runner = runner.into_dynamic();
+    #[cfg(feature = "serde")]
+    {
+        let json = serde_json::to_string(&runner.into_snapshot()).unwrap();
+        let mut snapshot: MissionRunnerSnapshot<()> = serde_json::from_str(&json).unwrap();
+        snapshot.__sm_history_mission = Some("Idle".into());
+        let (mut snapshot, error) = DynamicMissionRunner::from_snapshot(snapshot).unwrap_err();
+        assert_eq!(
+            error,
+            state_machines::SnapshotError::InvalidHistory { region: "Mission" }
+        );
+        snapshot.__sm_history_mission = Some("Verifying".into());
+        runner = DynamicMissionRunner::from_snapshot(snapshot).unwrap();
+    }
+    runner.handle(MissionRunnerEvent::ResumeDeep).unwrap();
+    assert_eq!(runner.current_state(), MissionRunnerState::Verifying);
+    assert_eq!(runner.mission_data().unwrap().entries, 0);
 }
 
 mod initial_inside_superstate {

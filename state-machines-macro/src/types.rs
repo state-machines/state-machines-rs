@@ -173,6 +173,22 @@ pub struct TransitionEdge {
     pub internal: bool,
     pub selection: Hooks,
     pub fallback: bool,
+    pub history: Option<HistoryChoice>,
+    pub origin: usize,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum HistoryMode {
+    Shallow,
+    Deep,
+}
+
+#[derive(Clone)]
+pub struct HistoryChoice {
+    pub region: Ident,
+    /// Last-leaf indices selecting this destination; None selects the
+    /// region's initial child before any successful exit has been recorded.
+    pub stored: Vec<Option<usize>>,
 }
 
 impl TransitionGraph {
@@ -213,6 +229,7 @@ pub struct Transition {
     pub hooks: Hooks,
     pub internal: bool,
     pub fallback: bool,
+    pub history: Option<HistoryMode>,
 }
 
 /// The guard and callback lists declarable on an event or a transition.

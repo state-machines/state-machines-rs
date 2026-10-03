@@ -147,9 +147,10 @@ pub fn methods(
             false,
         )?);
         let enabled = condition(machine, &edge.selection, &payload_ref);
+        let history = super::history::condition(edge);
         let target = &edge.target;
         choices.push(quote! {
-            if #enabled {
+            if #history && (#enabled) {
                 return self.#helper(#payload_arg) #await_.map(#outcome::#target);
             }
         });
@@ -158,9 +159,11 @@ pub fn methods(
         quote! { ::state_machines::core::GuardError::new("branch_selection", stringify!(#name)) },
     );
     let event_enabled = condition(machine, &event.hooks, &can_payload);
-    let candidates = edges
-        .iter()
-        .map(|edge| condition(machine, &edge.selection, &can_payload));
+    let candidates = edges.iter().map(|edge| {
+        let enabled = condition(machine, &edge.selection, &can_payload);
+        let history = super::history::condition(edge);
+        quote! { #history && (#enabled) }
+    });
     Ok(quote! {
         #( #helpers )*
         pub #async_ fn #name(mut self #param) -> Result<#outcome #generics, (Self, #error_ty)> {

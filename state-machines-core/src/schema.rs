@@ -83,6 +83,8 @@ pub struct TransitionSchema {
     pub internal: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub fallback: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub guards: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -193,6 +195,16 @@ impl MachineSchema {
             let mut sources = BTreeSet::new();
             let mut fallbacks = BTreeSet::new();
             for transition in &event.transitions {
+                if let Some(mode) = &transition.history
+                    && (transition.internal
+                        || !["shallow", "deep"].contains(&mode.as_str())
+                        || !self.superstates.iter().any(|s| s.name == transition.target))
+                {
+                    report(
+                        DiagnosticLevel::Error,
+                        format!("invalid history target `{}`", transition.target),
+                    );
+                }
                 let guarded = !transition.guards.is_empty() || !transition.unless.is_empty();
                 if (transition.fallback && (!event.branching || guarded))
                     || (event.branching && !transition.fallback && !guarded)
@@ -240,7 +252,13 @@ impl MachineSchema {
                                 format!("ambiguous event `{}` from `{leaf}`", event.name),
                             );
                         }
-                        edges.push((leaf, if transition.internal { leaf } else { target }));
+                        if transition.history.is_some() {
+                            for history_target in expand(&transition.target) {
+                                edges.push((leaf, history_target));
+                            }
+                        } else {
+                            edges.push((leaf, if transition.internal { leaf } else { target }));
+                        }
                     }
                 }
             }
@@ -372,6 +390,7 @@ mod tests {
                         target: "Vacuum".into(),
                         internal: false,
                         fallback: false,
+                        history: None,
                         guards: vec![],
                         unless: vec![],
                         before: vec![],
@@ -395,6 +414,7 @@ mod tests {
                         target: "Pressurized".into(),
                         internal: false,
                         fallback: false,
+                        history: None,
                         guards: vec![],
                         unless: vec![],
                         before: vec![],

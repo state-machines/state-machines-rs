@@ -10,6 +10,8 @@ use state_machines::state_machine;
 
 state_machine! {
     name: Probe,
+    dynamic: true,
+    snapshot: true,
     initial: Idle,
     states: [Idle, Scanning],
     events {
@@ -23,4 +25,6 @@ fn main() {
     let schema = Probe::<(), Idle>::schema();
     assert_eq!(schema.name, "Probe");
     assert_eq!(schema.states, ["Idle", "Scanning"]);
+    let snapshot = Probe::new(()).into_dynamic().into_snapshot();
+    assert_eq!(snapshot.state, "Idle");
 }

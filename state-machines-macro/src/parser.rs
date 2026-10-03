@@ -549,6 +549,7 @@ pub fn parse_transition(input: &ParseBuffer<'_>) -> Result<Transition> {
     let mut hooks = Hooks::default();
     let mut internal = false;
     let mut fallback = false;
+    let mut history = None;
 
     while !input.is_empty() {
         let key: Ident = input.parse()?;
@@ -566,6 +567,19 @@ pub fn parse_transition(input: &ParseBuffer<'_>) -> Result<Transition> {
                 internal = input.parse::<syn::LitBool>()?.value;
             }
             "fallback" => fallback = input.parse::<syn::LitBool>()?.value,
+            "history" => {
+                let mode: Ident = input.parse()?;
+                history = Some(match mode.to_string().as_str() {
+                    "shallow" => HistoryMode::Shallow,
+                    "deep" => HistoryMode::Deep,
+                    _ => {
+                        return Err(syn::Error::new(
+                            mode.span(),
+                            "history must be `shallow` or `deep`",
+                        ));
+                    }
+                });
+            }
             other => {
                 if !hooks.parse_field(other, input)? {
                     return Err(unexpected_key(&key));
@@ -596,6 +610,7 @@ pub fn parse_transition(input: &ParseBuffer<'_>) -> Result<Transition> {
         hooks,
         internal,
         fallback,
+        history,
     })
 }
 
@@ -726,69 +741,70 @@ impl StateMachine {
     /// transitions from events and creating edges in the graph.
     pub fn build_transition_graph(&mut self) {
         for event in &self.events {
-            for transition in &event.transitions {
+            for (origin, transition) in event.transitions.iter().enumerate() {
                 // Event-level guards/callbacks run before transition-level ones
                 let hooks = event.hooks.merged(&transition.hooks);
 
                 // Expand source states (handle superstates)
                 for source in &transition.sources {
                     let expanded_sources = self.hierarchy.expand_state(source, &self.states);
-                    let resolved_target = self
-                        .hierarchy
-                        .resolve_target(&transition.target)
-                        .unwrap_or_else(|| transition.target.clone());
+                    let choices = crate::codegen::history::choices(self, transition);
 
                     for actual_source in expanded_sources {
-                        let resolved_target = if transition.internal {
-                            actual_source.clone()
-                        } else {
-                            resolved_target.clone()
-                        };
-                        // Global callbacks whose filters match this concrete
-                        // edge. Around callbacks take no payload, so global
-                        // ones can share the around list; they are prepended
-                        // so machine-wide wrappers run outermost.
-                        let matching_globals = |bucket: &[GlobalCallback]| -> Vec<Ident> {
-                            bucket
-                                .iter()
-                                .filter(|cb| {
-                                    cb.matches(
-                                        &self.hierarchy,
-                                        &self.states,
-                                        &actual_source,
-                                        &resolved_target,
-                                        &event.name,
-                                    )
-                                })
-                                .map(|cb| cb.name.clone())
-                                .collect()
-                        };
+                        for (resolved_target, history) in &choices {
+                            let resolved_target = if transition.internal {
+                                actual_source.clone()
+                            } else {
+                                resolved_target.clone()
+                            };
+                            // Global callbacks whose filters match this concrete
+                            // edge. Around callbacks take no payload, so global
+                            // ones can share the around list; they are prepended
+                            // so machine-wide wrappers run outermost.
+                            let matching_globals = |bucket: &[GlobalCallback]| -> Vec<Ident> {
+                                bucket
+                                    .iter()
+                                    .filter(|cb| {
+                                        cb.matches(
+                                            &self.hierarchy,
+                                            &self.states,
+                                            &actual_source,
+                                            &resolved_target,
+                                            &event.name,
+                                        )
+                                    })
+                                    .map(|cb| cb.name.clone())
+                                    .collect()
+                            };
 
-                        let global_before = matching_globals(&self.callbacks.before);
-                        let global_after = matching_globals(&self.callbacks.after);
+                            let global_before = matching_globals(&self.callbacks.before);
+                            let global_after = matching_globals(&self.callbacks.after);
 
-                        let mut edge_hooks = hooks.clone();
-                        edge_hooks
-                            .around
-                            .splice(0..0, matching_globals(&self.callbacks.around));
-                        edge_hooks
-                            .on_error
-                            .splice(0..0, matching_globals(&self.callbacks.on_error));
+                            let mut edge_hooks = hooks.clone();
+                            edge_hooks
+                                .around
+                                .splice(0..0, matching_globals(&self.callbacks.around));
+                            edge_hooks
+                                .on_error
+                                .splice(0..0, matching_globals(&self.callbacks.on_error));
 
-                        self.transition_graph.add_edge(
-                            &actual_source,
-                            TransitionEdge {
-                                target: resolved_target.clone(),
-                                event: event.name.clone(),
-                                hooks: edge_hooks,
-                                global_before,
-                                global_after,
-                                payload: event.payload.clone(),
-                                internal: transition.internal,
-                                selection: transition.hooks.clone(),
-                                fallback: transition.fallback,
-                            },
-                        );
+                            self.transition_graph.add_edge(
+                                &actual_source,
+                                TransitionEdge {
+                                    target: resolved_target.clone(),
+                                    event: event.name.clone(),
+                                    hooks: edge_hooks,
+                                    global_before,
+                                    global_after,
+                                    payload: event.payload.clone(),
+                                    internal: transition.internal,
+                                    selection: transition.hooks.clone(),
+                                    fallback: transition.fallback,
+                                    history: history.clone(),
+                                    origin,
+                                },
+                            );
+                        }
                     }
                 }
             }

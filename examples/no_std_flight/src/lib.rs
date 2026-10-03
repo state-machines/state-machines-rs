@@ -42,6 +42,10 @@ state_machine! {
         abort {
             transition: { from: Armed, to: Idle }
         }
+        resume {
+            guards: [power_is_present],
+            transition: { from: Idle, to: Armed, history: deep }
+        }
     }
 }
 

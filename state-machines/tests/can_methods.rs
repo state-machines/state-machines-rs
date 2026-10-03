@@ -8,6 +8,7 @@ use state_machines::state_machine;
 static HATCH_SEALED: AtomicBool = AtomicBool::new(false);
 static ALARM_ACTIVE: AtomicBool = AtomicBool::new(false);
 static SELECTIONS: AtomicUsize = AtomicUsize::new(0);
+static FAILURES: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Debug)]
 pub struct Cargo {
@@ -37,12 +38,14 @@ state_machine! {
             branching: true,
             payload: Cargo,
             guards: [nonempty],
+            on_error: [record_failure],
             transition: { from: Open, to: Sealed, guards: [fits_once] }
             transition: { from: Open, to: Loaded, fallback: true }
         }
         classify {
             branching: true,
             payload: Cargo,
+            on_error: [record_failure],
             transition: { from: Open, to: Sealed, guards: [cargo_fits] }
             transition: { from: Open, to: Loaded, guards: [heavy] }
         }
@@ -50,6 +53,9 @@ state_machine! {
 }
 
 impl<C, S> CargoBay<C, S> {
+    fn record_failure(&self, _error: &state_machines::core::GuardError) {
+        FAILURES.fetch_add(1, Ordering::SeqCst);
+    }
     fn nonempty(&self, _ctx: &C, cargo: &Cargo) -> bool {
         cargo.mass_kg > 0
     }
@@ -127,10 +133,20 @@ fn can_methods_evaluate_guards_without_consuming() {
     assert!(!bay.can_classify(&Cargo { mass_kg: 1500 }));
     let (_, error) = bay.route(Cargo { mass_kg: 0 }).unwrap_err();
     assert_eq!(error.guard, "nonempty");
+    assert_eq!(FAILURES.load(Ordering::SeqCst), 2);
 
     let mut bay = DynamicCargoBay::new(());
     assert!(!bay.is_available_event(&CargoBayEvent::Route(Cargo { mass_kg: 0 })));
     bay.handle(CargoBayEvent::Route(Cargo { mass_kg: 5000 }))
         .unwrap();
     assert_eq!(bay.current_state(), CargoBayState::Loaded);
+    assert!(
+        bay.handle(CargoBayEvent::Route(Cargo { mass_kg: 1 }))
+            .is_err()
+    );
+    assert_eq!(
+        FAILURES.load(Ordering::SeqCst),
+        2,
+        "invalid events do not run transition hooks"
+    );
 }
