@@ -419,9 +419,9 @@ impl StateMachine {
         let mut finals = HashSet::new();
         for state in &self.final_states {
             err_if(
-                !self.states.contains(state),
+                !self.states.contains(state) && !self.hierarchy.is_superstate(state),
                 state.span(),
-                "final state must be a declared leaf",
+                "final state must be a declared leaf or superstate",
             )?;
             err_if(
                 !finals.insert(state.to_string()),
@@ -429,9 +429,12 @@ impl StateMachine {
                 "duplicate final state",
             )?;
             err_if(
-                self.transition_graph
-                    .outgoing(state)
-                    .is_some_and(|edges| edges.iter().any(|edge| &edge.scope == state)),
+                self.events.iter().any(|event| {
+                    event
+                        .transitions
+                        .iter()
+                        .any(|transition| transition.sources.contains(state))
+                }),
                 state.span(),
                 "final states cannot declare their own outgoing transitions",
             )?;

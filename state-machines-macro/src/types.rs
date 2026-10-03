@@ -372,6 +372,17 @@ pub struct Hierarchy {
 }
 
 impl Hierarchy {
+    /// Immediate parent of a leaf or composite, preserving unary hierarchy identity.
+    pub fn parent(&self, name: &str) -> Option<&Ident> {
+        if let Some(path) = self.ancestors.get(name) {
+            return path.last();
+        }
+        let leaf = self.lookup.get(name)?.first()?;
+        let path = self.ancestors.get(&leaf.to_string())?;
+        let index = path.iter().position(|scope| scope == name)?;
+        index.checked_sub(1).map(|index| &path[index])
+    }
+
     /// Register a superstate with its descendants and initial state.
     pub fn register_superstate(&mut self, name: Ident, descendants: Vec<Ident>, initial: Ident) {
         let lookup_key = name.to_string();

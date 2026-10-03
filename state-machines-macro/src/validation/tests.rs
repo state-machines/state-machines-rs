@@ -51,6 +51,13 @@ fn validates_final_states() {
         .unwrap_err();
         assert!(err.to_string().contains("final"));
     }
+    let err = validate(quote! {
+        name: Test, initial: A, states: [superstate Parent { state A, state B }, C],
+        final_states: [B, Parent],
+        events { exit { transition: { from: Parent, to: C } } }
+    })
+    .unwrap_err();
+    assert!(err.to_string().contains("own outgoing"));
 }
 
 #[test]

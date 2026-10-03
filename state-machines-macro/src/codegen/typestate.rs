@@ -742,12 +742,16 @@ pub(super) fn generate_transition_method(
     let enter_calls = enter_hooks
         .iter()
         .map(|cb| callback_step(&after, cb, false));
-    let completion_scope = super::finality::parent(machine, target_state).unwrap_or(target_state);
-    let complete_calls = machine
-        .lifecycle
+    let mut completed = super::finality::completed(machine, target_state);
+    completed.dedup();
+    let complete_calls = completed
         .iter()
-        .filter(|hooks| {
-            machine.final_states.contains(target_state) && &hooks.state == completion_scope
+        .filter(|_| !edge.internal)
+        .flat_map(|scope| {
+            machine
+                .lifecycle
+                .iter()
+                .filter(move |hooks| &hooks.state == *scope)
         })
         .flat_map(|hooks| &hooks.complete)
         .map(|cb| callback_step(&after, cb, false));

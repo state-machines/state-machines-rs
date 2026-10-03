@@ -63,16 +63,7 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
         .lookup
         .iter()
         .map(|(name, descendants)| {
-            let parent = descendants
-                .first()
-                .and_then(|leaf| machine.hierarchy.ancestors.get(&leaf.to_string()))
-                .and_then(|path| {
-                    path.iter()
-                        .position(|scope| scope == name)
-                        .and_then(|index| index.checked_sub(1))
-                        .map(|index| path[index].to_string())
-                });
-            let parent = optional_string(parent);
+            let parent = optional_string(machine.hierarchy.parent(name));
             let initial_str = machine
                 .hierarchy
                 .initial_children

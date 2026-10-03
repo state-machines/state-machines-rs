@@ -1419,6 +1419,16 @@ resources using `Option::take()` without Clone. It runs after exit hooks and
 before target entry hooks. After callbacks see the remaining payload. Factories
 must target data-carrying leaves and support async machines.
 
+### Hierarchical final completion
+
+`final_states` accepts leaves and composites. A final leaf completes its parent;
+if that parent is declared final, completion propagates bottom-up to its parent,
+and ultimately the machine when the root child is final. A non-final composite
+stops propagation; its `completion: Parent` edge can advance the workflow.
+Completion hooks/signals follow bottom-up order, irrespective of declaration
+order. Internal transitions do not repeat them. Final scopes cannot declare
+their own outgoing edges; inherited exits remain available.
+
 ### Composite transition kinds
 
 `kind: internal` is the targetless form of `internal: true`. `kind: local`

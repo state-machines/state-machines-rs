@@ -54,11 +54,12 @@ pub fn dynamic_methods(machine: &StateMachine) -> TokenStream {
                     if #history && (#enabled) {
                         match current.#helper() #await_ {
                             Ok(machine) => {
+                                let previous_epoch = self.epoch;
                                 #commit
                                 let next = #any::#target(machine);
                                 self.last_state = next.state();
                                 self.inner = Some(next);
-                                self.completions.extend_from_slice(self.completion_events());
+                                self.__sm_record_completions(previous_epoch);
                                 return Ok(true);
                             }
                             Err((machine, error)) => {

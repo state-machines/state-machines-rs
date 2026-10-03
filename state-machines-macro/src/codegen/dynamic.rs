@@ -594,6 +594,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
             #automatic_methods
 
             #handle_one_sig {
+                let previous_epoch = self.epoch;
                 // Take ownership of inner state temporarily
                 let current = self.inner.take().ok_or(#dynamic_error_ctor::Poisoned {
                     from: self.last_state.name(),
@@ -607,7 +608,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
 
                 self.last_state = new_state.state();
                 self.inner = ::core::option::Option::Some(new_state);
-                self.completions.extend_from_slice(self.completion_events());
+                self.__sm_record_completions(previous_epoch);
                 Ok(())
             }
 

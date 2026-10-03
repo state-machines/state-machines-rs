@@ -46,5 +46,10 @@ pub fn methods(machine: &StateMachine) -> TokenStream {
             self.epoch = self.epoch.wrapping_add(1);
             for index in exited { self.scope_epochs[*index] = self.scope_epochs[*index].wrapping_add(1); }
         }
+        fn __sm_record_completions(&mut self, previous_epoch: u64) {
+            if previous_epoch != self.epoch {
+                self.completions.extend_from_slice(self.completion_events());
+            }
+        }
     }
 }

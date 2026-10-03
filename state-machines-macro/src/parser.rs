@@ -851,9 +851,8 @@ impl StateMachine {
 
                     for actual_source in expanded_sources {
                         if let Some(scope) = &event.completion
-                            && (!self.final_states.contains(&actual_source)
-                                || crate::codegen::finality::parent(self, &actual_source)
-                                    != Some(scope))
+                            && !crate::codegen::finality::completed(self, &actual_source)
+                                .contains(&scope)
                         {
                             continue;
                         }

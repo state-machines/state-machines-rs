@@ -166,6 +166,41 @@ pub struct SchemaDiagnostic {
 }
 
 impl MachineSchema {
+    fn completed_scopes<'a>(&'a self, leaf: &'a String) -> Vec<&'a String> {
+        let mut scopes = Vec::new();
+        let mut child = leaf;
+        while self.final_states.contains(child) {
+            let parent = if self.states.contains(child) {
+                self.superstates
+                    .iter()
+                    .find(|s| {
+                        s.descendants.contains(child)
+                            && !self.superstates.iter().any(|nested| {
+                                nested.parent.as_ref() == Some(&s.name)
+                                    && nested.descendants.contains(child)
+                            })
+                    })
+                    .map(|s| &s.name)
+            } else {
+                self.superstates
+                    .iter()
+                    .find(|s| &s.name == child)
+                    .and_then(|s| s.parent.as_ref())
+            };
+            let scope = parent.unwrap_or(child);
+            // Malformed schema cycles must not hang validation.
+            if scopes.contains(&scope) {
+                break;
+            }
+            scopes.push(scope);
+            if scope == child {
+                break;
+            }
+            child = scope;
+        }
+        scopes
+    }
+
     /// Validate references and determinism, and lint structural reachability.
     ///
     /// Dead ends and unreachable states are warnings: both can be intentional.
@@ -376,21 +411,10 @@ impl MachineSchema {
                         report(DiagnosticLevel::Error, format!("unknown source `{source}`"));
                     }
                     for leaf in leaves {
-                        if let Some(scope) = &event.completion {
-                            let parent = self
-                                .superstates
-                                .iter()
-                                .find(|s| {
-                                    s.descendants.contains(leaf)
-                                        && !self.superstates.iter().any(|child| {
-                                            child.parent.as_ref() == Some(&s.name)
-                                                && child.descendants.contains(leaf)
-                                        })
-                                })
-                                .map(|s| &s.name);
-                            if !self.final_states.contains(leaf) || parent != Some(scope) {
-                                continue;
-                            }
+                        if let Some(scope) = &event.completion
+                            && !self.completed_scopes(leaf).contains(&scope)
+                        {
+                            continue;
                         }
                         if fallbacks.contains(leaf) {
                             report(
@@ -418,14 +442,9 @@ impl MachineSchema {
                 }
             }
         }
-        let mut finals = BTreeSet::new();
+        validate_scopes(self.final_states.iter(), &names, "final state", &mut report);
+        let finals: BTreeSet<_> = self.final_states.iter().collect();
         for state in &self.final_states {
-            if !self.states.contains(state) || !finals.insert(state) {
-                report(
-                    DiagnosticLevel::Error,
-                    format!("invalid or duplicate final state `{state}`"),
-                );
-            }
             if self.events.iter().any(|event| {
                 event
                     .transitions
