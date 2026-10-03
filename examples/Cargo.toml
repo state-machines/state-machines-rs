@@ -1,0 +1,16 @@
+# Separate from the release workspace: examples are tested, never version-bumped.
+[workspace]
+members = [
+    "no_std_flight",
+    "basic_transitions",
+    "guards_and_validation",
+    "callbacks_lifecycle",
+    "async_patterns",
+    "hierarchical_thinking",
+    "dynamic_dispatch_when",
+    "traffic_light",
+]
+resolver = "2"
+
+[workspace.package]
+rust-version = "1.99"

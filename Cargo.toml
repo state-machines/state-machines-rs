@@ -4,16 +4,10 @@ members = [
     "state-machines-core",
     "state-machines-macro",
     "state-machines-cli",
-    "examples/no_std_flight",
-    "examples/basic_transitions",
-    "examples/guards_and_validation",
-    "examples/callbacks_lifecycle",
-    "examples/async_patterns",
-    "examples/hierarchical_thinking",
-    "examples/dynamic_dispatch_when",
-    "examples/traffic_light",
-    "tests/feature_split",
 ]
+# release-please's cargo-workspace plugin bumps every member, including
+# publish=false packages. Keep runnable examples/fixtures in their own workspaces.
+exclude = ["examples", "tests/feature_split"]
 resolver = "2"
 
 [workspace.package]

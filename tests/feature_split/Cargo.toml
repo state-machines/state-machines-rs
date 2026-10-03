@@ -6,6 +6,13 @@ rust-version.workspace = true
 publish = false
 description = "Regression fixture: host and target link state-machines with different features"
 
+# Keep this non-release fixture out of release-please's workspace dependency graph.
+[workspace]
+resolver = "2"
+
+[workspace.package]
+rust-version = "1.99"
+
 [dependencies]
 state-machines = { path = "../../state-machines" }
 

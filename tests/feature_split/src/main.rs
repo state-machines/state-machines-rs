@@ -2,7 +2,7 @@
 //! Generated introspection/runtime code must vanish here even though the
 //! host-built macro (see `build.rs`) has seen those enabled.
 //!
-//! Build this package on its own (`cargo build -p feature_split`); a
+//! Build this package on its own (`cargo build --manifest-path tests/feature_split/Cargo.toml`); a
 //! workspace-wide build unifies features and hides the split.
 
 use state_machines::state_machine;

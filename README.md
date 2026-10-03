@@ -1666,13 +1666,28 @@ channels and drops their ephemeral work; restore uses the supplied fresh mailbox
 capacity. Explicitly `start` restored region runtime work with the host's clock.
 History restores control state, not previously suspended resources.
 
+### Running the examples
+
+Examples live in their own Cargo workspace. They stay `publish = false` and are
+excluded from release-please's workspace graph/manifest, so library releases do
+not bump their versions or create example changelogs.
+
+```sh
+cargo run --manifest-path examples/Cargo.toml -p traffic_light
+cargo test --manifest-path examples/Cargo.toml --workspace --all-features
+cargo build --manifest-path tests/feature_split/Cargo.toml
+```
+
+CI tests, lints and runs these examples separately from the release workspace.
+
 ## Contributing
 
 Contributions are welcome! This is a learning project, so:
 
 1. **Keep comments** – Explain *why*, not just *what*
 2. **Show Rust idioms** – If something is unidiomatic, fix it *and document the correct pattern*
-3. **Test thoroughly** – All tests must pass (`cargo test --workspace`)
+3. **Test thoroughly** – Run `cargo test --workspace` and
+   `cargo test --manifest-path examples/Cargo.toml --workspace --all-features`.
 4. **Compare to Ruby** – If you're changing behavior, note how it differs from the Ruby gem
 
 ---
