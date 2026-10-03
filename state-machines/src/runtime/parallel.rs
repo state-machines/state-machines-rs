@@ -1,0 +1,150 @@
+use super::Machine;
+use alloc::collections::VecDeque;
+
+/// Explicit region routing; forked payloads are owned separately, never cloned.
+#[derive(Debug)]
+pub enum ParallelEvent<L, R> {
+    Left(L),
+    Right(R),
+    Both { left: L, right: R },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ParallelError<L, R> {
+    Left(L),
+    /// `left_committed` means the left dispatch succeeded in this fork.
+    /// It does not promise that a failed right dispatch had no partial effects.
+    Right {
+        error: R,
+        left_committed: bool,
+    },
+    Poisoned,
+}
+
+/// Two orthogonal regions with deterministic left-then-right fork dispatch.
+/// Region effects are not transactional; nesting composes more regions.
+///
+/// ```
+/// use state_machines::{state_machine, runtime::Parallel};
+/// # async fn example() {
+/// state_machine! {
+///     name: Worker, dynamic: true, initial: Ready,
+///     states: [Ready, Done], final_states: [Done],
+///     events { finish { transition: { from: Ready, to: Done } } }
+/// }
+/// let mut regions = Parallel::new(DynamicWorker::new(()), DynamicWorker::new(()));
+/// regions.fork(WorkerEvent::Finish, WorkerEvent::Finish).await.unwrap();
+/// std::assert_matches!(regions.take_join(), Some((WorkerState::Done, WorkerState::Done)));
+/// assert!(regions.take_join().is_none());
+/// # }
+/// ```
+pub struct Parallel<L: Machine, R: Machine> {
+    left: L,
+    right: R,
+    was_finished: bool,
+    joins: VecDeque<(L::State, R::State)>,
+}
+impl<L: Machine, R: Machine> Parallel<L, R> {
+    /// Construction/restore is inert, including already completed regions.
+    pub fn new(left: L, right: R) -> Self {
+        let was_finished = left.is_finished() && right.is_finished();
+        Self {
+            left,
+            right,
+            was_finished,
+            joins: VecDeque::new(),
+        }
+    }
+    pub fn left(&self) -> &L {
+        &self.left
+    }
+    pub fn right(&self) -> &R {
+        &self.right
+    }
+    pub fn current_state(&self) -> (L::State, R::State) {
+        (self.left.state(), self.right.state())
+    }
+    pub fn is_finished(&self) -> bool {
+        !self.is_poisoned() && self.left.is_finished() && self.right.is_finished()
+    }
+    pub fn is_poisoned(&self) -> bool {
+        self.left.is_poisoned() || self.right.is_poisoned()
+    }
+    pub fn into_regions(self) -> (L, R) {
+        (self.left, self.right)
+    }
+
+    /// One owned configuration per transition into all-regions-finished.
+    pub fn take_join(&mut self) -> Option<(L::State, R::State)> {
+        self.joins.pop_front()
+    }
+
+    pub async fn fork(
+        &mut self,
+        left: L::Event,
+        right: R::Event,
+    ) -> Result<(), ParallelError<L::Error, R::Error>> {
+        self.handle(ParallelEvent::Both { left, right }).await
+    }
+
+    pub async fn handle(
+        &mut self,
+        event: ParallelEvent<L::Event, R::Event>,
+    ) -> Result<(), ParallelError<L::Error, R::Error>> {
+        if self.is_poisoned() {
+            return Err(ParallelError::Poisoned);
+        }
+        let result = match event {
+            ParallelEvent::Left(event) => {
+                self.left.dispatch(event).await.map_err(ParallelError::Left)
+            }
+            ParallelEvent::Right(event) => {
+                self.right
+                    .dispatch(event)
+                    .await
+                    .map_err(|error| ParallelError::Right {
+                        error,
+                        left_committed: false,
+                    })
+            }
+            ParallelEvent::Both { left, right } => match self.left.dispatch(left).await {
+                Err(error) => Err(ParallelError::Left(error)),
+                Ok(()) => self
+                    .right
+                    .dispatch(right)
+                    .await
+                    .map_err(|error| ParallelError::Right {
+                        error,
+                        left_committed: true,
+                    }),
+            },
+        };
+        // Also observe partial progress before a failed automatic microstep.
+        let finished = self.is_finished();
+        if finished && !self.was_finished {
+            self.joins.push_back(self.current_state());
+        }
+        self.was_finished = finished;
+        result
+    }
+}
+impl<L: Machine, R: Machine> Machine for Parallel<L, R> {
+    type Event = ParallelEvent<L::Event, R::Event>;
+    type Error = ParallelError<L::Error, R::Error>;
+    type State = (L::State, R::State);
+    fn state(&self) -> Self::State {
+        self.current_state()
+    }
+    fn epoch(&self) -> u64 {
+        self.left.epoch().wrapping_add(self.right.epoch())
+    }
+    fn is_finished(&self) -> bool {
+        self.is_finished()
+    }
+    fn is_poisoned(&self) -> bool {
+        self.is_poisoned()
+    }
+    async fn dispatch(&mut self, event: Self::Event) -> Result<(), Self::Error> {
+        self.handle(event).await
+    }
+}

@@ -81,10 +81,8 @@ mod asynchronous {
     #[test]
     fn async_startup_works_in_both_modes() {
         pollster::block_on(AsyncStartup::new(()).initialize()).unwrap();
-        assert!(
-            !pollster::block_on(DynamicAsyncStartup::initialize(()))
-                .unwrap()
-                .is_poisoned()
-        );
+        let mut dynamic = pollster::block_on(DynamicAsyncStartup::initialize(())).unwrap();
+        assert!(!dynamic.is_poisoned());
+        pollster::block_on(dynamic.handle(AsyncStartupEvent::Tick)).unwrap();
     }
 }

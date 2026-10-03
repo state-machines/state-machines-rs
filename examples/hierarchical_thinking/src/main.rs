@@ -76,20 +76,20 @@
 //!
 //! ## Caveats & Flow
 //!
-//! ### Caveat 1: Can't Transition Between Substates of Different Superstates
+//! ### Caveat 1: Cross-Superstate Leaf Transitions Exit/Enter Ancestors
 //!
 //! ```rust,ignore
 //! superstate GroupA { state X, state Y }
 //! superstate GroupB { state Z, state W }
 //!
 //! events {
-//!     invalid {
-//!         transition: { from: X, to: Z }  // ✗ Won't work directly
+//!     switch_group {
+//!         transition: { from: X, to: Z }  // Exits GroupA, enters GroupB
 //!     }
 //! }
 //! ```
 //!
-//! Must transition through a common state or out of superstates first.
+//! Direct transitions work; ancestor lifecycle hooks follow the transition domain.
 //!
 //! ### Caveat 2: Superstate Transitions Resolve to Initial Substate
 //!
@@ -117,7 +117,7 @@
 //!
 //! // Generated accessor (only works when machine is in O2Generation state):
 //! impl<C> Machine<C, O2Generation> {
-//!     pub fn o2_generation_data(&self) -> &O2Data { }
+//!     pub fn o2_generation_data(&self) -> Option<&O2Data> { /* ... */ }
 //! }
 //!
 //! // Can't access from other states - compile error
@@ -125,16 +125,17 @@
 //!
 //! Type system prevents accessing wrong state's data.
 //!
-//! ### Caveat 4: Superstates Don't Have Their Own Data
+//! ### Caveat 4: Superstate Data Lives Across Sibling Transitions
 //!
 //! ```rust,ignore
-//! superstate LifeSupport(SharedData) {  // ✗ Can't do this
+//! superstate LifeSupport(SharedData) {
 //!     state O2Generation(O2Data),
 //!     state CO2Scrubbing(CO2Data),
 //! }
 //! ```
 //!
-//! Only substates have data. Put shared data in context instead.
+//! Superstates can carry data. Sibling transitions retain it; leaving/re-entering
+//! the superstate resets it. Constructors/restore can leave data absent.
 //!
 //! ## The Flow: Life Support System
 //!

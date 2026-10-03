@@ -10,4 +10,4 @@ description = "Regression fixture: host and target link state-machines with diff
 state-machines = { path = "../../state-machines" }
 
 [build-dependencies]
-state-machines = { path = "../../state-machines", features = ["std", "serde"] }
+state-machines = { path = "../../state-machines", features = ["std", "serde", "runtime"] }

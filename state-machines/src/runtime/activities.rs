@@ -172,6 +172,8 @@ impl<M: Machine> Runner<M> {
     /// Invoke a reusable child runner, returning its event channel.
     /// Child dispatch failures map to one parent error event with the owned child.
     /// Step-budget exhaustion yields cooperatively and resumes on the next poll.
+    // Preserve the entire child without allocating another box on backpressure.
+    #[allow(clippy::result_large_err)]
     pub fn invoke_child<C, Done, Failed>(
         &mut self,
         mut child: Runner<C>,

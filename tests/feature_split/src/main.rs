@@ -1,6 +1,6 @@
-//! Target side: links `state-machines` with no features, so no `inspect`.
-//! The generated introspection code must vanish here even though the
-//! host-built macro (see `build.rs`) has seen `inspect` enabled.
+//! Target side: links `state-machines` with no features, so no `inspect`/`runtime`.
+//! Generated introspection/runtime code must vanish here even though the
+//! host-built macro (see `build.rs`) has seen those enabled.
 //!
 //! Build this package on its own (`cargo build -p feature_split`); a
 //! workspace-wide build unifies features and hides the split.

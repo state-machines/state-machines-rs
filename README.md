@@ -525,7 +525,7 @@ fn main() {
     // Transition to Flight superstate resolves to initial child (LaunchPrep)
     let sequence = sequence.enter_flight().unwrap();
 
-    // Access state-specific data (guaranteed non-None)
+    // This transition initialized the destination's data.
     let prep_data = sequence.launch_prep_data().expect("initialized on entry");
     println!("Checklist complete: {}", prep_data.checklist_complete);
 
@@ -549,7 +549,7 @@ fn main() {
 
 - **Polymorphic Transitions**: Define transitions `from: Flight` that work from ANY substate (LaunchPrep, Launching)
 - **Automatic Resolution**: `to: Flight` transitions resolve to the superstate's initial child state
-- **State Data Storage**: Each state with data gets guaranteed accessors like `launch_prep_data()` and `launching_data()`
+- **State Data Storage**: Each state with data gets optional-reference accessors like `launch_prep_data()` and `launching_data()`; constructors/restore may leave data absent
 - **SubstateOf Trait**: Generated trait implementations enable compile-time polymorphism
 - **Storage Lifecycle**: State data is automatically initialized on entry, cleared on exit
 
@@ -1520,6 +1520,25 @@ Child batches yield cooperatively at their step limit. There are no spawned
 tasks or threads; the host drives this single-executor runner. Invocations are
 explicit runtime operations, scoped to leaf visits (not declarative entry hooks
 or automatically inherited composite activities), and are not snapshots.
+
+### Orthogonal regions, fork and join
+
+`runtime::Parallel::new(left, right)` composes independent machines with a tuple
+active state. Nest it for more than two regions. `ParallelEvent::Left`/`Right`
+route to one region; `Both { left, right }` or `fork(left, right).await` route
+separate owned events to both, without requiring cloned payloads.
+
+This is deterministic **logical** parallelism: left dispatch precedes right,
+including async effects. If right rejects, `ParallelError::Right` reports whether
+left dispatched successfully; committed effects are not rolled back. Completion
+requires every region to finish; `take_join()` returns each newly completed
+configuration once. Construction from already-final regions remains inert.
+
+`Parallel` implements `Machine`, so it can use a runner or be invoked as a child.
+`into_regions()` recovers ownership for each region's own snapshot API. The
+adapter is not a macro-native parallel-state DSL: region history/snapshots remain
+separate, event routing is explicit, and there is no cross-region transaction or
+automatic conflict arbitration.
 - **[API Docs](https://docs.rs/state-machines)** – Full API reference
 - **[Crates.io](https://crates.io/crates/state-machines)** – Published crate versions
 - **[GitHub](https://github.com/state-machines/state-machines-rs)** – Source code and issues

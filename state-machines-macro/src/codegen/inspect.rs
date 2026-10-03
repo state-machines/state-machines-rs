@@ -61,7 +61,7 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
                 .and_then(|leaf| machine.hierarchy.ancestors.get(&leaf.to_string()))
                 .and_then(|path| {
                     path.iter()
-                        .position(|scope| scope.to_string() == *name)
+                        .position(|scope| scope == name)
                         .and_then(|index| index.checked_sub(1))
                         .map(|index| path[index].to_string())
                 });

@@ -27,4 +27,7 @@ fn main() {
     assert_eq!(schema.states, ["Idle", "Scanning"]);
     let snapshot = Probe::new(()).into_dynamic().into_snapshot();
     assert_eq!(snapshot.state, "Idle");
+    // The runtime adapter follows the host facade while vanishing on the target.
+    fn assert_runtime<M: state_machines::runtime::Machine>(_: &M) {}
+    assert_runtime(&DynamicProbe::new(()));
 }

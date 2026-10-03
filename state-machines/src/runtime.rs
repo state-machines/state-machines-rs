@@ -7,8 +7,13 @@ mod timers;
 pub use timers::{Clock, ClockError, ScheduleError, TimerId};
 mod activities;
 pub use activities::{ActivityId, ChildInvokeError, InvokeError, InvokeFailure};
+mod parallel;
+pub use parallel::{Parallel, ParallelError, ParallelEvent};
 
 /// Implemented by generated dynamic machines when the facade's runtime feature is enabled.
+/// Implementers must advance `epoch` on every committed external transition, even
+/// self-re-entry or a commit followed by a failed automatic step. Internal edges
+/// must retain it. State/epoch must not change through shared references.
 #[allow(async_fn_in_trait)]
 pub trait Machine {
     type Event;

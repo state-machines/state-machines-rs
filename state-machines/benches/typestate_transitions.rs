@@ -229,7 +229,7 @@ fn benchmark_state_data_access(c: &mut Criterion) {
         let machine = machine.enter_active().unwrap();
 
         b.iter(|| {
-            let data = black_box(machine.sub_a_data());
+            let data = black_box(machine.sub_a_data().expect("initialized on entry"));
             black_box(data.value)
         });
     });
@@ -240,7 +240,10 @@ fn benchmark_state_data_mutation(c: &mut Criterion) {
         b.iter(|| {
             let machine = HierarchicalMachine::new(());
             let mut machine = machine.enter_active().unwrap();
-            machine.sub_a_data_mut().value = black_box(42);
+            machine
+                .sub_a_data_mut()
+                .expect("initialized on entry")
+                .value = black_box(42);
             black_box(machine)
         });
     });

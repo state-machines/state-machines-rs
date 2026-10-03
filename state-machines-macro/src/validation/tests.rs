@@ -134,3 +134,97 @@ fn accepts_event_names_containing_schema() {
     })
     .unwrap();
 }
+
+#[test]
+fn rejects_unsupported_automatic_payloads_and_completion_scopes() {
+    for (event, expected) in [
+        (
+            quote! { go { automatic: true, payload: u32, transition: { from: A, to: B } } },
+            "payload",
+        ),
+        (
+            quote! { go { completion: A, transition: { from: A, to: B } } },
+            "superstate",
+        ),
+        (
+            quote! { go { completion: Region, transition: { from: A, to: B } } },
+            "scope",
+        ),
+        (
+            quote! { go { completion: Region, transition: { from: Region, internal: true } } },
+            "scope",
+        ),
+    ] {
+        let error = validate(quote! {
+            name: Test, initial: A,
+            states: [superstate Region { state A }, B],
+            events { #event }
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains(expected), "{error}");
+    }
+}
+
+#[test]
+fn rejects_ambiguous_hierarchy_policies_and_invalid_composite_kinds() {
+    for (event, expected) in [
+        (
+            quote! { go { hierarchical: true, branching: true, transition: { from: A, to: B } } },
+            "either",
+        ),
+        (
+            quote! { go { hierarchical: true,
+                transition: { from: A, to: B, guards: [one] }
+                transition: { from: A, to: B, guards: [two] }
+            } },
+            "same scope",
+        ),
+        (
+            quote! { go { transition: { from: A, to: B, kind: local } } },
+            "inside",
+        ),
+        (
+            quote! { go { transition: { from: Region, to: B, kind: local } } },
+            "inside",
+        ),
+        (
+            quote! { go { transition: { from: A, to: B, kind: unknown } } },
+            "kind",
+        ),
+        (
+            quote! { go { transition: { from: A, kind: external, internal: true } } },
+            "conflicts",
+        ),
+    ] {
+        let error = validate(quote! {
+            name: Test, initial: A,
+            states: [superstate Region { state A }, B],
+            events { #event }
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains(expected), "{error}");
+    }
+}
+
+#[test]
+fn factories_must_target_data_leaves_and_startup_name_is_reserved() {
+    for event in [
+        quote! { go { transition: { from: A, to: B, data: own } } },
+        quote! { go { transition: { from: A, internal: true, data: own } } },
+        quote! { go { transition: { from: B, to: Region, data: own } } },
+    ] {
+        let error = validate(quote! {
+            name: Test, initial: A,
+            states: [superstate Region { state A }, B],
+            events { #event }
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("data"), "{error}");
+    }
+    let error = validate(quote! {
+        name: Test, initial: A, states: [A],
+        events { initialize { transition: { from: A, internal: true } } }
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("reserved"), "{error}");
+}

@@ -65,18 +65,19 @@
 //! dynamic.handle(ComputerEvent::Boot)  // ✓ Use handle() instead
 //! ```
 //!
-//! Dynamic wrapper only has `handle()` and `current_state()`.
+//! Use the dynamic dispatch/query APIs rather than consuming typestate methods.
 //!
-//! ### Caveat 3: Event Payloads Must Be Clone
+//! ### Caveat 3: Event Payloads Are Owned, Not Cloned
 //!
 //! ```rust,ignore
-//! #[derive(Clone)]  // ← Required for dynamic mode
+//! #[derive(Debug)]
 //! struct CommandPayload {
 //!     data: Vec<u8>
 //! }
 //! ```
 //!
-//! Dynamic mode needs to clone payloads for routing.
+//! Dynamic routing moves payloads. `Clone` is not required; rejected dispatch
+//! consumes the attempted event rather than returning its payload.
 //!
 //! ### Caveat 4: current_state() Returns a Runtime State Enum
 //!
