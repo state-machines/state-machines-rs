@@ -9,6 +9,7 @@ pub mod dynamic;
 pub mod finality;
 pub mod history;
 pub mod inspect;
+pub mod runtime;
 pub mod scopes;
 pub mod snapshot;
 pub mod typestate;

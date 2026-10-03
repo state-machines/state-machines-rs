@@ -1525,8 +1525,42 @@ returns the unpolled future or child to the caller.
 `wait_for_work().await` to sleep on real mailbox/activity wakers, then drain.
 Child batches yield cooperatively at their step limit. There are no spawned
 tasks or threads; the host drives this single-executor runner. Invocations are
-explicit runtime operations, scoped to leaf visits (not declarative entry hooks
-or automatically inherited composite activities), and are not snapshots.
+runtime operations by default; named scopes and declarative entry rules also
+support composite lifetimes. Pending execution is not part of snapshots.
+
+### Declarative runtime lifecycle
+
+Enable `runtime`, opt into dynamic mode, and declare scoped entry rules:
+
+```text
+runtime: {
+    Running {
+        after: [{ delay: 10, event: make_timeout }],
+        invoke: [start_operation],
+        defer: [load],
+    }
+}
+```
+
+The event factory returns an owned generated event; an invocation factory returns
+an owned `'static` future yielding a generated done/error event. For child machines,
+reuse `runtime::run_child(child_runner, batch_limit)` inside that future.
+Factories are ordinary methods on the typed machine, like existing callbacks.
+`defer` names external events and holds their owned payloads until the scope exits.
+
+Call `runner.start(&clock)` for initial entry setup. Constructors/restore remain
+inert. Later committed entries—including transient automatic microsteps—are wired
+by `drain`; the runner reuses the generated edge selector, not a second transition
+engine. A parent declaration survives sibling/local transitions and restarts on
+external re-entry. Entry setup uses the latest host-observed clock: call `tick`
+before dispatch to advance time. Zero delays queue immediately.
+
+Setup reserves capacity **before** calling each factory. `RunError::Setup` reports
+missing clocks, overflow or backpressure; already installed rules are not repeated
+on retry. `set_capacity` can expand a full mailbox without losing events. Factories
+must not rely on I/O compensation if their own code panics. Root automatic cycles
+return `RunError::AutomaticStepLimit`, distinct from the queued-event budget.
+Runtime declarations are included in the inspectable schema.
 
 ### Orthogonal regions, fork and join
 

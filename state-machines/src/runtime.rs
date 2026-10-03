@@ -11,6 +11,9 @@ mod parallel;
 pub use parallel::{Parallel, ParallelError, ParallelEvent};
 mod work;
 pub use work::WorkScope;
+mod lifecycle;
+pub use activities::run_child;
+pub use lifecycle::{ActivityFuture, LifecycleRule, SetupError, SetupFailure};
 use work::{Registry, Visit};
 
 /// Implemented by generated dynamic machines when the facade's runtime feature is enabled.
@@ -28,9 +31,24 @@ pub trait Machine {
     fn scope_epoch(&self, _scope: &str) -> Option<u64> {
         None
     }
+    fn runtime_rules() -> Vec<LifecycleRule<Self>>
+    where
+        Self: Sized,
+    {
+        Vec::new()
+    }
     fn is_finished(&self) -> bool;
     fn is_poisoned(&self) -> bool;
     async fn dispatch(&mut self, event: Self::Event) -> Result<(), Self::Error>;
+    async fn dispatch_one(&mut self, event: Self::Event) -> Result<(), Self::Error> {
+        self.dispatch(event).await
+    }
+    async fn automatic_step(&mut self) -> Result<bool, Self::Error> {
+        Ok(false)
+    }
+    async fn automatic_enabled(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug)]
@@ -145,17 +163,21 @@ pub enum RunError<E> {
     Dispatch(E),
     StepLimit { limit: usize },
     Poisoned,
+    Setup(SetupError),
+    AutomaticStepLimit { limit: usize },
 }
 
 enum Scope<S> {
     State(S),
     Predicate(fn(S) -> bool),
+    Named(&'static str),
 }
 impl<S: Copy + Eq> Scope<S> {
-    fn active(&self, state: S) -> bool {
+    fn active<M: Machine<State = S>>(&self, machine: &M) -> bool {
         match self {
-            Self::State(expected) => *expected == state,
-            Self::Predicate(predicate) => predicate(state),
+            Self::State(expected) => *expected == machine.state(),
+            Self::Predicate(predicate) => predicate(machine.state()),
+            Self::Named(scope) => machine.scope_epoch(scope).is_some(),
         }
     }
 }
@@ -176,19 +198,35 @@ pub struct Runner<M: Machine> {
     last_time: Option<u64>,
     activities: Registry<ActivityId, M::State, activities::Task<M::Event>>,
     next_activity: u64,
+    lifecycle: Vec<lifecycle::Configured<M>>,
 }
 impl<M: Machine> Runner<M> {
     pub fn new(machine: M, capacity: usize) -> Self {
+        let declarations = M::runtime_rules();
+        let rules = declarations
+            .iter()
+            .filter_map(|rule| match rule {
+                LifecycleRule::Defer { scope, matches } => Some(Deferral {
+                    scope: Scope::Named(scope),
+                    matches: *matches,
+                }),
+                _ => None,
+            })
+            .collect();
         Self {
             machine: Some(machine),
             sink: EventSink::new(capacity),
-            rules: Vec::new(),
+            rules,
             deferred: VecDeque::new(),
             timers: Registry::new(),
             next_timer: 0,
             last_time: None,
             activities: Registry::new(),
             next_activity: 0,
+            lifecycle: declarations
+                .into_iter()
+                .map(|rule| lifecycle::Configured { rule, epoch: None })
+                .collect(),
         }
     }
     pub fn machine(&self) -> &M {
@@ -205,6 +243,15 @@ impl<M: Machine> Runner<M> {
     }
     pub fn pending(&self) -> usize {
         self.sink.pending()
+    }
+    /// Recover setup backpressure without losing queued events or repeating factories.
+    pub fn set_capacity(&mut self, capacity: usize) -> bool {
+        let mut inbox = self.sink.inbox.borrow_mut();
+        if capacity < inbox.pending {
+            return false;
+        }
+        inbox.capacity = capacity;
+        true
     }
     pub fn deferred(&self) -> usize {
         self.deferred.len()
@@ -242,13 +289,12 @@ impl<M: Machine> Runner<M> {
             && event.activity.is_none_or(|id| self.activities.contains(id))
     }
     fn recall(&mut self) {
-        let state = self.machine().state();
         let mut recalled = VecDeque::new();
         for _ in 0..self.deferred.len() {
             let (rule, event) = self.deferred.pop_front().unwrap();
             if !self.live_delivery(&event) {
                 self.release(1);
-            } else if self.rules[rule].scope.active(state) {
+            } else if self.rules[rule].scope.active(self.machine()) {
                 self.deferred.push_back((rule, event));
             } else {
                 recalled.push_back(event);
@@ -264,6 +310,7 @@ impl<M: Machine> Runner<M> {
         if self.machine().is_poisoned() {
             return Err(RunError::Poisoned);
         }
+        self.setup_entries().map_err(RunError::Setup)?;
         let mut steps = 0;
         loop {
             core::future::poll_fn(|cx| {
@@ -289,7 +336,6 @@ impl<M: Machine> Runner<M> {
                     .or_else(|| inbox.external.pop_front())
                     .unwrap()
             };
-            let state = self.machine().state();
             if !self.live_delivery(&event) {
                 self.release(1);
                 steps += 1;
@@ -298,7 +344,7 @@ impl<M: Machine> Runner<M> {
             if let Some(rule) = self
                 .rules
                 .iter()
-                .position(|rule| rule.scope.active(state) && (rule.matches)(&event.event))
+                .position(|rule| rule.scope.active(self.machine()) && (rule.matches)(&event.event))
             {
                 self.deferred.push_back((rule, event));
             } else {
@@ -309,11 +355,45 @@ impl<M: Machine> Runner<M> {
                 if let Some(id) = event.activity {
                     self.activities.retire(id);
                 }
-                let result = self.machine.as_mut().unwrap().dispatch(event.event).await;
+                let result = self
+                    .machine
+                    .as_mut()
+                    .unwrap()
+                    .dispatch_one(event.event)
+                    .await;
                 // A failed automatic microstep may follow a committed external edge.
                 self.reconcile_work();
                 self.recall();
                 result.map_err(RunError::Dispatch)?;
+                self.stabilize(64).await?;
+            }
+            steps += 1;
+        }
+    }
+    /// Entry setup surrounds every automatic microstep, including transient scopes.
+    pub async fn stabilize(&mut self, max_steps: usize) -> Result<usize, RunError<M::Error>> {
+        self.reconcile_work();
+        self.recall();
+        if self.machine().is_poisoned() {
+            return Err(RunError::Poisoned);
+        }
+        self.setup_entries().map_err(RunError::Setup)?;
+        let mut steps = 0;
+        loop {
+            if steps == max_steps {
+                return if self.machine().automatic_enabled().await {
+                    Err(RunError::AutomaticStepLimit { limit: max_steps })
+                } else {
+                    Ok(steps)
+                };
+            }
+            let result = self.machine.as_mut().unwrap().automatic_step().await;
+            self.reconcile_work();
+            self.recall();
+            let changed = result.map_err(RunError::Dispatch)?;
+            self.setup_entries().map_err(RunError::Setup)?;
+            if !changed {
+                return Ok(steps);
             }
             steps += 1;
         }

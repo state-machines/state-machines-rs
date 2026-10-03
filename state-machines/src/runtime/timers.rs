@@ -18,6 +18,15 @@ pub enum ScheduleError<E> {
     InactiveScope(E),
 }
 impl<E> ScheduleError<E> {
+    pub(super) fn with_event<T>(self, event: T) -> ScheduleError<T> {
+        match self {
+            Self::Full(_) => ScheduleError::Full(event),
+            Self::Poisoned(_) => ScheduleError::Poisoned(event),
+            Self::Backwards(_) => ScheduleError::Backwards(event),
+            Self::Overflow(_) => ScheduleError::Overflow(event),
+            Self::InactiveScope(_) => ScheduleError::InactiveScope(event),
+        }
+    }
     pub fn into_event(self) -> E {
         match self {
             Self::Full(e)
@@ -33,6 +42,8 @@ pub(super) struct Timeout<E> {
     deadline: u64,
     event: E,
 }
+
+type TimerReservation<S> = (TimerId, Visit<S>, u64);
 
 impl<M: Machine> Runner<M> {
     /// Reserve capacity and bind a timeout to the current leaf visit.
@@ -52,31 +63,52 @@ impl<M: Machine> Runner<M> {
         delay: u64,
         event: M::Event,
     ) -> Result<TimerId, ScheduleError<M::Event>> {
+        let (id, visit, deadline) = match self.reserve_timer(scope, clock, delay) {
+            Ok(value) => value,
+            Err(error) => return Err(error.with_event(event)),
+        };
+        self.store_timer(id, visit, deadline, event);
+        Ok(id)
+    }
+    pub(super) fn reserve_timer(
+        &mut self,
+        scope: WorkScope,
+        clock: &impl Clock,
+        delay: u64,
+    ) -> Result<TimerReservation<M::State>, ScheduleError<()>> {
         self.reconcile_work();
         if self.machine().is_poisoned() {
-            return Err(ScheduleError::Poisoned(event));
+            return Err(ScheduleError::Poisoned(()));
         }
         let Some(visit) = Visit::capture(self.machine(), scope) else {
-            return Err(ScheduleError::InactiveScope(event));
+            return Err(ScheduleError::InactiveScope(()));
         };
         let now = clock.now();
         if self.last_time.is_some_and(|last| now < last) {
-            return Err(ScheduleError::Backwards(event));
+            return Err(ScheduleError::Backwards(()));
         }
         let Some(deadline) = now.checked_add(delay) else {
-            return Err(ScheduleError::Overflow(event));
+            return Err(ScheduleError::Overflow(()));
         };
         let Some(next) = self.next_timer.checked_add(1) else {
-            return Err(ScheduleError::Overflow(event));
+            return Err(ScheduleError::Overflow(()));
         };
         if !self.sink.inbox.borrow_mut().reserve() {
-            return Err(ScheduleError::Full(event));
+            return Err(ScheduleError::Full(()));
         }
         self.last_time = Some(now);
         self.next_timer = next;
         let id = TimerId(next);
+        Ok((id, visit, deadline))
+    }
+    pub(super) fn store_timer(
+        &mut self,
+        id: TimerId,
+        visit: Visit<M::State>,
+        deadline: u64,
+        event: M::Event,
+    ) {
         self.timers.insert(id, visit, Timeout { deadline, event });
-        Ok(id)
     }
 
     /// Move due timers to the external FIFO. Call this from the host's clock driver.

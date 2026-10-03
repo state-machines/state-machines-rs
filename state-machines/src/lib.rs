@@ -11,6 +11,21 @@ pub mod runtime;
 #[doc(hidden)]
 #[cfg(feature = "runtime")]
 #[macro_export]
+macro_rules! __sm_require_runtime {
+    () => {};
+}
+#[doc(hidden)]
+#[cfg(not(feature = "runtime"))]
+#[macro_export]
+macro_rules! __sm_require_runtime {
+    () => {
+        compile_error!("runtime declarations require the state-machines runtime feature");
+    };
+}
+
+#[doc(hidden)]
+#[cfg(feature = "runtime")]
+#[macro_export]
 macro_rules! __sm_if_runtime {
     ($($item:tt)*) => { $($item)* };
 }
@@ -24,6 +39,7 @@ macro_rules! __sm_if_runtime {
 
 #[doc(hidden)]
 pub mod __private {
+    pub use alloc::boxed::Box;
     pub use alloc::string::String;
     pub use alloc::vec;
     pub use alloc::vec::Vec;
@@ -77,8 +93,9 @@ pub use state_machines_macro::state_machine;
 
 #[cfg(feature = "inspect")]
 pub use state_machines_core::{
-    DiagnosticLevel, EventSchema, Inspectable, MachineSchema, SchemaDiagnostic,
-    StateLifecycleSchema, SuperstateSchema, TransitionSchema,
+    DeadlineSchema, DiagnosticLevel, EventSchema, Inspectable, MachineSchema,
+    RuntimeLifecycleSchema, SchemaDiagnostic, StateLifecycleSchema, SuperstateSchema,
+    TransitionSchema,
 };
 
 /// Abort an around callback with a guard-style error.

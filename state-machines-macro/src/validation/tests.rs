@@ -228,3 +228,32 @@ fn factories_must_target_data_leaves_and_startup_name_is_reserved() {
     .unwrap_err();
     assert!(error.to_string().contains("reserved"), "{error}");
 }
+
+#[test]
+fn validates_runtime_declarations() {
+    for (runtime, expected) in [
+        (quote! { Missing { invoke: [work] } }, "scope"),
+        (quote! { A { defer: [missing] } }, "event"),
+        (quote! { A { defer: [go, go] } }, "duplicate"),
+        (
+            quote! { A { invoke: [work] }, A { invoke: [work] } },
+            "duplicate",
+        ),
+        (quote! { A { after: [{event: timer}] } }, "delay"),
+    ] {
+        let error = validate(quote! {
+            name: Test, dynamic: true, initial: A, states: [A, B],
+            runtime: { #runtime },
+            events { go { transition: { from: A, to: B } } }
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains(expected), "{error}");
+    }
+    let error = validate(quote! {
+        name: Test, dynamic: true, initial: A, states: [A, B],
+        runtime: { A { defer: [go] } },
+        events { go { automatic: true, transition: { from: A, to: B } } }
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("external"), "{error}");
+}

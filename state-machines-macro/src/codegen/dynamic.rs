@@ -363,6 +363,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
     let startup_error = transition_error_ty(machine);
     let scope_count = super::scopes::names(machine).len();
     let scope_methods = super::scopes::methods(machine);
+    let (require_runtime, runtime_factories, runtime_rules) = super::runtime::generate(machine);
 
     let state_variants = &machine.states;
     let state_name_arms = machine.states.iter().map(|state| {
@@ -546,6 +547,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
         }
 
         impl #generics #dynamic_name #generics {
+            #runtime_factories
             /// Construct and run the declared initial entry hooks.
             pub #maybe_async fn initialize(ctx: #ctx_param_ty) -> Result<Self, (Self, #startup_error)> {
                 match #machine_name::new(ctx).initialize() #maybe_await {
@@ -650,9 +652,11 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
         }
 
         #default_impl
+        #require_runtime
 
         ::state_machines::__sm_if_runtime! {
             impl #generics ::state_machines::runtime::Machine for #dynamic_name #generics {
+                #runtime_rules
                 type Event = #event_name;
                 type Error = #dynamic_error_ty;
                 type State = #state_enum_name;
@@ -664,6 +668,13 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
                 async fn dispatch(&mut self, event: Self::Event) -> Result<(), Self::Error> {
                     self.handle(event) #maybe_await
                 }
+                async fn dispatch_one(&mut self, event: Self::Event) -> Result<(), Self::Error> {
+                    self.__sm_handle_one(event) #maybe_await
+                }
+                async fn automatic_step(&mut self) -> Result<bool, Self::Error> {
+                    self.__sm_automatic_step() #maybe_await
+                }
+                async fn automatic_enabled(&self) -> bool { self.__sm_has_automatic() #maybe_await }
             }
         }
     })

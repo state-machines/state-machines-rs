@@ -46,7 +46,7 @@ impl<C: Machine> fmt::Debug for ChildInvokeError<C> {
 pub(super) type Task<E> = Pin<Box<dyn Future<Output = E> + 'static>>;
 
 impl<M: Machine> Runner<M> {
-    fn reserve_activity(
+    pub(super) fn reserve_activity(
         &mut self,
         scope: WorkScope,
     ) -> Result<(ActivityId, Visit<M::State>), InvokeFailure> {
@@ -66,7 +66,12 @@ impl<M: Machine> Runner<M> {
         Ok((ActivityId(next), visit))
     }
 
-    fn store_activity(&mut self, id: ActivityId, visit: Visit<M::State>, future: Task<M::Event>) {
+    pub(super) fn store_activity(
+        &mut self,
+        id: ActivityId,
+        visit: Visit<M::State>,
+        future: Task<M::Event>,
+    ) {
         self.activities.insert(id, visit, future);
     }
 
@@ -186,7 +191,7 @@ impl<M: Machine> Runner<M> {
     pub fn invoke_child_in<C, Done, Failed>(
         &mut self,
         scope: WorkScope,
-        mut child: Runner<C>,
+        child: Runner<C>,
         max_steps: usize,
         done: Done,
         failed: Failed,
@@ -215,38 +220,52 @@ impl<M: Machine> Runner<M> {
             id,
             visit,
             Box::pin(async move {
-                loop {
-                    if child.machine().is_finished() {
-                        return done(child.into_machine());
-                    }
-                    match child.drain(max_steps).await {
-                        Ok(_) => {
-                            if child.machine().is_finished() {
-                                return done(child.into_machine());
-                            }
-                            if let Err(error) = child.wait_for_work().await {
-                                return failed(error, child.into_machine());
-                            }
-                        }
-                        Err(RunError::StepLimit { .. }) => {
-                            // Limit work per parent poll, including infinitely raised child events.
-                            let mut yielded = false;
-                            poll_fn(|cx| {
-                                if yielded {
-                                    Poll::Ready(())
-                                } else {
-                                    yielded = true;
-                                    cx.waker().wake_by_ref();
-                                    Poll::Pending
-                                }
-                            })
-                            .await;
-                        }
-                        Err(error) => return failed(error, child.into_machine()),
-                    }
+                match run_child(child, max_steps).await {
+                    Ok(child) => done(child),
+                    Err((error, child)) => failed(error, child),
                 }
             }),
         );
         Ok((id, sink))
+    }
+}
+
+/// Drive an owned child cooperatively, recovering it on completion or failure.
+/// Shared by explicit invocation and declarative activity factories.
+pub async fn run_child<C: Machine>(
+    mut child: Runner<C>,
+    max_steps: usize,
+) -> Result<C, (RunError<C::Error>, C)> {
+    if max_steps == 0 {
+        return Err((RunError::StepLimit { limit: 0 }, child.into_machine()));
+    }
+    loop {
+        if child.machine().is_finished() {
+            return Ok(child.into_machine());
+        }
+        match child.drain(max_steps).await {
+            Ok(_) => {
+                if child.machine().is_finished() {
+                    return Ok(child.into_machine());
+                }
+                if let Err(error) = child.wait_for_work().await {
+                    return Err((error, child.into_machine()));
+                }
+            }
+            Err(RunError::StepLimit { .. }) => {
+                let mut yielded = false;
+                poll_fn(|cx| {
+                    if yielded {
+                        Poll::Ready(())
+                    } else {
+                        yielded = true;
+                        cx.waker().wake_by_ref();
+                        Poll::Pending
+                    }
+                })
+                .await;
+            }
+            Err(error) => return Err((error, child.into_machine())),
+        }
     }
 }

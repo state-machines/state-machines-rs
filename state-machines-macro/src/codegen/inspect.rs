@@ -183,6 +183,20 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
         }
     });
     let final_states = string_vec(&machine.final_states);
+    let runtime = machine.runtime_lifecycle.iter().map(|rule| {
+        let state = rule.state.to_string();
+        let invoke = string_vec(&rule.invoke);
+        let defer = string_vec(&rule.defer);
+        let after = rule.after.iter().map(|timer| {
+            let delay = timer.delay;
+            let event = timer.event.to_string();
+            quote! { ::state_machines::DeadlineSchema { delay: #delay, event: #event.into() } }
+        });
+        quote! { ::state_machines::RuntimeLifecycleSchema {
+            state: #state.into(), invoke: #invoke, defer: #defer,
+            after: ::state_machines::__private::vec![#(#after),*],
+        } }
+    });
 
     // Generate a schema() function that's callable on the machine type.
     // We generate an impl block for all generic parameters that provides schema().
@@ -209,6 +223,7 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
                         ],
                         async_mode: #async_mode,
                         lifecycle: ::state_machines::__private::vec![ #( #lifecycle, )* ],
+                        runtime: ::state_machines::__private::vec![#(#runtime),*],
                         final_states: #final_states,
                     }
                 }

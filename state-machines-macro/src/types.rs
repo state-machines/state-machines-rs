@@ -25,6 +25,7 @@ pub struct StateMachine {
     pub events: Vec<Event>,
     pub callbacks: GlobalCallbacks,
     pub lifecycle: Vec<StateLifecycle>,
+    pub runtime_lifecycle: Vec<RuntimeLifecycle>,
     pub final_states: Vec<Ident>,
     pub snapshot: bool,
     pub async_mode: bool,
@@ -37,6 +38,16 @@ pub struct StateLifecycle {
     pub enter: Vec<Ident>,
     pub exit: Vec<Ident>,
     pub complete: Vec<Ident>,
+}
+pub struct RuntimeLifecycle {
+    pub state: Ident,
+    pub after: Vec<Deadline>,
+    pub invoke: Vec<Ident>,
+    pub defer: Vec<Ident>,
+}
+pub struct Deadline {
+    pub delay: u64,
+    pub event: Ident,
 }
 
 impl StateMachine {

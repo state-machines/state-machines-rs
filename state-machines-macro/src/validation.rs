@@ -80,6 +80,43 @@ impl StateMachine {
     /// and a descriptive message.
     pub fn validate(&self) -> Result<()> {
         err_if(
+            !self.runtime_lifecycle.is_empty() && !(self.dynamic_mode || cfg!(feature = "dynamic")),
+            self.name.span(),
+            "runtime lifecycle declarations require dynamic mode",
+        )?;
+        let mut scopes = HashSet::new();
+        let external_events: HashSet<_> = self
+            .events
+            .iter()
+            .filter(|event| !event.automatic)
+            .map(|event| &event.name)
+            .collect();
+        for rule in &self.runtime_lifecycle {
+            err_if(
+                !self.states.contains(&rule.state) && !self.hierarchy.is_superstate(&rule.state),
+                rule.state.span(),
+                "runtime lifecycle scope is not declared",
+            )?;
+            err_if(
+                !scopes.insert(rule.state.to_string()),
+                rule.state.span(),
+                "duplicate runtime lifecycle scope",
+            )?;
+            let mut deferred = HashSet::new();
+            for name in &rule.defer {
+                err_if(
+                    !deferred.insert(name.to_string()),
+                    name.span(),
+                    "duplicate deferred event",
+                )?;
+                err_if(
+                    !external_events.contains(name),
+                    name.span(),
+                    "deferral requires a declared external event",
+                )?;
+            }
+        }
+        err_if(
             self.snapshot && !(self.dynamic_mode || cfg!(feature = "dynamic")),
             self.name.span(),
             "`snapshot: true` requires dynamic mode",

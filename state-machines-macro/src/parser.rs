@@ -31,6 +31,7 @@ impl Parse for StateMachine {
         let mut events = None;
         let mut callbacks = GlobalCallbacks::default();
         let mut lifecycle = Vec::new();
+        let mut runtime_lifecycle = Vec::new();
         let mut final_states = Vec::new();
         let mut snapshot = false;
         let mut async_mode = false;
@@ -51,6 +52,12 @@ impl Parse for StateMachine {
                 let key_str = key.to_string();
 
                 match key_str.as_str() {
+                    "runtime" => {
+                        input.parse::<Token![:]>()?;
+                        let content;
+                        braced!(content in input);
+                        runtime_lifecycle = parse_runtime_lifecycle(&content)?;
+                    }
                     "dynamic" => {
                         input.parse::<Token![:]>()?;
                         let value: syn::LitBool = input.parse()?;
@@ -174,6 +181,7 @@ impl Parse for StateMachine {
             events: events.unwrap_or_default(),
             callbacks,
             lifecycle,
+            runtime_lifecycle,
             final_states,
             snapshot,
             async_mode,
@@ -186,6 +194,62 @@ impl Parse for StateMachine {
 
         Ok(machine)
     }
+}
+
+fn parse_runtime_lifecycle(input: ParseStream<'_>) -> Result<Vec<RuntimeLifecycle>> {
+    let mut rules = Vec::new();
+    while !input.is_empty() {
+        let state = input.parse()?;
+        let body;
+        braced!(body in input);
+        let mut rule = RuntimeLifecycle {
+            state,
+            after: Vec::new(),
+            invoke: Vec::new(),
+            defer: Vec::new(),
+        };
+        while !body.is_empty() {
+            let key: Ident = body.parse()?;
+            body.parse::<Token![:]>()?;
+            match key.to_string().as_str() {
+                "after" => {
+                    let list;
+                    bracketed!(list in body);
+                    while !list.is_empty() {
+                        let deadline;
+                        braced!(deadline in list);
+                        let mut delay = None;
+                        let mut event = None;
+                        while !deadline.is_empty() {
+                            let key: Ident = deadline.parse()?;
+                            deadline.parse::<Token![:]>()?;
+                            match key.to_string().as_str() {
+                                "delay" => {
+                                    delay = Some(deadline.parse::<syn::LitInt>()?.base10_parse()?)
+                                }
+                                "event" => event = Some(deadline.parse()?),
+                                _ => return Err(unexpected_key(&key)),
+                            }
+                            skip_optional_comma(&deadline)?;
+                        }
+                        rule.after.push(Deadline {
+                            delay: delay.ok_or_else(|| list.error("deadline requires delay"))?,
+                            event: event
+                                .ok_or_else(|| list.error("deadline requires event factory"))?,
+                        });
+                        skip_optional_comma(&list)?;
+                    }
+                }
+                "invoke" => rule.invoke = parse_ident_list_value(&body)?,
+                "defer" => rule.defer = parse_ident_list_value(&body)?,
+                _ => return Err(unexpected_key(&key)),
+            }
+            skip_optional_comma(&body)?;
+        }
+        rules.push(rule);
+        skip_optional_comma(input)?;
+    }
+    Ok(rules)
 }
 
 /// Parse the states section of the macro input.

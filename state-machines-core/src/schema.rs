@@ -15,6 +15,23 @@ fn is_false(b: &bool) -> bool {
     !*b
 }
 
+fn validate_scopes<'a>(
+    scopes: impl Iterator<Item = &'a String>,
+    names: &BTreeSet<&String>,
+    kind: &str,
+    report: &mut impl FnMut(DiagnosticLevel, String),
+) {
+    let mut seen = BTreeSet::new();
+    for scope in scopes {
+        if !names.contains(scope) || !seen.insert(scope) {
+            report(
+                DiagnosticLevel::Error,
+                format!("invalid or duplicate {kind} `{scope}`"),
+            );
+        }
+    }
+}
+
 /// Serializable representation of a state machine.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MachineSchema {
@@ -29,7 +46,25 @@ pub struct MachineSchema {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lifecycle: Vec<StateLifecycleSchema>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runtime: Vec<RuntimeLifecycleSchema>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub final_states: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RuntimeLifecycleSchema {
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub after: Vec<DeadlineSchema>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub invoke: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub defer: Vec<String>,
+}
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DeadlineSchema {
+    pub delay: u64,
+    pub event: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -188,13 +223,33 @@ impl MachineSchema {
                 }
             }
         }
-        let mut lifecycle_states = BTreeSet::new();
-        for hooks in &self.lifecycle {
-            if !names.contains(&hooks.state) || !lifecycle_states.insert(&hooks.state) {
-                report(
-                    DiagnosticLevel::Error,
-                    format!("invalid or duplicate lifecycle `{}`", hooks.state),
-                );
+        validate_scopes(
+            self.runtime.iter().map(|rule| &rule.state),
+            &names,
+            "runtime scope",
+            &mut report,
+        );
+        validate_scopes(
+            self.lifecycle.iter().map(|hooks| &hooks.state),
+            &names,
+            "lifecycle",
+            &mut report,
+        );
+        let external_events: BTreeSet<_> = self
+            .events
+            .iter()
+            .filter(|event| !event.automatic)
+            .map(|event| &event.name)
+            .collect();
+        for rule in &self.runtime {
+            let mut deferred = BTreeSet::new();
+            for name in &rule.defer {
+                if !deferred.insert(name) || !external_events.contains(name) {
+                    report(
+                        DiagnosticLevel::Error,
+                        format!("invalid deferred event `{name}`"),
+                    );
+                }
             }
         }
         let expand = |name: &String| -> Vec<&String> {
