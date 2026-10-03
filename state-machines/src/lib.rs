@@ -37,8 +37,8 @@ pub mod core {
 }
 
 pub use state_machines_core::{
-    AroundOutcome, AroundStage, CallbackError, DynamicError, EventError, MachineState, SubstateOf,
-    TransitionError, TransitionErrorKind,
+    AroundOutcome, AroundStage, CallbackError, CompletionEvent, DynamicError, EventError,
+    MachineState, SubstateOf, TransitionError, TransitionErrorKind,
 };
 pub use state_machines_macro::state_machine;
 

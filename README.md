@@ -87,6 +87,15 @@ internal transitions run neither. Hooks take no payload, support async and
 fallible returns like event callbacks, and participate in failure recovery.
 `new()` remains an infallible constructor and does not invoke entry hooks.
 
+**Final States and Completion** – `final_states: [Done]` declares terminal leaves
+and rejects outgoing transitions. `is_finished()` identifies a root final;
+`completion_events()` reports `CompletionEvent::Machine` or
+`CompletionEvent::Superstate("Parent")` for a nested final's immediate parent.
+Dynamic `take_completion_events()` drains notifications from successful
+`handle()` calls only. A parent's `lifecycle: { Parent { complete: [notify] } }`
+hook runs after the ordinary transition callbacks. Completion does not
+implicitly dispatch another event or mark every ancestor complete.
+
 ---
 
 ## Quick Start

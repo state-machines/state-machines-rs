@@ -28,6 +28,8 @@ pub struct MachineSchema {
     pub async_mode: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lifecycle: Vec<StateLifecycleSchema>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub final_states: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -37,6 +39,8 @@ pub struct StateLifecycleSchema {
     pub enter: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exit: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub complete: Vec<String>,
 }
 
 /// Serializable representation of a superstate (hierarchical state).
@@ -218,6 +222,21 @@ impl MachineSchema {
                 }
             }
         }
+        let mut finals = BTreeSet::new();
+        for state in &self.final_states {
+            if !self.states.contains(state) || !finals.insert(state) {
+                report(
+                    DiagnosticLevel::Error,
+                    format!("invalid or duplicate final state `{state}`"),
+                );
+            }
+            if edges.iter().any(|(source, _)| *source == state) {
+                report(
+                    DiagnosticLevel::Error,
+                    format!("final state `{state}` has outgoing transitions"),
+                );
+            }
+        }
         let mut reachable = BTreeSet::from([&self.initial]);
         loop {
             let before = reachable.len();
@@ -237,7 +256,7 @@ impl MachineSchema {
                     format!("unreachable state `{state}`"),
                 );
             }
-            if !edges.iter().any(|(source, _)| *source == state) {
+            if !finals.contains(state) && !edges.iter().any(|(source, _)| *source == state) {
                 report(
                     DiagnosticLevel::Warning,
                     format!("dead-end state `{state}`"),
@@ -256,6 +275,9 @@ impl MachineSchema {
 
         // Initial state
         writeln!(out, "    [*] --> {}", self.initial).unwrap();
+        for state in &self.final_states {
+            writeln!(out, "    {state} --> [*]").unwrap();
+        }
 
         // Collect transitions
         for event in &self.events {

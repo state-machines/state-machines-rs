@@ -129,14 +129,17 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
         let state = hooks.state.to_string();
         let enter = string_vec(&hooks.enter);
         let exit = string_vec(&hooks.exit);
+        let complete = string_vec(&hooks.complete);
         quote! {
             ::state_machines::StateLifecycleSchema {
                 state: ::state_machines::__private::String::from(#state),
                 enter: #enter,
                 exit: #exit,
+                complete: #complete,
             }
         }
     });
+    let final_states = string_vec(&machine.final_states);
 
     // Generate a schema() function that's callable on the machine type.
     // We generate an impl block for all generic parameters that provides schema().
@@ -163,6 +166,7 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
                         ],
                         async_mode: #async_mode,
                         lifecycle: ::state_machines::__private::vec![ #( #lifecycle, )* ],
+                        final_states: #final_states,
                     }
                 }
             }

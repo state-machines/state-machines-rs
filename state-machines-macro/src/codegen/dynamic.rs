@@ -358,6 +358,12 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
     let current_state_arms = machine.states.iter().map(|state| {
         quote! { #any_state_name::#state(_) => #state_enum_name::#state }
     });
+    let finished_arms = machine.states.iter().map(|state| {
+        quote! { #any_state_name::#state(machine) => machine.is_finished() }
+    });
+    let completion_arms = machine.states.iter().map(|state| {
+        quote! { #any_state_name::#state(machine) => machine.completion_events() }
+    });
 
     let initial_state_constructor = quote! {
         #any_state_name::#initial_state(#machine_name::new(ctx))
@@ -523,6 +529,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
         #[derive(Debug)]
         pub struct #dynamic_name #generics {
             inner: ::core::option::Option<#any_state_name #generics>,
+            completions: ::state_machines::__private::Vec<::state_machines::CompletionEvent>,
         }
 
         impl #generics #dynamic_name #generics {
@@ -530,6 +537,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
             pub fn new(ctx: #ctx_param_ty) -> Self {
                 Self {
                     inner: ::core::option::Option::Some(#initial_state_constructor),
+                    completions: ::state_machines::__private::Vec::new(),
                 }
             }
 
@@ -539,6 +547,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
                     inner: ::core::option::Option::Some(match state {
                         #( #state_constructor_arms, )*
                     }),
+                    completions: ::state_machines::__private::Vec::new(),
                 }
             }
 
@@ -558,6 +567,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
                 };
 
                 self.inner = ::core::option::Option::Some(new_state);
+                self.completions.extend_from_slice(self.completion_events());
                 Ok(())
             }
 
@@ -571,6 +581,23 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
             }
 
             #available_events_method
+
+            pub fn is_finished(&self) -> bool {
+                match self.inner.as_ref().expect("dynamic machine in invalid state") {
+                    #( #finished_arms, )*
+                }
+            }
+
+            pub fn completion_events(&self) -> &'static [::state_machines::CompletionEvent] {
+                match self.inner.as_ref().expect("dynamic machine in invalid state") {
+                    #( #completion_arms, )*
+                }
+            }
+
+            /// Drain notifications emitted by successful handle() calls.
+            pub fn take_completion_events(&mut self) -> ::state_machines::__private::Vec<::state_machines::CompletionEvent> {
+                ::core::mem::take(&mut self.completions)
+            }
 
             #state_data_accessors
         }
@@ -611,6 +638,7 @@ fn generate_conversions(machine: &StateMachine) -> Result<TokenStream2> {
                 pub fn into_dynamic(self) -> #dynamic_name #generics {
                     #dynamic_name {
                         inner: ::core::option::Option::Some(#any_state_name::#state(self)),
+                        completions: ::state_machines::__private::Vec::new(),
                     }
                 }
             }

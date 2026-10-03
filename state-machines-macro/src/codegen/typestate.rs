@@ -181,7 +181,7 @@ fn generate_state_impls(machine: &StateMachine) -> Result<Vec<TokenStream2>> {
     let generics = ctx_generics(machine);
 
     for state in &machine.states {
-        let mut methods = Vec::new();
+        let mut methods = vec![super::finality::state_methods(machine, state)];
 
         // Generate constructor for initial state
         if state == &machine.initial {
@@ -635,6 +635,15 @@ fn generate_transition_method(
     let enter_calls = enter_hooks
         .iter()
         .map(|cb| callback_step(&after, cb, false));
+    let completion_scope = super::finality::parent(machine, target_state).unwrap_or(target_state);
+    let complete_calls = machine
+        .lifecycle
+        .iter()
+        .filter(|hooks| {
+            machine.final_states.contains(target_state) && &hooks.state == completion_scope
+        })
+        .flat_map(|hooks| &hooks.complete)
+        .map(|cb| callback_step(&after, cb, false));
 
     Ok(quote! {
         #method_sig -> #return_type {
@@ -660,6 +669,7 @@ fn generate_transition_method(
             #( #after_calls )*
             #( #global_after_calls )*
             #( #around_after_checks )*
+            #( #complete_calls )*
 
             ::core::result::Result::Ok(new_machine)
         }

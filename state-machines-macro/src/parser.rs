@@ -31,6 +31,7 @@ impl Parse for StateMachine {
         let mut events = None;
         let mut callbacks = GlobalCallbacks::default();
         let mut lifecycle = Vec::new();
+        let mut final_states = Vec::new();
         let mut async_mode = false;
         let mut dynamic_mode = false;
         let mut state_storage = Vec::new();
@@ -61,6 +62,10 @@ impl Parse for StateMachine {
                     "initial" => {
                         input.parse::<Token![:]>()?;
                         initial = Some(input.parse()?);
+                    }
+                    "final_states" => {
+                        input.parse::<Token![:]>()?;
+                        final_states = parse_ident_list_value(input)?;
                     }
                     "context" => {
                         input.parse::<Token![:]>()?;
@@ -109,6 +114,7 @@ impl Parse for StateMachine {
                                 state,
                                 enter: Vec::new(),
                                 exit: Vec::new(),
+                                complete: Vec::new(),
                             };
                             while !block.is_empty() {
                                 let key: Ident = block.parse()?;
@@ -116,6 +122,7 @@ impl Parse for StateMachine {
                                 match key.to_string().as_str() {
                                     "enter" => hooks.enter = parse_ident_list_value(&block)?,
                                     "exit" => hooks.exit = parse_ident_list_value(&block)?,
+                                    "complete" => hooks.complete = parse_ident_list_value(&block)?,
                                     _ => return Err(unexpected_key(&key)),
                                 }
                                 skip_optional_comma(&block)?;
@@ -162,6 +169,7 @@ impl Parse for StateMachine {
             events: events.unwrap_or_default(),
             callbacks,
             lifecycle,
+            final_states,
             async_mode,
             dynamic_mode,
             transition_graph: TransitionGraph::default(),

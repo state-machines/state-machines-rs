@@ -33,6 +33,13 @@ impl<T> MachineState for T where T: Copy + Eq + Debug + Send + Sync + 'static {}
 /// ```
 pub trait SubstateOf<Super> {}
 
+/// A committed transition reached a declared final leaf.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompletionEvent {
+    Machine,
+    Superstate(&'static str),
+}
+
 /// Represents an error that occurred while attempting a transition.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransitionError<S>

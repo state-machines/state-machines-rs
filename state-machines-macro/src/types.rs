@@ -25,6 +25,7 @@ pub struct StateMachine {
     pub events: Vec<Event>,
     pub callbacks: GlobalCallbacks,
     pub lifecycle: Vec<StateLifecycle>,
+    pub final_states: Vec<Ident>,
     pub async_mode: bool,
     pub dynamic_mode: bool,
     pub transition_graph: TransitionGraph,
@@ -34,6 +35,7 @@ pub struct StateLifecycle {
     pub state: Ident,
     pub enter: Vec<Ident>,
     pub exit: Vec<Ident>,
+    pub complete: Vec<Ident>,
 }
 
 impl StateMachine {

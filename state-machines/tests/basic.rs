@@ -9,8 +9,10 @@ static FLIGHT_PLAN_VERIFIED: AtomicBool = AtomicBool::new(false);
 
 state_machine! {
     name: FlightDeckController,
+    dynamic: true,
     initial: Docked,
     states: [Docked, ClearanceGranted, Launching, InFlight, Emergency],
+    final_states: [Emergency],
     events {
         request_clearance {
             transition: { from: Docked, to: ClearanceGranted }
@@ -62,9 +64,26 @@ fn launch_sequence_obeys_guards() {
         .expect("launch should succeed once plan verified");
     // Type is FlightDeckController<(), Launching>
 
-    let _controller = controller
+    let controller = controller
         .stabilize()
         .expect("stabilize should move to InFlight");
+    assert!(!controller.is_finished());
+    let mut controller = controller.into_dynamic();
+    controller
+        .handle(FlightDeckControllerEvent::AbortMission)
+        .unwrap();
+    assert!(controller.is_finished());
+    assert_eq!(
+        controller.take_completion_events(),
+        [state_machines::CompletionEvent::Machine]
+    );
+    assert_eq!(controller.take_completion_events(), []);
+    assert!(
+        controller
+            .handle(FlightDeckControllerEvent::Launch)
+            .is_err()
+    );
+    assert_eq!(controller.take_completion_events(), []);
     // Type is FlightDeckController<(), InFlight>
 
     // Invalid transitions don't compile in typestate, so we can't test them

@@ -17,9 +17,11 @@ state_machine! {
         superstate Flight {
             state LaunchPrep(PrepData),
             state Launching(LaunchData),
+            state Finished,
         },
         InOrbit,
     ],
+    final_states: [Finished],
     events {
         enter_flight {
             transition: { from: Standby, to: Flight }
@@ -31,10 +33,13 @@ state_machine! {
             transition: { from: LaunchPrep, to: Launching }
         }
         ascend {
-            transition: { from: Flight, to: InOrbit }
+            transition: { from: [LaunchPrep, Launching], to: InOrbit }
         }
         abort {
-            transition: { from: Flight, to: Standby }
+            transition: { from: [LaunchPrep, Launching], to: Standby }
+        }
+        finish {
+            transition: { from: Launching, to: Finished }
         }
     }
 }
@@ -68,7 +73,16 @@ fn superstate_sources_expand() {
     let sequence = sequence.abort().expect("abort from Flight works");
 
     // Back in Standby
-    let _sequence = sequence.ignite().expect("can ignite from Standby");
+    let sequence = sequence.ignite().expect("can ignite from Standby");
+    let sequence = sequence.cycle_engines().unwrap().finish().unwrap();
+    assert!(
+        !sequence.is_finished(),
+        "only the parent region is complete"
+    );
+    assert_eq!(
+        sequence.completion_events(),
+        [state_machines::CompletionEvent::Superstate("Flight")]
+    );
 }
 
 #[test]

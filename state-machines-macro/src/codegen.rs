@@ -4,6 +4,7 @@
 //! (runtime flexibility). Dynamic mode is opt-in via feature flag or explicit config.
 
 pub mod dynamic;
+pub mod finality;
 pub mod inspect;
 pub mod typestate;
 pub mod utils;

@@ -265,6 +265,27 @@ impl StateMachine {
             )?;
         }
 
+        let mut finals = HashSet::new();
+        for state in &self.final_states {
+            err_if(
+                !self.states.contains(state),
+                state.span(),
+                "final state must be a declared leaf",
+            )?;
+            err_if(
+                !finals.insert(state.to_string()),
+                state.span(),
+                "duplicate final state",
+            )?;
+            err_if(
+                self.transition_graph
+                    .outgoing(state)
+                    .is_some_and(|edges| !edges.is_empty()),
+                state.span(),
+                "final states cannot have outgoing transitions",
+            )?;
+        }
+
         // All validation passed!
         Ok(())
     }
@@ -306,6 +327,25 @@ mod tests {
         })
         .unwrap_err();
         assert!(err.to_string().contains("omit `to`"));
+    }
+
+    #[test]
+    fn validates_final_states() {
+        for (finals, events) in [
+            (quote! { [Missing] }, quote! {}),
+            (quote! { [A, A] }, quote! {}),
+            (
+                quote! { [A] },
+                quote! { go { transition: { from: A, to: B } } },
+            ),
+        ] {
+            let err = validate(quote! {
+                name: Test, initial: A, states: [A, B],
+                final_states: #finals, events { #events }
+            })
+            .unwrap_err();
+            assert!(err.to_string().contains("final"));
+        }
     }
 
     #[test]
