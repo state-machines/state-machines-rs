@@ -77,6 +77,8 @@ pub struct EventSchema {
 /// Serializable representation of a transition.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TransitionSchema {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<String>,
     pub sources: Vec<String>,
     pub target: String,
     #[serde(default, skip_serializing_if = "is_false")]

@@ -11,6 +11,7 @@ fn sample_schema() -> MachineSchema {
             EventSchema {
                 name: "depressurize".into(),
                 transitions: vec![TransitionSchema {
+                    data: None,
                     sources: vec!["Pressurized".into()],
                     target: "Vacuum".into(),
                     internal: false,
@@ -35,6 +36,7 @@ fn sample_schema() -> MachineSchema {
             EventSchema {
                 name: "repressurize".into(),
                 transitions: vec![TransitionSchema {
+                    data: None,
                     sources: vec!["Vacuum".into()],
                     target: "Pressurized".into(),
                     internal: false,

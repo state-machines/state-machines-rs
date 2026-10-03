@@ -188,6 +188,7 @@ fn generate_state_impls(machine: &StateMachine) -> Result<Vec<TokenStream2>> {
 
     for state in &machine.states {
         let mut methods = vec![super::finality::state_methods(machine, state)];
+        methods.push(generate_start(machine, state));
 
         // Generate constructor for initial state
         if state == &machine.initial {
@@ -288,6 +289,53 @@ fn generate_constructor(machine: &StateMachine, _state: &Ident) -> Result<TokenS
             }
         }
     })
+}
+
+/// Explicit startup is separate from inert construction and restoration.
+fn generate_start(machine: &StateMachine, state: &Ident) -> TokenStream2 {
+    let async_ = maybe_async(machine.async_mode);
+    let await_ = maybe_await(machine.async_mode);
+    let mut path = machine
+        .hierarchy
+        .ancestors
+        .get(&state.to_string())
+        .cloned()
+        .unwrap_or_default();
+    path.push(state.clone());
+    let hooks = path
+        .iter()
+        .flat_map(|scope| {
+            machine
+                .lifecycle
+                .iter()
+                .filter(move |hooks| &hooks.state == scope)
+        })
+        .flat_map(|hooks| &hooks.enter);
+    let error = machine.error.as_ref().map_or(
+        quote! { ::state_machines::core::GuardError },
+        |ty| quote! { ::state_machines::EventError<#ty> },
+    );
+    let calls = hooks.map(|hook| {
+        if let Some(ty) = &machine.error {
+            quote! {
+                let result: Result<(), #ty> = ::state_machines::core::FallibleCallbackReturn::into_result(self.#hook() #await_);
+                if let Err(source) = result {
+                    let error = ::state_machines::EventError::callback(stringify!(#hook), "__initialize", source);
+                    return Err((self, error));
+                }
+            }
+        } else {
+            quote! { let (): () = self.#hook() #await_; }
+        }
+    });
+    quote! {
+        /// Run active ancestor/leaf entry hooks outer-to-inner.
+        /// Call once for fresh startup; restore is intentionally inert.
+        pub #async_ fn initialize(mut self) -> Result<Self, (Self, #error)> {
+            #( #calls )*
+            Ok(self)
+        }
+    }
 }
 
 /// Check whether a storage spec's owning state covers the given leaf state.
@@ -442,8 +490,12 @@ pub(super) fn generate_transition_method(
     let error_ty = machine.error.as_ref();
 
     // Guards and local callbacks borrow the payload; the method takes it by value.
+    let mutability = edge.data.as_ref().map(|_| quote! { mut });
     let (payload_param, payload_ref) = match &edge.payload {
-        Some(payload_ty) => (quote! { , payload: #payload_ty }, quote! { &payload }),
+        Some(payload_ty) => (
+            quote! { , #mutability payload: #payload_ty },
+            quote! { &payload },
+        ),
         None => (quote! {}, quote! {}),
     };
     let guard_args = if edge.payload.is_some() {
@@ -534,6 +586,28 @@ pub(super) fn generate_transition_method(
     };
     if !edge.internal {
         storage_transfers.extend(history_fields.iter().map(prev_binding));
+    }
+    let factory = edge.data.as_ref().map(|factory| {
+        let args = if edge.payload.is_some() {
+            quote! { &mut payload }
+        } else {
+            quote! {}
+        };
+        quote! { let __sm_entry_data = self.#factory(#args) #maybe_await; }
+    });
+    if edge.data.is_some() {
+        let spec = machine
+            .state_storage
+            .iter()
+            .find(|spec| &spec.state_name == target_state)
+            .unwrap();
+        let index = machine
+            .state_storage
+            .iter()
+            .position(|item| item.field == spec.field)
+            .unwrap();
+        let field = &spec.field;
+        storage_transfers[index] = quote! { #field: Some(__sm_entry_data) };
     }
 
     // Superstate data carried into the new machine consumed its __sm_prev_*
@@ -677,6 +751,7 @@ pub(super) fn generate_transition_method(
             #( #global_before_calls )*
             #( #before_calls )*
             #( #exit_calls )*
+            #factory
 
             let #machine_name {
                 ctx,
@@ -847,6 +922,7 @@ fn generate_state_specific_accessors(machine: &StateMachine) -> Result<Vec<Token
         let snake = to_snake_case(&state_name.to_string());
         let data_method = syn::Ident::new(&format!("{}_data", snake), state_name.span());
         let data_mut_method = syn::Ident::new(&format!("{}_data_mut", snake), state_name.span());
+        let with_data_method = syn::Ident::new(&format!("with_{}_data", snake), state_name.span());
 
         // A leaf's accessors live on that leaf's impl. Superstate
         // data is accessible while inside the superstate, so its accessors
@@ -862,6 +938,11 @@ fn generate_state_specific_accessors(machine: &StateMachine) -> Result<Vec<Token
             let params = machine_params(machine, &impl_state);
             let impl_block = quote! {
                 impl #generics #machine_name #params {
+                    /// Supply owned active-state data without Default or Clone.
+                    pub fn #with_data_method(mut self, data: #ty) -> Self {
+                        self.#field = Some(data);
+                        self
+                    }
                     /// Access the state-associated data for this specific state.
                     ///
                     /// Initial construction and restore may leave active data absent.

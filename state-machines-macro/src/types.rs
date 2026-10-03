@@ -164,6 +164,7 @@ pub struct TransitionGraph {
 /// receive payloads.
 #[derive(Clone)]
 pub struct TransitionEdge {
+    pub data: Option<Ident>,
     pub target: Ident,
     pub event: Ident,
     pub hooks: Hooks,
@@ -224,6 +225,7 @@ pub struct Event {
 /// Defines a transition from one or more source states to a target state.
 /// Can have its own guards and callbacks in addition to event-level ones.
 pub struct Transition {
+    pub data: Option<Ident>,
     pub sources: Vec<Ident>,
     pub target: Ident,
     pub hooks: Hooks,

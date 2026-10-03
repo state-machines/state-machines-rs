@@ -330,6 +330,10 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
 
     let generics = ctx_generics(machine);
     let ctx_param_ty = ctx_ty(machine);
+    let startup_error = machine.error.as_ref().map_or(
+        quote! { ::state_machines::core::GuardError },
+        |ty| quote! { ::state_machines::EventError<#ty> },
+    );
 
     let state_variants = &machine.states;
     let state_name_arms = machine.states.iter().map(|state| {
@@ -511,6 +515,13 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
         }
 
         impl #generics #dynamic_name #generics {
+            /// Construct and run the declared initial entry hooks.
+            pub #maybe_async fn initialize(ctx: #ctx_param_ty) -> Result<Self, (Self, #startup_error)> {
+                match #machine_name::new(ctx).initialize() #maybe_await {
+                    Ok(machine) => Ok(machine.into_dynamic()),
+                    Err((machine, error)) => Err((machine.into_dynamic(), error)),
+                }
+            }
             /// Create a new dynamic machine in the declared initial state.
             pub fn new(ctx: #ctx_param_ty) -> Self {
                 Self {

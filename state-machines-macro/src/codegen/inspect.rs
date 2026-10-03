@@ -98,9 +98,14 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
                         Some(HistoryMode::Deep) => quote! { Some(::state_machines::__private::String::from("deep")) },
                         None => quote! { None },
                     };
+                    let data = trans.data.as_ref().map_or(quote! { None }, |name| {
+                        let name = name.to_string();
+                        quote! { Some(::state_machines::__private::String::from(#name)) }
+                    });
 
                     quote! {
                         ::state_machines::TransitionSchema {
+                            data: #data,
                             sources: #sources,
                             target: ::state_machines::__private::String::from(#target_str),
                             internal: #internal,

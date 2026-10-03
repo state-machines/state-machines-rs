@@ -1399,6 +1399,21 @@ construction and restore may legitimately leave active data absent, so being
 in the right state alone cannot guarantee data exists. Match on the option, or
 use `.expect("initialized on entry")` when your application enforces that invariant.
 
+### Explicit startup and owned entry data
+
+`Machine::new(ctx).initialize()` runs active entry hooks outer-to-inner and returns
+the source machine on a fallible hook error. `DynamicMachine::initialize(ctx)` is the
+runtime equivalent. Both are async for async machines. Call startup once on a
+fresh machine; neither constructors nor restore run entry hooks implicitly.
+Supply initial data with `.with_state_name_data(owned_value)`.
+
+For transition entry, `transition: { from: Idle, to: Active, data: make_resource }`
+uses a factory instead of `Default`. The source-machine factory returns Active's
+data and takes `&mut Payload` (or no argument without a payload); it can move
+resources using `Option::take()` without Clone. It runs after exit hooks and
+before target entry hooks. After callbacks see the remaining payload. Factories
+must target data-carrying leaves and support async machines.
+
 - **[API Docs](https://docs.rs/state-machines)** – Full API reference
 - **[Crates.io](https://crates.io/crates/state-machines)** – Published crate versions
 - **[GitHub](https://github.com/state-machines/state-machines-rs)** – Source code and issues

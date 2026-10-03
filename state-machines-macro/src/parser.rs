@@ -544,6 +544,7 @@ fn parse_global_callback_entry(input: &ParseBuffer<'_>) -> Result<GlobalCallback
 }
 
 pub fn parse_transition(input: &ParseBuffer<'_>) -> Result<Transition> {
+    let mut data = None;
     let mut sources = None;
     let mut target = None;
     let mut hooks = Hooks::default();
@@ -557,6 +558,7 @@ pub fn parse_transition(input: &ParseBuffer<'_>) -> Result<Transition> {
         input.parse::<Token![:]>()?;
 
         match key_str.as_str() {
+            "data" => data = Some(input.parse()?),
             "from" => {
                 sources = Some(parse_state_set(input)?);
             }
@@ -605,6 +607,7 @@ pub fn parse_transition(input: &ParseBuffer<'_>) -> Result<Transition> {
     }
     .ok_or_else(|| syn::Error::new(Span::call_site(), "transition missing `to` or source"))?;
     Ok(Transition {
+        data,
         sources,
         target,
         hooks,
@@ -791,6 +794,7 @@ impl StateMachine {
                             self.transition_graph.add_edge(
                                 &actual_source,
                                 TransitionEdge {
+                                    data: transition.data.clone(),
                                     target: resolved_target.clone(),
                                     event: event.name.clone(),
                                     hooks: edge_hooks,
