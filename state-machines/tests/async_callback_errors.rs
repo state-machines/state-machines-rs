@@ -15,6 +15,7 @@ static AFTER_FAILS: AtomicBool = AtomicBool::new(false);
 static BEFORE_CALLED: AtomicBool = AtomicBool::new(false);
 static AFTER_CALLED: AtomicBool = AtomicBool::new(false);
 static COMPLETED: AtomicBool = AtomicBool::new(false);
+static CHOOSE_DONE: AtomicBool = AtomicBool::new(true);
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 static ERRORS: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
 
@@ -34,15 +35,20 @@ state_machine! {
     final_states: [Done],
     events {
         refresh {
+            branching: true,
             before: [refresh_token],
             on_error: [recover],
-            transition: { from: RefreshToken, to: Done }
+            transition: { from: RefreshToken, to: Done, guards: [choose_done] }
+            transition: { from: RefreshToken, internal: true, fallback: true }
         }
     },
     lifecycle: { Done { enter: [record_completion], complete: [notify] } }
 }
 
 impl<C, S> AuthRecovery<C, S> {
+    async fn choose_done(&self, _ctx: &C) -> bool {
+        CHOOSE_DONE.load(Ordering::SeqCst)
+    }
     async fn notify(&self) {
         COMPLETED.store(true, Ordering::SeqCst);
     }
@@ -73,6 +79,7 @@ impl<C, S> AuthRecovery<C, S> {
 }
 
 fn reset_flags() {
+    CHOOSE_DONE.store(true, Ordering::SeqCst);
     COMPLETED.store(false, Ordering::SeqCst);
     ERRORS.lock().unwrap().clear();
     BEFORE_FAILS.store(false, Ordering::SeqCst);
@@ -186,6 +193,16 @@ fn async_dynamic_callback_failure_keeps_runtime_state() {
         assert_eq!(*ERRORS.lock().unwrap(), ["refresh_token"]);
 
         BEFORE_FAILS.store(false, Ordering::SeqCst);
+        CHOOSE_DONE.store(false, Ordering::SeqCst);
+        assert_eq!(
+            machine.get_available_events().await.len(),
+            1,
+            "branches do not duplicate events"
+        );
+        machine.handle(AuthRecoveryEvent::Refresh).await.unwrap();
+        assert_eq!(machine.current_state(), AuthRecoveryState::RefreshToken);
+        assert_eq!(machine.take_completion_events(), []);
+        CHOOSE_DONE.store(true, Ordering::SeqCst);
         machine
             .handle(AuthRecoveryEvent::Refresh)
             .await

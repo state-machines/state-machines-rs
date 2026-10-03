@@ -147,6 +147,11 @@ impl StateMachine {
             )?;
 
             for transition in &event.transitions {
+                err_if(
+                    transition.fallback && !event.branching,
+                    event.name.span(),
+                    "`fallback` requires `branching: true`",
+                )?;
                 // Each transition must have at least one source state
                 err_if(
                     transition.sources.is_empty(),
@@ -209,13 +214,34 @@ impl StateMachine {
         }
 
         for state in &self.states {
-            let mut events = HashSet::new();
-            for edge in self.transition_graph.outgoing(state).into_iter().flatten() {
-                err_if(
-                    !events.insert(edge.event.to_string()),
-                    edge.event.span(),
-                    "ambiguous transition: event has multiple transitions from the same leaf state",
-                )?;
+            for edges in crate::codegen::branching::groups(self, state) {
+                let event = self
+                    .events
+                    .iter()
+                    .find(|event| event.name == edges[0].event)
+                    .unwrap();
+                if edges.len() > 1 {
+                    err_if(
+                        !event.branching,
+                        event.name.span(),
+                        "ambiguous transition: use `branching: true` for guarded choices",
+                    )?;
+                }
+                if event.branching {
+                    for (index, edge) in edges.iter().enumerate() {
+                        let guarded =
+                            !edge.selection.guards.is_empty() || !edge.selection.unless.is_empty();
+                        err_if(
+                            if edge.fallback {
+                                guarded || index + 1 != edges.len()
+                            } else {
+                                !guarded
+                            },
+                            edge.event.span(),
+                            "branch candidates require transition guards; a guardless `fallback: true` must be last",
+                        )?;
+                    }
+                }
             }
         }
 
@@ -345,6 +371,22 @@ mod tests {
             })
             .unwrap_err();
             assert!(err.to_string().contains("final"));
+        }
+    }
+
+    #[test]
+    fn validates_branch_fallbacks() {
+        for transitions in [
+            quote! { transition: { from: A, to: B } transition: { from: A, to: A, guards: [ready] } },
+            quote! { transition: { from: A, to: B, fallback: true } transition: { from: A, to: A, guards: [ready] } },
+            quote! { transition: { from: A, to: B, fallback: true, guards: [ready] } },
+        ] {
+            let err = validate(quote! {
+                name: Test, initial: A, states: [A, B],
+                events { go { branching: true, #transitions } }
+            })
+            .unwrap_err();
+            assert!(err.to_string().contains("fallback"));
         }
     }
 

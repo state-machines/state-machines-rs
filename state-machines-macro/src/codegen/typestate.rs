@@ -56,10 +56,12 @@ pub fn generate_typestate_machine(machine: &StateMachine) -> Result<TokenStream2
     let machine_struct = generate_machine_struct(machine)?;
     let impls = generate_state_impls(machine)?;
     let substate_impls = generate_substate_impls(machine)?;
+    let outcomes = super::branching::enums(machine);
 
     Ok(quote! {
         #markers
         #machine_struct
+        #outcomes
         #( #impls )*
         #( #substate_impls )*
     })
@@ -191,9 +193,12 @@ fn generate_state_impls(machine: &StateMachine) -> Result<Vec<TokenStream2>> {
 
         // Generate transition methods for outgoing transitions, plus a
         // non-consuming can_<event>() predicate for each
-        if let Some(edges) = machine.transition_graph.outgoing(state) {
-            for edge in edges {
-                let method = generate_transition_method(machine, state, edge)?;
+        for edges in super::branching::groups(machine, state) {
+            if edges.len() > 1 {
+                methods.push(super::branching::methods(machine, state, &edges)?);
+            } else {
+                let edge = edges[0];
+                let method = generate_transition_method(machine, state, edge, None, true)?;
                 methods.push(method);
                 let can_method = generate_can_method(machine, edge)?;
                 methods.push(can_method);
@@ -409,14 +414,23 @@ struct Phase {
 ///     Ok(new_machine)
 /// }
 /// ```
-fn generate_transition_method(
+pub(super) fn generate_transition_method(
     machine: &StateMachine,
     source_state: &Ident,
     edge: &TransitionEdge,
+    name_override: Option<&Ident>,
+    check_guards: bool,
 ) -> Result<TokenStream2> {
     let machine_name = &machine.name;
     let event_name = &edge.event;
-    let method_name = to_snake_case_ident(event_name);
+    let method_name = name_override
+        .cloned()
+        .unwrap_or_else(|| to_snake_case_ident(event_name));
+    let visibility = if name_override.is_some() {
+        quote! {}
+    } else {
+        quote! { pub }
+    };
     let target_state = &edge.target;
     let maybe_async = maybe_async(machine.async_mode);
     let maybe_await = maybe_await(machine.async_mode);
@@ -433,7 +447,7 @@ fn generate_transition_method(
     } else {
         quote! {}
     };
-    let method_sig = quote! { pub #maybe_async fn #method_name(mut self #payload_param) };
+    let method_sig = quote! { #visibility #maybe_async fn #method_name(mut self #payload_param) };
 
     let return_error_ty = if let Some(error_ty) = error_ty {
         quote! { #core_path::EventError<#error_ty> }
@@ -498,6 +512,7 @@ fn generate_transition_method(
                 .iter()
                 .map(|guard| guard_check(guard, quote! {})),
         )
+        .filter(|_| check_guards)
         .collect();
 
     let source_field_bindings: Vec<_> = machine

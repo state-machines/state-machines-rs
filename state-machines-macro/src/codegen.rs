@@ -3,6 +3,7 @@
 //! Supports both typestate pattern (compile-time safety) and dynamic dispatch
 //! (runtime flexibility). Dynamic mode is opt-in via feature flag or explicit config.
 
+pub mod branching;
 pub mod dynamic;
 pub mod finality;
 pub mod inspect;

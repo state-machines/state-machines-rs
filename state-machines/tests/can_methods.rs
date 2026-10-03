@@ -1,12 +1,13 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use state_machines::state_machine;
 
 static HATCH_SEALED: AtomicBool = AtomicBool::new(false);
 static ALARM_ACTIVE: AtomicBool = AtomicBool::new(false);
+static SELECTIONS: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Debug)]
 pub struct Cargo {
@@ -15,6 +16,7 @@ pub struct Cargo {
 
 state_machine! {
     name: CargoBay,
+    dynamic: true,
     initial: Open,
     states: [Open, Sealed, Loaded],
     events {
@@ -31,10 +33,33 @@ state_machine! {
         reopen {
             transition: { from: Sealed, to: Open }
         }
+        route {
+            branching: true,
+            payload: Cargo,
+            guards: [nonempty],
+            transition: { from: Open, to: Sealed, guards: [fits_once] }
+            transition: { from: Open, to: Loaded, fallback: true }
+        }
+        classify {
+            branching: true,
+            payload: Cargo,
+            transition: { from: Open, to: Sealed, guards: [cargo_fits] }
+            transition: { from: Open, to: Loaded, guards: [heavy] }
+        }
     }
 }
 
 impl<C, S> CargoBay<C, S> {
+    fn nonempty(&self, _ctx: &C, cargo: &Cargo) -> bool {
+        cargo.mass_kg > 0
+    }
+    fn heavy(&self, _ctx: &C, cargo: &Cargo) -> bool {
+        cargo.mass_kg >= 2000
+    }
+    fn fits_once(&self, ctx: &C, cargo: &Cargo) -> bool {
+        SELECTIONS.fetch_add(1, Ordering::SeqCst);
+        self.cargo_fits(ctx, cargo)
+    }
     fn hatch_sealed(&self, _ctx: &C) -> bool {
         HATCH_SEALED.load(Ordering::SeqCst)
     }
@@ -78,4 +103,34 @@ fn can_methods_evaluate_guards_without_consuming() {
     assert!(!bay.can_load(&Cargo { mass_kg: 5000 }));
 
     let _bay = bay.load(Cargo { mass_kg: 500 }).expect("load fits");
+
+    SELECTIONS.store(0, Ordering::SeqCst);
+    let outcome = CargoBay::new(()).route(Cargo { mass_kg: 500 }).unwrap();
+    let CargoBayOpenRouteOutcome::Sealed(bay) = outcome else {
+        panic!("first matching candidate must win");
+    };
+    assert_eq!(
+        SELECTIONS.load(Ordering::SeqCst),
+        1,
+        "selection is not re-evaluated"
+    );
+    let _bay = bay.reopen().unwrap();
+
+    let outcome = CargoBay::new(()).route(Cargo { mass_kg: 5000 }).unwrap();
+    let CargoBayOpenRouteOutcome::Loaded(_) = outcome else {
+        panic!("fallback");
+    };
+    let (bay, error) = CargoBay::new(())
+        .classify(Cargo { mass_kg: 1500 })
+        .unwrap_err();
+    assert_eq!(error.guard, "branch_selection");
+    assert!(!bay.can_classify(&Cargo { mass_kg: 1500 }));
+    let (_, error) = bay.route(Cargo { mass_kg: 0 }).unwrap_err();
+    assert_eq!(error.guard, "nonempty");
+
+    let mut bay = DynamicCargoBay::new(());
+    assert!(!bay.is_available_event(&CargoBayEvent::Route(Cargo { mass_kg: 0 })));
+    bay.handle(CargoBayEvent::Route(Cargo { mass_kg: 5000 }))
+        .unwrap();
+    assert_eq!(bay.current_state(), CargoBayState::Loaded);
 }

@@ -92,12 +92,14 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
                     let target_str = trans.target.to_string();
                     let trans_hooks = hook_schema_fields(&trans.hooks);
                     let internal = trans.internal;
+                    let fallback = trans.fallback;
 
                     quote! {
                         ::state_machines::TransitionSchema {
                             sources: #sources,
                             target: ::state_machines::__private::String::from(#target_str),
                             internal: #internal,
+                            fallback: #fallback,
                             #trans_hooks
                         }
                     }
@@ -110,6 +112,7 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
             } else {
                 quote! { ::core::option::Option::None }
             };
+            let branching = event.branching;
 
             quote! {
                 ::state_machines::EventSchema {
@@ -119,6 +122,7 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
                     ],
                     #event_hooks
                     payload: #payload_expr,
+                    branching: #branching,
                 }
             }
         })

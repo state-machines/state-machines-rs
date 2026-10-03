@@ -14,38 +14,6 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::Result;
 
-/// The edges leaving `state`, flattened across the optional adjacency entry.
-fn outgoing_edges<'a>(
-    machine: &'a StateMachine,
-    state: &syn::Ident,
-) -> impl Iterator<Item = &'a TransitionEdge> {
-    machine
-        .transition_graph
-        .outgoing(state)
-        .into_iter()
-        .flatten()
-}
-
-/// The `true && guard.. && !unless..` boolean expression that decides whether an
-/// edge's transition is currently enabled.
-///
-/// `payload_ref` carries the extra argument tokens (e.g. `, payload`) passed to
-/// guards for payload-bearing events, or is empty for payload-free ones.
-fn edge_guard_condition(
-    edge: &TransitionEdge,
-    is_async: bool,
-    payload_ref: &TokenStream2,
-) -> TokenStream2 {
-    let maybe_await = maybe_await(is_async);
-    let guard_checks = edge.hooks.guards.iter().map(|guard| {
-        quote! { machine.#guard(&machine.ctx #payload_ref) #maybe_await }
-    });
-    let unless_checks = edge.hooks.unless.iter().map(|guard| {
-        quote! { !machine.#guard(&machine.ctx #payload_ref) #maybe_await }
-    });
-    quote! { true #( && #guard_checks )* #( && #unless_checks )* }
-}
-
 /// Generate dynamic dispatch wrapper code for the state machine.
 ///
 /// This generates:
@@ -217,34 +185,41 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
 
         // Get all transitions for this event from the transition graph
         for state in &machine.states {
-            if let Some(edges) = machine.transition_graph.outgoing(state) {
-                for edge in edges {
-                    if edge.event == *event_snake {
-                        let source_state = state;
-                        let target_state = &edge.target;
+            for edges in super::branching::groups(machine, state) {
+                if edges[0].event == *event_snake {
+                    let source_state = state;
+                    let success = if edges.len() > 1 {
+                        let outcome = super::branching::outcome_name(machine, state, event_snake);
+                        let arms = super::branching::targets(&edges).into_iter().map(|target| {
+                                quote! { #outcome::#target(machine) => #any_state_name::#target(machine) }
+                            });
+                        quote! { match new_machine { #( #arms, )* } }
+                    } else {
+                        let target = &edges[0].target;
+                        quote! { #any_state_name::#target(new_machine) }
+                    };
 
-                        // Generate the match arm for this transition
-                        // Use event_pascal for enum variant matching
-                        // Use event_method for calling the snake_case typestate method
-                        let (payload_pattern, payload_arg) = if event.payload.is_some() {
-                            (quote! { (payload) }, quote! { payload })
-                        } else {
-                            (quote! {}, quote! {})
-                        };
-                        let arm = quote! {
-                            (#any_state_name::#source_state(m), #event_name::#event_pascal #payload_pattern) => {
-                                match m.#event_method(#payload_arg) #maybe_await {
-                                    Ok(new_machine) => #any_state_name::#target_state(new_machine),
-                                    Err((old_machine, err)) => {
-                                        self.inner = ::core::option::Option::Some(#any_state_name::#source_state(old_machine));
-                                        return Err(#map_event_error);
-                                    }
+                    // Generate the match arm for this transition
+                    // Use event_pascal for enum variant matching
+                    // Use event_method for calling the snake_case typestate method
+                    let (payload_pattern, payload_arg) = if event.payload.is_some() {
+                        (quote! { (payload) }, quote! { payload })
+                    } else {
+                        (quote! {}, quote! {})
+                    };
+                    let arm = quote! {
+                        (#any_state_name::#source_state(m), #event_name::#event_pascal #payload_pattern) => {
+                            match m.#event_method(#payload_arg) #maybe_await {
+                                Ok(new_machine) => #success,
+                                Err((old_machine, err)) => {
+                                    self.inner = ::core::option::Option::Some(#any_state_name::#source_state(old_machine));
+                                    return Err(#map_event_error);
                                 }
                             }
-                        };
+                        }
+                    };
 
-                        match_arms.push(arm);
-                    }
+                    match_arms.push(arm);
                 }
             }
         }
@@ -267,13 +242,15 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
     };
 
     let available_event_arms = machine.states.iter().map(|state| {
-        let checks = outgoing_edges(machine, state)
-            .filter(|edge| edge.payload.is_none())
-            .map(|edge| {
+        let checks = super::branching::groups(machine, state)
+            .into_iter()
+            .filter(|edges| edges[0].payload.is_none())
+            .map(|edges| {
+                let edge = edges[0];
                 let event_pascal = event_pascal(&edge.event);
-                let condition = edge_guard_condition(edge, is_async, &quote! {});
+                let can_method = quote::format_ident!("can_{}", edge.event);
                 quote! {
-                    if #condition {
+                    if machine.#can_method() #maybe_await {
                         events.push(#event_name::#event_pascal);
                     }
                 }
@@ -294,22 +271,23 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
     });
 
     let is_available_event_arms = machine.states.iter().flat_map(|state| {
-        outgoing_edges(machine, state)
-            .map(|edge| {
+        super::branching::groups(machine, state)
+            .into_iter()
+            .map(|edges| {
+                let edge = edges[0];
                 let event_pascal = event_pascal(&edge.event);
+                let can_method = quote::format_ident!("can_{}", edge.event);
                 let (event_pattern, payload_ref) = if edge.payload.is_some() {
                     (
                         quote! { #event_name::#event_pascal(payload) },
-                        quote! { , payload },
+                        quote! { payload },
                     )
                 } else {
                     (quote! { #event_name::#event_pascal }, quote! {})
                 };
-                let condition = edge_guard_condition(edge, is_async, &payload_ref);
-
                 quote! {
                     (#any_state_name::#state(machine), #event_pattern) => {
-                        #condition
+                        machine.#can_method(#payload_ref) #maybe_await
                     }
                 }
             })

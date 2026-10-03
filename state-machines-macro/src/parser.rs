@@ -397,6 +397,7 @@ pub fn parse_events(input: &ParseBuffer<'_>) -> Result<Vec<Event>> {
         let mut transitions = Vec::new();
         let mut hooks = Hooks::default();
         let mut payload = None;
+        let mut branching = false;
 
         // Parse each field in the event block
         while !content.is_empty() {
@@ -413,6 +414,7 @@ pub fn parse_events(input: &ParseBuffer<'_>) -> Result<Vec<Event>> {
                 "payload" => {
                     payload = Some(content.parse()?);
                 }
+                "branching" => branching = content.parse::<syn::LitBool>()?.value,
                 other => {
                     if !hooks.parse_field(other, &content)? {
                         return Err(unexpected_key(&key));
@@ -428,6 +430,7 @@ pub fn parse_events(input: &ParseBuffer<'_>) -> Result<Vec<Event>> {
             payload,
             transitions,
             hooks,
+            branching,
         });
 
         skip_optional_comma(input)?;
@@ -539,6 +542,7 @@ pub fn parse_transition(input: &ParseBuffer<'_>) -> Result<Transition> {
     let mut target = None;
     let mut hooks = Hooks::default();
     let mut internal = false;
+    let mut fallback = false;
 
     while !input.is_empty() {
         let key: Ident = input.parse()?;
@@ -555,6 +559,7 @@ pub fn parse_transition(input: &ParseBuffer<'_>) -> Result<Transition> {
             "internal" => {
                 internal = input.parse::<syn::LitBool>()?.value;
             }
+            "fallback" => fallback = input.parse::<syn::LitBool>()?.value,
             other => {
                 if !hooks.parse_field(other, input)? {
                     return Err(unexpected_key(&key));
@@ -584,6 +589,7 @@ pub fn parse_transition(input: &ParseBuffer<'_>) -> Result<Transition> {
         target,
         hooks,
         internal,
+        fallback,
     })
 }
 
@@ -773,6 +779,8 @@ impl StateMachine {
                                 global_after,
                                 payload: event.payload.clone(),
                                 internal: transition.internal,
+                                selection: transition.hooks.clone(),
+                                fallback: transition.fallback,
                             },
                         );
                     }

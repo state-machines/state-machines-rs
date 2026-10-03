@@ -70,6 +70,8 @@ pub struct EventSchema {
     pub on_error: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub branching: bool,
 }
 
 /// Serializable representation of a transition.
@@ -79,6 +81,8 @@ pub struct TransitionSchema {
     pub target: String,
     #[serde(default, skip_serializing_if = "is_false")]
     pub internal: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub fallback: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub guards: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -187,7 +191,17 @@ impl MachineSchema {
                 );
             }
             let mut sources = BTreeSet::new();
+            let mut fallbacks = BTreeSet::new();
             for transition in &event.transitions {
+                let guarded = !transition.guards.is_empty() || !transition.unless.is_empty();
+                if (transition.fallback && (!event.branching || guarded))
+                    || (event.branching && !transition.fallback && !guarded)
+                {
+                    report(
+                        DiagnosticLevel::Error,
+                        format!("invalid branch candidate for `{}`", event.name),
+                    );
+                }
                 let target = self
                     .superstates
                     .iter()
@@ -211,7 +225,16 @@ impl MachineSchema {
                         report(DiagnosticLevel::Error, format!("unknown source `{source}`"));
                     }
                     for leaf in leaves {
-                        if !sources.insert(leaf) {
+                        if fallbacks.contains(leaf) {
+                            report(
+                                DiagnosticLevel::Error,
+                                format!("fallback must be last for `{}` from `{leaf}`", event.name),
+                            );
+                        }
+                        if transition.fallback {
+                            fallbacks.insert(leaf);
+                        }
+                        if !sources.insert(leaf) && !event.branching {
                             report(
                                 DiagnosticLevel::Error,
                                 format!("ambiguous event `{}` from `{leaf}`", event.name),
@@ -348,6 +371,7 @@ mod tests {
                         sources: vec!["Pressurized".into()],
                         target: "Vacuum".into(),
                         internal: false,
+                        fallback: false,
                         guards: vec![],
                         unless: vec![],
                         before: vec![],
@@ -362,6 +386,7 @@ mod tests {
                     around: vec![],
                     on_error: vec![],
                     payload: None,
+                    branching: false,
                 },
                 EventSchema {
                     name: "repressurize".into(),
@@ -369,6 +394,7 @@ mod tests {
                         sources: vec!["Vacuum".into()],
                         target: "Pressurized".into(),
                         internal: false,
+                        fallback: false,
                         guards: vec![],
                         unless: vec![],
                         before: vec![],
@@ -383,6 +409,7 @@ mod tests {
                     around: vec![],
                     on_error: vec![],
                     payload: None,
+                    branching: false,
                 },
             ],
             async_mode: false,
@@ -448,5 +475,9 @@ mod tests {
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].level, DiagnosticLevel::Error);
         assert!(diagnostics[0].message.contains("ambiguous"));
+        schema.events[0].branching = true;
+        schema.events[0].transitions[0].guards = vec!["ready".into()];
+        schema.events[0].transitions[1].fallback = true;
+        assert_eq!(schema.validate(), []);
     }
 }

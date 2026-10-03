@@ -96,6 +96,16 @@ Dynamic `take_completion_events()` drains notifications from successful
 hook runs after the ordinary transition callbacks. Completion does not
 implicitly dispatch another event or mark every ancestor complete.
 
+**Guarded Branching** – Opt in with event `branching: true`; candidates from the
+same source are tried in declaration order. Each needs transition-level
+`guards`/`unless`, except an optional last `fallback: true` candidate.
+Event guards run once, then candidate guards run once; only the selected
+transition runs callbacks. No match returns a `branch_selection` guard error.
+For multiple candidates, typestate returns
+`<Machine><Source><Event>Outcome` with one typed variant per destination;
+dynamic dispatch selects the same outcome without duplicate available events.
+Branch selection precedes around/before callbacks.
+
 ---
 
 ## Quick Start
