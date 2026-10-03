@@ -9,6 +9,8 @@ mod activities;
 pub use activities::{ActivityId, ChildInvokeError, InvokeError, InvokeFailure};
 mod parallel;
 pub use parallel::{Parallel, ParallelError, ParallelEvent};
+mod work;
+use work::{Registry, Visit};
 
 /// Implemented by generated dynamic machines when the facade's runtime feature is enabled.
 /// Implementers must advance `epoch` on every committed external transition, even
@@ -52,6 +54,15 @@ struct Inbox<E> {
     closed: bool,
     waker: Option<Waker>,
 }
+impl<E> Inbox<E> {
+    fn reserve(&mut self) -> bool {
+        if self.closed || self.pending == self.capacity {
+            return false;
+        }
+        self.pending += 1;
+        true
+    }
+}
 
 /// A clonable single-executor mailbox. Cloning this handle never clones events.
 pub struct EventSink<E> {
@@ -92,7 +103,7 @@ impl<E> EventSink<E> {
             if inbox.closed {
                 return Err(QueueError::Closed(event));
             }
-            if inbox.pending == inbox.capacity {
+            if !inbox.reserve() {
                 return Err(QueueError::Full(event));
             }
             let event = Envelope {
@@ -105,7 +116,6 @@ impl<E> EventSink<E> {
             } else {
                 inbox.external.push_back(event);
             }
-            inbox.pending += 1;
             inbox.waker.take()
         };
         if let Some(waker) = waker {
@@ -156,10 +166,10 @@ pub struct Runner<M: Machine> {
     sink: EventSink<M::Event>,
     rules: Vec<Deferral<M::State, M::Event>>,
     deferred: VecDeque<(usize, Envelope<M::Event>)>,
-    timers: Vec<timers::Timer<M::State, M::Event>>,
+    timers: Registry<TimerId, M::State, timers::Timeout<M::Event>>,
     next_timer: u64,
     last_time: Option<u64>,
-    activities: Vec<activities::Activity<M::State, M::Event>>,
+    activities: Registry<ActivityId, M::State, activities::Task<M::Event>>,
     next_activity: u64,
 }
 impl<M: Machine> Runner<M> {
@@ -169,10 +179,10 @@ impl<M: Machine> Runner<M> {
             sink: EventSink::new(capacity),
             rules: Vec::new(),
             deferred: VecDeque::new(),
-            timers: Vec::new(),
+            timers: Registry::new(),
             next_timer: 0,
             last_time: None,
-            activities: Vec::new(),
+            activities: Registry::new(),
             next_activity: 0,
         }
     }
@@ -206,13 +216,33 @@ impl<M: Machine> Runner<M> {
             matches,
         });
     }
+    fn reconcile_work(&mut self) {
+        let visit = Visit::capture(self.machine());
+        let released = self.timers.reconcile(visit) + self.activities.reconcile(visit);
+        self.release(released);
+    }
+    fn release(&self, count: usize) {
+        self.sink.inbox.borrow_mut().pending -= count;
+    }
+    fn apply_cancellation(&self, result: Option<bool>) -> bool {
+        if let Some(pending) = result {
+            self.release(usize::from(pending));
+            true
+        } else {
+            false
+        }
+    }
+    fn live_delivery(&self, event: &Envelope<M::Event>) -> bool {
+        event.timer.is_none_or(|id| self.timers.contains(id))
+            && event.activity.is_none_or(|id| self.activities.contains(id))
+    }
     fn recall(&mut self) {
         let state = self.machine().state();
         let mut recalled = VecDeque::new();
         for _ in 0..self.deferred.len() {
             let (rule, event) = self.deferred.pop_front().unwrap();
-            if !self.live_timer(&event) || !self.live_activity(&event) {
-                self.sink.inbox.borrow_mut().pending -= 1;
+            if !self.live_delivery(&event) {
+                self.release(1);
             } else if self.rules[rule].scope.active(state) {
                 self.deferred.push_back((rule, event));
             } else {
@@ -224,8 +254,7 @@ impl<M: Machine> Runner<M> {
         inbox.external = recalled;
     }
     pub async fn drain(&mut self, max_steps: usize) -> Result<usize, RunError<M::Error>> {
-        self.reconcile_timers();
-        self.reconcile_activities();
+        self.reconcile_work();
         self.recall();
         if self.machine().is_poisoned() {
             return Err(RunError::Poisoned);
@@ -256,8 +285,8 @@ impl<M: Machine> Runner<M> {
                     .unwrap()
             };
             let state = self.machine().state();
-            if !self.live_timer(&event) || !self.live_activity(&event) {
-                self.sink.inbox.borrow_mut().pending -= 1;
+            if !self.live_delivery(&event) {
+                self.release(1);
                 steps += 1;
                 continue;
             }
@@ -268,17 +297,16 @@ impl<M: Machine> Runner<M> {
             {
                 self.deferred.push_back((rule, event));
             } else {
-                self.sink.inbox.borrow_mut().pending -= 1;
+                self.release(1);
                 if let Some(id) = event.timer {
-                    self.timers.retain(|timer| timer.id != id);
+                    self.timers.retire(id);
                 }
                 if let Some(id) = event.activity {
-                    self.activities.retain(|activity| activity.id != id);
+                    self.activities.retire(id);
                 }
                 let result = self.machine.as_mut().unwrap().dispatch(event.event).await;
                 // A failed automatic microstep may follow a committed external edge.
-                self.reconcile_timers();
-                self.reconcile_activities();
+                self.reconcile_work();
                 self.recall();
                 result.map_err(RunError::Dispatch)?;
             }

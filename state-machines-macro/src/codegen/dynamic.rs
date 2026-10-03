@@ -7,7 +7,7 @@
 
 use crate::codegen::utils::{
     ctx_generics, ctx_ty, empty_storage_inits, event_pascal, machine_params, maybe_async,
-    maybe_await, to_snake_case, to_snake_case_ident,
+    maybe_await, to_snake_case, to_snake_case_ident, transition_error_ty,
 };
 use crate::types::*;
 use proc_macro2::TokenStream as TokenStream2;
@@ -356,10 +356,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
 
     let generics = ctx_generics(machine);
     let ctx_param_ty = ctx_ty(machine);
-    let startup_error = machine.error.as_ref().map_or(
-        quote! { ::state_machines::core::GuardError },
-        |ty| quote! { ::state_machines::EventError<#ty> },
-    );
+    let startup_error = transition_error_ty(machine);
 
     let state_variants = &machine.states;
     let state_name_arms = machine.states.iter().map(|state| {

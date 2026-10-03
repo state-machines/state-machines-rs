@@ -108,6 +108,14 @@ pub fn ctx_ty(machine: &StateMachine) -> TokenStream2 {
     }
 }
 
+/// Public error type shared by fallible startup and consuming transitions.
+pub fn transition_error_ty(machine: &StateMachine) -> TokenStream2 {
+    machine.error.as_ref().map_or(
+        quote! { ::state_machines::core::GuardError },
+        |ty| quote! { ::state_machines::EventError<#ty> },
+    )
+}
+
 /// Type arguments of the machine struct in `state`: `<state>` with a
 /// concrete context, `<C, state>` with a generic one.
 pub fn machine_params(machine: &StateMachine, state: impl ToTokens) -> TokenStream2 {

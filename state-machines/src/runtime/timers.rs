@@ -1,4 +1,4 @@
-use super::{Envelope, Machine, Runner};
+use super::{Envelope, Machine, Runner, Visit};
 use alloc::vec::Vec;
 
 /// Executor-independent monotonic logical ticks. The host chooses the tick unit.
@@ -24,12 +24,9 @@ impl<E> ScheduleError<E> {
     }
 }
 
-pub(super) struct Timer<S, E> {
-    pub id: TimerId,
+pub(super) struct Timeout<E> {
     deadline: u64,
-    state: S,
-    epoch: u64,
-    event: Option<E>,
+    event: E,
 }
 
 impl<M: Machine> Runner<M> {
@@ -41,7 +38,7 @@ impl<M: Machine> Runner<M> {
         delay: u64,
         event: M::Event,
     ) -> Result<TimerId, ScheduleError<M::Event>> {
-        self.reconcile_timers();
+        self.reconcile_work();
         if self.machine().is_poisoned() {
             return Err(ScheduleError::Poisoned(event));
         }
@@ -55,23 +52,17 @@ impl<M: Machine> Runner<M> {
         let Some(next) = self.next_timer.checked_add(1) else {
             return Err(ScheduleError::Overflow(event));
         };
-        {
-            let mut inbox = self.sink.inbox.borrow_mut();
-            if inbox.pending == inbox.capacity {
-                return Err(ScheduleError::Full(event));
-            }
-            inbox.pending += 1;
+        if !self.sink.inbox.borrow_mut().reserve() {
+            return Err(ScheduleError::Full(event));
         }
         self.last_time = Some(now);
         self.next_timer = next;
         let id = TimerId(next);
-        self.timers.push(Timer {
+        self.timers.insert(
             id,
-            deadline,
-            state: self.machine().state(),
-            epoch: self.machine().epoch(),
-            event: Some(event),
-        });
+            Visit::capture(self.machine()).unwrap(),
+            Timeout { deadline, event },
+        );
         Ok(id)
     }
 
@@ -83,23 +74,32 @@ impl<M: Machine> Runner<M> {
             return Err(ClockError::Backwards);
         }
         self.last_time = Some(now);
-        self.reconcile_timers();
+        self.reconcile_work();
         let mut due: Vec<_> = self
             .timers
+            .entries
             .iter()
             .enumerate()
-            .filter(|(_, timer)| timer.event.is_some() && timer.deadline <= now)
+            .filter(|(_, entry)| {
+                entry
+                    .pending
+                    .as_ref()
+                    .is_some_and(|timer| timer.deadline <= now)
+            })
             .map(|(index, _)| index)
             .collect();
-        due.sort_by_key(|index| (self.timers[*index].deadline, self.timers[*index].id.0));
+        due.sort_by_key(|index| {
+            let entry = &self.timers.entries[*index];
+            (entry.pending.as_ref().unwrap().deadline, entry.id.0)
+        });
         let count = due.len();
         let waker = {
             let mut inbox = self.sink.inbox.borrow_mut();
             for index in due {
-                let timer = &mut self.timers[index];
+                let entry = &mut self.timers.entries[index];
                 inbox.external.push_back(Envelope {
-                    event: timer.event.take().unwrap(),
-                    timer: Some(timer.id),
+                    event: entry.pending.take().unwrap().event,
+                    timer: Some(entry.id),
                     activity: None,
                 });
             }
@@ -114,42 +114,16 @@ impl<M: Machine> Runner<M> {
     /// The next deadline not yet queued; clocks/queues are intentionally not snapshots.
     pub fn next_deadline(&self) -> Option<u64> {
         self.timers
+            .entries
             .iter()
-            .filter(|timer| timer.event.is_some())
-            .map(|timer| timer.deadline)
+            .filter_map(|entry| entry.pending.as_ref().map(|timer| timer.deadline))
             .min()
     }
 
     /// Queued/deferred cancelled timeouts release capacity when skipped by `drain`.
     pub fn cancel_timer(&mut self, id: TimerId) -> bool {
-        let Some(index) = self.timers.iter().position(|timer| timer.id == id) else {
-            return false;
-        };
-        if self.timers.remove(index).event.is_some() {
-            self.sink.inbox.borrow_mut().pending -= 1;
-        }
-        true
-    }
-
-    pub(super) fn reconcile_timers(&mut self) {
-        let state = self.machine().state();
-        let epoch = self.machine().epoch();
-        let poisoned = self.machine().is_poisoned();
-        let mut released = 0;
-        self.timers.retain(|timer| {
-            let live = !poisoned && timer.state == state && timer.epoch == epoch;
-            if !live && timer.event.is_some() {
-                released += 1;
-            }
-            live
-        });
-        self.sink.inbox.borrow_mut().pending -= released;
-    }
-
-    pub(super) fn live_timer(&self, event: &Envelope<M::Event>) -> bool {
-        event
-            .timer
-            .is_none_or(|id| self.timers.iter().any(|timer| timer.id == id))
+        let result = self.timers.cancel(id);
+        self.apply_cancellation(result)
     }
 }
 

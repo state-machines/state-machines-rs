@@ -84,6 +84,31 @@ fn pending_activity_is_cancelled_on_exit_but_not_internal_transition() {
     assert_eq!(runner.activity_count(), 0);
     assert_eq!(runner.pending(), 0);
 }
+
+#[test]
+fn mixed_timers_and_activities_share_exact_reservation_cleanup() {
+    struct Clock;
+    impl state_machines::runtime::Clock for Clock {
+        fn now(&self) -> u64 {
+            0
+        }
+    }
+    let control = Rc::new(Control::default());
+    let mut runner = Runner::new(DynamicParent::new(()), 3);
+    runner
+        .schedule_after(&Clock, 100, ParentEvent::Heartbeat)
+        .unwrap();
+    runner.invoke_future(Activity(control.clone())).unwrap();
+    runner.enqueue(ParentEvent::Heartbeat).unwrap();
+    assert_eq!(pollster::block_on(runner.drain(1)), Ok(1));
+    assert_eq!(runner.pending(), 2);
+    runner.enqueue(ParentEvent::Reset).unwrap();
+    assert_eq!(pollster::block_on(runner.drain(1)), Ok(1));
+    assert_eq!(runner.pending(), 0);
+    assert_eq!(runner.next_deadline(), None);
+    assert_eq!(runner.activity_count(), 0);
+    assert_eq!(control.drops.get(), 1);
+}
 #[test]
 fn completion_is_owned_raised_once_and_stale_queued_output_is_skipped() {
     let mut runner = Runner::new(DynamicParent::new(()), 2);

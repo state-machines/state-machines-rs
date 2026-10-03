@@ -25,11 +25,7 @@ pub fn dynamic_methods(machine: &StateMachine) -> TokenStream {
     let step_arms = machine.states.iter().map(|source| {
         let groups = super::branching::groups(machine, source);
         let selections = groups.iter().filter_map(|edges| {
-            let event = machine
-                .events
-                .iter()
-                .find(|event| event.name == edges[0].event)
-                .unwrap();
+            let event = machine.event(&edges[0].event);
             if !event.automatic {
                 return None;
             }
@@ -87,11 +83,7 @@ pub fn dynamic_methods(machine: &StateMachine) -> TokenStream {
         let checks = super::branching::groups(machine, state)
             .iter()
             .filter_map(|edges| {
-                let event = machine
-                    .events
-                    .iter()
-                    .find(|event| event.name == edges[0].event)
-                    .unwrap();
+                let event = machine.event(&edges[0].event);
                 event.automatic.then(|| {
                     let can = format_ident!("can_{}", event.name);
                     quote! { current.#can() #await_ }

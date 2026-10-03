@@ -1,7 +1,9 @@
 //! Ordered guard selection with typed outcome enums. Selection evaluates
 //! guards once, and only the selected candidate runs transition callbacks.
 
-use super::utils::{ctx_generics, event_pascal, machine_params, maybe_async, maybe_await};
+use super::utils::{
+    ctx_generics, event_pascal, machine_params, maybe_async, maybe_await, transition_error_ty,
+};
 use crate::types::{Hooks, StateMachine, TransitionEdge};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -22,11 +24,7 @@ pub fn groups<'a>(machine: &'a StateMachine, state: &Ident) -> Vec<Vec<&'a Trans
         }
     }
     for group in &mut groups {
-        let event = machine
-            .events
-            .iter()
-            .find(|event| event.name == group[0].event)
-            .unwrap();
+        let event = machine.event(&group[0].event);
         if event.hierarchical {
             let path = machine
                 .hierarchy
@@ -114,11 +112,7 @@ pub fn methods(
     source: &Ident,
     edges: &[&TransitionEdge],
 ) -> Result<TokenStream> {
-    let event = machine
-        .events
-        .iter()
-        .find(|event| event.name == edges[0].event)
-        .unwrap();
+    let event = machine.event(&edges[0].event);
     let name = &event.name;
     let outcome = outcome_name(machine, source, name);
     let generics = ctx_generics(machine);
@@ -143,10 +137,7 @@ pub fn methods(
     } else {
         quote! {}
     };
-    let error_ty = machine.error.as_ref().map_or(
-        quote! { ::state_machines::core::GuardError },
-        |ty| quote! { ::state_machines::EventError<#ty> },
-    );
+    let error_ty = transition_error_ty(machine);
     let failure = |error: TokenStream| {
         let error = if machine.error.is_some() {
             quote! { ::state_machines::EventError::Guard(#error) }

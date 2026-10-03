@@ -40,6 +40,23 @@ pub struct StateLifecycle {
 }
 
 impl StateMachine {
+    /// Graph edges are constructed from declared events during parsing.
+    pub fn event(&self, name: &Ident) -> &Event {
+        self.events
+            .iter()
+            .find(|event| &event.name == name)
+            .expect("transition edge references a declared event")
+    }
+
+    pub fn lifecycle_for<'a>(
+        &'a self,
+        state: &'a Ident,
+    ) -> impl Iterator<Item = &'a StateLifecycle> {
+        self.lifecycle
+            .iter()
+            .filter(move |hooks| &hooks.state == state)
+    }
+
     /// The shared ancestor prefix is not exited or re-entered. External
     /// self-transitions still exit and enter the leaf.
     pub fn lifecycle_callbacks(
@@ -77,20 +94,12 @@ impl StateMachine {
         let exit = source_path[common..]
             .iter()
             .rev()
-            .flat_map(|state| {
-                self.lifecycle
-                    .iter()
-                    .filter(move |hooks| &hooks.state == state)
-            })
+            .flat_map(|state| self.lifecycle_for(state))
             .flat_map(|hooks| hooks.exit.iter().cloned())
             .collect();
         let enter = target_path[common..]
             .iter()
-            .flat_map(|state| {
-                self.lifecycle
-                    .iter()
-                    .filter(move |hooks| &hooks.state == state)
-            })
+            .flat_map(|state| self.lifecycle_for(state))
             .flat_map(|hooks| hooks.enter.iter().cloned())
             .collect();
         (exit, enter)

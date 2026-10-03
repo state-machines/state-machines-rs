@@ -1,4 +1,4 @@
-use super::{Envelope, EventSink, Machine, RunError, Runner};
+use super::{Envelope, EventSink, Machine, RunError, Runner, Visit};
 use alloc::boxed::Box;
 use core::{
     fmt,
@@ -42,18 +42,11 @@ impl<C: Machine> fmt::Debug for ChildInvokeError<C> {
     }
 }
 
-type Task<E> = Pin<Box<dyn Future<Output = E> + 'static>>;
-pub(super) struct Activity<S, E> {
-    pub id: ActivityId,
-    state: S,
-    epoch: u64,
-    future: Option<Task<E>>,
-}
+pub(super) type Task<E> = Pin<Box<dyn Future<Output = E> + 'static>>;
 
 impl<M: Machine> Runner<M> {
     fn reserve_activity(&mut self) -> Result<ActivityId, InvokeFailure> {
-        self.reconcile_activities();
-        self.reconcile_timers();
+        self.reconcile_work();
         if self.machine().is_poisoned() {
             return Err(InvokeFailure::Poisoned);
         }
@@ -61,24 +54,16 @@ impl<M: Machine> Runner<M> {
             .next_activity
             .checked_add(1)
             .ok_or(InvokeFailure::Overflow)?;
-        {
-            let mut inbox = self.sink.inbox.borrow_mut();
-            if inbox.pending == inbox.capacity {
-                return Err(InvokeFailure::Full);
-            }
-            inbox.pending += 1;
+        if !self.sink.inbox.borrow_mut().reserve() {
+            return Err(InvokeFailure::Full);
         }
         self.next_activity = next;
         Ok(ActivityId(next))
     }
 
     fn store_activity(&mut self, id: ActivityId, future: Task<M::Event>) {
-        self.activities.push(Activity {
-            id,
-            state: self.machine().state(),
-            epoch: self.machine().epoch(),
-            future: Some(future),
-        });
+        self.activities
+            .insert(id, Visit::capture(self.machine()).unwrap(), future);
     }
 
     /// Invoke an owned future for the current leaf visit. It reserves one mailbox slot.
@@ -98,35 +83,26 @@ impl<M: Machine> Runner<M> {
 
     /// Cancel an owned activity. Queued completions are skipped at delivery.
     pub fn cancel_activity(&mut self, id: ActivityId) -> bool {
-        let Some(index) = self
-            .activities
-            .iter()
-            .position(|activity| activity.id == id)
-        else {
-            return false;
-        };
-        if self.activities.remove(index).future.is_some() {
-            self.sink.inbox.borrow_mut().pending -= 1;
-        }
-        true
+        let result = self.activities.cancel(id);
+        self.apply_cancellation(result)
     }
 
     pub fn activity_count(&self) -> usize {
-        self.activities.len()
+        self.activities.entries.len()
     }
 
     /// Poll each pending activity once with the caller's actual waker. Never busy-waits.
     /// Completed futures are dropped; their visit leases survive until event delivery.
     pub fn poll_activities(&mut self, cx: &mut Context<'_>) -> usize {
-        self.reconcile_activities();
+        self.reconcile_work();
         let mut ready = 0;
-        for activity in &mut self.activities {
-            let result = match activity.future.as_mut() {
+        for activity in &mut self.activities.entries {
+            let result = match activity.pending.as_mut() {
                 Some(future) => future.as_mut().poll(cx),
                 None => continue,
             };
             if let Poll::Ready(event) = result {
-                activity.future = None;
+                activity.pending = None;
                 self.sink.inbox.borrow_mut().internal.push_back(Envelope {
                     event,
                     timer: None,
@@ -151,8 +127,7 @@ impl<M: Machine> Runner<M> {
     pub async fn wait_for_work(&mut self) -> Result<(), RunError<M::Error>> {
         poll_fn(|cx| {
             if self.machine().is_poisoned() {
-                self.reconcile_activities();
-                self.reconcile_timers();
+                self.reconcile_work();
                 return Poll::Ready(Err(RunError::Poisoned));
             }
             // Register before polling activities, whose callbacks may enqueue input.
@@ -237,26 +212,5 @@ impl<M: Machine> Runner<M> {
             }),
         );
         Ok((id, sink))
-    }
-
-    pub(super) fn reconcile_activities(&mut self) {
-        let state = self.machine().state();
-        let epoch = self.machine().epoch();
-        let poisoned = self.machine().is_poisoned();
-        let mut released = 0;
-        self.activities.retain(|activity| {
-            let live = !poisoned && activity.state == state && activity.epoch == epoch;
-            if !live && activity.future.is_some() {
-                released += 1;
-            }
-            live
-        });
-        self.sink.inbox.borrow_mut().pending -= released;
-    }
-
-    pub(super) fn live_activity(&self, event: &Envelope<M::Event>) -> bool {
-        event
-            .activity
-            .is_none_or(|id| self.activities.iter().any(|activity| activity.id == id))
     }
 }

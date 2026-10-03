@@ -9,6 +9,13 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::Result;
 
+fn optional_string(value: Option<impl ToString>) -> TokenStream2 {
+    value.map_or(quote! { None }, |value| {
+        let value = value.to_string();
+        quote! { Some(::state_machines::__private::String::from(#value)) }
+    })
+}
+
 /// A `vec![String::from(..), ..]` literal over `items`' display forms.
 fn string_vec<T: ToString>(items: impl IntoIterator<Item = T>) -> TokenStream2 {
     let strs = items.into_iter().map(|item| item.to_string());
@@ -65,10 +72,7 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
                         .and_then(|index| index.checked_sub(1))
                         .map(|index| path[index].to_string())
                 });
-            let parent = parent.map_or(
-                quote! { None },
-                |parent| quote! { Some(::state_machines::__private::String::from(#parent)) },
-            );
+            let parent = optional_string(parent);
             let initial_str = machine
                 .hierarchy
                 .initial_children
@@ -112,10 +116,7 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
                         Some(HistoryMode::Deep) => quote! { Some(::state_machines::__private::String::from("deep")) },
                         None => quote! { None },
                     };
-                    let data = trans.data.as_ref().map_or(quote! { None }, |name| {
-                        let name = name.to_string();
-                        quote! { Some(::state_machines::__private::String::from(#name)) }
-                    });
+                    let data = optional_string(trans.data.as_ref());
                     let kind = match trans.kind {
                         Some(TransitionKind::Internal) => quote! { Some("internal".into()) },
                         Some(TransitionKind::Local) => quote! { Some("local".into()) },
@@ -147,10 +148,7 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
             let branching = event.branching;
             let hierarchical = event.hierarchical;
             let automatic = event.automatic;
-            let completion = event.completion.as_ref().map_or(quote! { None }, |scope| {
-                let scope = scope.to_string();
-                quote! { Some(::state_machines::__private::String::from(#scope)) }
-            });
+            let completion = optional_string(event.completion.as_ref());
 
             quote! {
                 ::state_machines::EventSchema {

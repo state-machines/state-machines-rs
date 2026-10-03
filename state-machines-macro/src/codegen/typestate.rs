@@ -40,7 +40,7 @@
 
 use crate::codegen::utils::{
     ctx_generics, ctx_ty, empty_storage_inits, machine_params, maybe_async, maybe_await,
-    to_snake_case, to_snake_case_ident,
+    to_snake_case, to_snake_case_ident, transition_error_ty,
 };
 use crate::types::*;
 use proc_macro2::TokenStream as TokenStream2;
@@ -207,11 +207,7 @@ fn generate_state_impls(machine: &StateMachine) -> Result<Vec<TokenStream2>> {
                 methods.push(method);
                 let can_method = generate_can_method(machine, edge)?;
                 methods.push(can_method);
-                if machine
-                    .events
-                    .iter()
-                    .any(|event| event.name == edge.event && event.automatic)
-                {
+                if machine.event(&edge.event).automatic {
                     let helper = quote::format_ident!("__sm_auto_{}", edge.event);
                     methods.push(generate_transition_method(
                         machine,
@@ -318,17 +314,9 @@ fn generate_start(machine: &StateMachine, state: &Ident) -> TokenStream2 {
     path.push(state.clone());
     let hooks = path
         .iter()
-        .flat_map(|scope| {
-            machine
-                .lifecycle
-                .iter()
-                .filter(move |hooks| &hooks.state == scope)
-        })
+        .flat_map(|scope| machine.lifecycle_for(scope))
         .flat_map(|hooks| &hooks.enter);
-    let error = machine.error.as_ref().map_or(
-        quote! { ::state_machines::core::GuardError },
-        |ty| quote! { ::state_machines::EventError<#ty> },
-    );
+    let error = transition_error_ty(machine);
     let calls = hooks.map(|hook| {
         if let Some(ty) = &machine.error {
             quote! {

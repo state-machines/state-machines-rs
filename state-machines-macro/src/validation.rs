@@ -290,11 +290,7 @@ impl StateMachine {
 
         for state in &self.states {
             for edges in crate::codegen::branching::groups(self, state) {
-                let event = self
-                    .events
-                    .iter()
-                    .find(|event| event.name == edges[0].event)
-                    .unwrap();
+                let event = self.event(&edges[0].event);
                 let mut origins = HashSet::new();
                 let candidates: Vec<_> = edges
                     .iter()
