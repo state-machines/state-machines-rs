@@ -24,9 +24,69 @@ pub struct StateMachine {
     pub hierarchy: Hierarchy,
     pub events: Vec<Event>,
     pub callbacks: GlobalCallbacks,
+    pub lifecycle: Vec<StateLifecycle>,
     pub async_mode: bool,
     pub dynamic_mode: bool,
     pub transition_graph: TransitionGraph,
+}
+
+pub struct StateLifecycle {
+    pub state: Ident,
+    pub enter: Vec<Ident>,
+    pub exit: Vec<Ident>,
+}
+
+impl StateMachine {
+    /// The shared ancestor prefix is not exited or re-entered. External
+    /// self-transitions still exit and enter the leaf.
+    pub fn lifecycle_callbacks(
+        &self,
+        source: &Ident,
+        target: &Ident,
+        internal: bool,
+    ) -> (Vec<Ident>, Vec<Ident>) {
+        if internal {
+            return (Vec::new(), Vec::new());
+        }
+        let path = |leaf: &Ident| {
+            let mut path = self
+                .hierarchy
+                .ancestors
+                .get(&leaf.to_string())
+                .cloned()
+                .unwrap_or_default();
+            path.push(leaf.clone());
+            path
+        };
+        let source_path = path(source);
+        let target_path = path(target);
+        let common = source_path
+            .iter()
+            .zip(&target_path)
+            .take_while(|(a, b)| a == b)
+            .count()
+            .min(source_path.len() - 1);
+        let exit = source_path[common..]
+            .iter()
+            .rev()
+            .flat_map(|state| {
+                self.lifecycle
+                    .iter()
+                    .filter(move |hooks| &hooks.state == state)
+            })
+            .flat_map(|hooks| hooks.exit.iter().cloned())
+            .collect();
+        let enter = target_path[common..]
+            .iter()
+            .flat_map(|state| {
+                self.lifecycle
+                    .iter()
+                    .filter(move |hooks| &hooks.state == state)
+            })
+            .flat_map(|hooks| hooks.enter.iter().cloned())
+            .collect();
+        (exit, enter)
+    }
 }
 
 /// A global callback with optional `from`/`to`/`on` filters.

@@ -251,6 +251,20 @@ impl StateMachine {
             }
         }
 
+        let mut lifecycle_states = HashSet::new();
+        for hooks in &self.lifecycle {
+            err_if(
+                !self.states.contains(&hooks.state) && !self.hierarchy.is_superstate(&hooks.state),
+                hooks.state.span(),
+                "lifecycle references an undeclared state",
+            )?;
+            err_if(
+                !lifecycle_states.insert(hooks.state.to_string()),
+                hooks.state.span(),
+                "duplicate state lifecycle",
+            )?;
+        }
+
         // All validation passed!
         Ok(())
     }

@@ -33,11 +33,11 @@ state_machine! {
     events {
         refresh {
             before: [refresh_token],
-            after: [record_completion],
             on_error: [recover],
             transition: { from: RefreshToken, to: Done }
         }
-    }
+    },
+    lifecycle: { Done { enter: [record_completion] } }
 }
 
 impl<C, S> AuthRecovery<C, S> {

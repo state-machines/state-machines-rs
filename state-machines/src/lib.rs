@@ -44,8 +44,8 @@ pub use state_machines_macro::state_machine;
 
 #[cfg(feature = "inspect")]
 pub use state_machines_core::{
-    DiagnosticLevel, EventSchema, Inspectable, MachineSchema, SchemaDiagnostic, SuperstateSchema,
-    TransitionSchema,
+    DiagnosticLevel, EventSchema, Inspectable, MachineSchema, SchemaDiagnostic,
+    StateLifecycleSchema, SuperstateSchema, TransitionSchema,
 };
 
 /// Abort an around callback with a guard-style error.

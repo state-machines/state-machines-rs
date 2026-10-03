@@ -140,6 +140,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     simple_event("unlock", "Locked", "Closed"),
                 ],
                 async_mode: false,
+                ..Default::default()
             };
 
             println!("Example JSON Schema:");

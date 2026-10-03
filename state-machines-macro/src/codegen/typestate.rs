@@ -627,6 +627,14 @@ fn generate_transition_method(
         .iter()
         .map(|cb| callback_step(&after, cb, false));
     let around_after_checks = edge.hooks.around.iter().map(|cb| around_step(&after, cb));
+    let (exit_hooks, enter_hooks) =
+        machine.lifecycle_callbacks(source_state, target_state, edge.internal);
+    let exit_calls = exit_hooks
+        .iter()
+        .map(|cb| callback_step(&before, cb, false));
+    let enter_calls = enter_hooks
+        .iter()
+        .map(|cb| callback_step(&after, cb, false));
 
     Ok(quote! {
         #method_sig -> #return_type {
@@ -634,6 +642,7 @@ fn generate_transition_method(
             #( #guard_checks )*
             #( #global_before_calls )*
             #( #before_calls )*
+            #( #exit_calls )*
 
             let #machine_name {
                 ctx,
@@ -647,6 +656,7 @@ fn generate_transition_method(
                 #( #storage_transfers, )*
             };
 
+            #( #enter_calls )*
             #( #after_calls )*
             #( #global_after_calls )*
             #( #around_after_checks )*

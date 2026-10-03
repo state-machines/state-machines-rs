@@ -30,6 +30,7 @@ impl Parse for StateMachine {
         let mut states = None;
         let mut events = None;
         let mut callbacks = GlobalCallbacks::default();
+        let mut lifecycle = Vec::new();
         let mut async_mode = false;
         let mut dynamic_mode = false;
         let mut state_storage = Vec::new();
@@ -96,6 +97,33 @@ impl Parse for StateMachine {
                         braced!(content in input);
                         callbacks = parse_global_callbacks(&content)?;
                     }
+                    "lifecycle" => {
+                        input.parse::<Token![:]>()?;
+                        let content;
+                        braced!(content in input);
+                        while !content.is_empty() {
+                            let state = content.parse()?;
+                            let block;
+                            braced!(block in content);
+                            let mut hooks = StateLifecycle {
+                                state,
+                                enter: Vec::new(),
+                                exit: Vec::new(),
+                            };
+                            while !block.is_empty() {
+                                let key: Ident = block.parse()?;
+                                block.parse::<Token![:]>()?;
+                                match key.to_string().as_str() {
+                                    "enter" => hooks.enter = parse_ident_list_value(&block)?,
+                                    "exit" => hooks.exit = parse_ident_list_value(&block)?,
+                                    _ => return Err(unexpected_key(&key)),
+                                }
+                                skip_optional_comma(&block)?;
+                            }
+                            lifecycle.push(hooks);
+                            skip_optional_comma(&content)?;
+                        }
+                    }
                     // Fields from the Ruby-era design that were never
                     // implemented. Error loudly instead of silently
                     // swallowing configuration the user expects to work.
@@ -133,6 +161,7 @@ impl Parse for StateMachine {
             hierarchy,
             events: events.unwrap_or_default(),
             callbacks,
+            lifecycle,
             async_mode,
             dynamic_mode,
             transition_graph: TransitionGraph::default(),

@@ -26,6 +26,17 @@ pub struct MachineSchema {
     pub events: Vec<EventSchema>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub async_mode: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lifecycle: Vec<StateLifecycleSchema>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StateLifecycleSchema {
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub enter: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exit: Vec<String>,
 }
 
 /// Serializable representation of a superstate (hierarchical state).
@@ -138,6 +149,15 @@ impl MachineSchema {
                 if !self.states.contains(child) {
                     report(DiagnosticLevel::Error, format!("unknown child `{child}`"));
                 }
+            }
+        }
+        let mut lifecycle_states = BTreeSet::new();
+        for hooks in &self.lifecycle {
+            if !names.contains(&hooks.state) || !lifecycle_states.insert(&hooks.state) {
+                report(
+                    DiagnosticLevel::Error,
+                    format!("invalid or duplicate lifecycle `{}`", hooks.state),
+                );
             }
         }
         let expand = |name: &String| -> Vec<&String> {
@@ -344,6 +364,7 @@ mod tests {
                 },
             ],
             async_mode: false,
+            ..Default::default()
         }
     }
 

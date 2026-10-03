@@ -7,8 +7,8 @@ pub mod schema;
 
 #[cfg(feature = "inspect")]
 pub use schema::{
-    DiagnosticLevel, EventSchema, Inspectable, MachineSchema, SchemaDiagnostic, SuperstateSchema,
-    TransitionSchema,
+    DiagnosticLevel, EventSchema, Inspectable, MachineSchema, SchemaDiagnostic,
+    StateLifecycleSchema, SuperstateSchema, TransitionSchema,
 };
 
 /// Marker trait for states used by the generated state machines.

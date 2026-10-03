@@ -78,6 +78,15 @@ handles an event without changing state or resetting state data. Omit `to`;
 guards and event callbacks still run. An ordinary `from: Active, to: Active`
 transition is external and resets leaf data.
 
+**Hierarchical Lifecycle** – Declare
+`lifecycle: { Flight { enter: [open_region], exit: [close_region] } }`.
+After guards and before callbacks, exit hooks run inner-to-outer; after the
+state/data change, enter hooks run outer-to-inner before after callbacks.
+Common ancestors stay active; external self-transitions re-enter the leaf,
+internal transitions run neither. Hooks take no payload, support async and
+fallible returns like event callbacks, and participate in failure recovery.
+`new()` remains an infallible constructor and does not invoke entry hooks.
+
 ---
 
 ## Quick Start
