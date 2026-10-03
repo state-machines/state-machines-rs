@@ -376,7 +376,7 @@ impl<C, S> HttpRequest<C, S> {
 
 // If callbacks can fail, declare an error type for the machine.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum HttpError {
+pub enum HttpError {
     Timeout,
 }
 
@@ -1462,6 +1462,25 @@ and notifications run before the parent advances; nested parent completions use
 the same bounded stabilization loop. Final leaves cannot declare their own exits,
 but inherited parent exits are legal. An explicit typed completion method is
 available only on the appropriate final leaves. Constructors/restore remain inert.
+
+### Optional event runner
+
+Enable `runtime` for `runtime::Runner::new(dynamic_machine, capacity)` and the
+executor-independent `Machine` adapter. `enqueue()` is external FIFO; `raise()` is
+internal FIFO with priority. Cloned `runner.sink()` handles let callbacks raise
+events without re-entering dispatch. `defer_in(state, matches)` and
+`defer_while(scope_predicate, matches)` explicitly hold matching events until the
+scope exits, then recall them FIFO ahead of queued external events.
+
+`drain(max_steps).await` is bounded and counts deferrals as steps. Capacity includes
+deferred events; full/closed errors return the original event without Clone.
+Dispatch errors consume the attempted event but preserve the remaining queue.
+Extraction/drop closes the mailbox. The runner is single-executor (`Rc`), uses
+`no_std` + `alloc`, and creates no threads. Queues are not part of FSM snapshots.
+Dynamic `transition_epoch()` advances on committed external edges, including
+self-re-entry, but not internal edges; conversions/restore reset this runtime tag.
+With `runtime`, custom error types on public generated machines must also be
+public, because they are exposed as the adapter's associated error type.
 
 - **[API Docs](https://docs.rs/state-machines)** – Full API reference
 - **[Crates.io](https://crates.io/crates/state-machines)** – Published crate versions

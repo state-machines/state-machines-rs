@@ -53,10 +53,12 @@ pub fn dynamic_methods(machine: &StateMachine) -> TokenStream {
                     format_ident!("__sm_auto_{}", event.name)
                 };
                 let target = &edge.target;
+                let external = !edge.internal;
                 quote! {
                     if #history && (#enabled) {
                         match current.#helper() #await_ {
                             Ok(machine) => {
+                                if #external { self.epoch = self.epoch.wrapping_add(1); }
                                 let next = #any::#target(machine);
                                 self.last_state = next.state();
                                 self.inner = Some(next);

@@ -30,6 +30,7 @@ name = "typestate_transitions"
 harness = false
 
 [features]
+runtime = []
 default = []
 async = ["state-machines-macro/async"]
 dynamic = ["state-machines-macro/dynamic"]

@@ -20,7 +20,7 @@ static TEST_LOCK: Mutex<()> = Mutex::new(());
 static ERRORS: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum AuthError {
+pub enum AuthError {
     Network,
     Audit,
 }

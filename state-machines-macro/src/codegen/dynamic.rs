@@ -54,6 +54,8 @@ fn generate_event_enum(machine: &StateMachine) -> Result<TokenStream2> {
         let pascal_name = event_pascal(&event.name);
         if let Some(payload_ty) = &event.payload {
             quote! { #pascal_name(#payload_ty) }
+        } else if event.automatic {
+            quote! { #[allow(dead_code)] #pascal_name }
         } else {
             quote! { #pascal_name }
         }
@@ -195,15 +197,30 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
             for edges in super::branching::groups(machine, state) {
                 if edges[0].event == *event_snake {
                     let source_state = state;
+                    let dispatch_method = if edges.len() > 1 {
+                        quote::format_ident!("__sm_select_{}", event_snake)
+                    } else {
+                        event_method.clone()
+                    };
                     let success = if edges.len() > 1 {
                         let outcome = super::branching::outcome_name(machine, state, event_snake);
                         let arms = super::branching::targets(&edges).into_iter().map(|target| {
                                 quote! { #outcome::#target(machine) => #any_state_name::#target(machine) }
                             });
-                        quote! { match new_machine { #( #arms, )* } }
+                        quote! {
+                            {
+                                let (new_machine, external) = new_machine;
+                                if external { self.epoch = self.epoch.wrapping_add(1); }
+                                match new_machine { #( #arms, )* }
+                            }
+                        }
                     } else {
                         let target = &edges[0].target;
-                        quote! { #any_state_name::#target(new_machine) }
+                        let external = !edges[0].internal;
+                        quote! { {
+                            if #external { self.epoch = self.epoch.wrapping_add(1); }
+                            #any_state_name::#target(new_machine)
+                        } }
                     };
 
                     // Generate the match arm for this transition
@@ -216,7 +233,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
                     };
                     let arm = quote! {
                         (#any_state_name::#source_state(m), #event_name::#event_pascal #payload_pattern) => {
-                            match m.#event_method(#payload_arg) #maybe_await {
+                            match m.#dispatch_method(#payload_arg) #maybe_await {
                                 Ok(new_machine) => #success,
                                 Err((old_machine, err)) => {
                                     self.inner = ::core::option::Option::Some(#any_state_name::#source_state(old_machine));
@@ -518,6 +535,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
         /// sources and can't be determined at compile time.
         #[derive(Debug)]
         pub struct #dynamic_name #generics {
+            epoch: u64,
             inner: ::core::option::Option<#any_state_name #generics>,
             last_state: #state_enum_name,
             completions: ::state_machines::__private::Vec<::state_machines::CompletionEvent>,
@@ -534,6 +552,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
             /// Create a new dynamic machine in the declared initial state.
             pub fn new(ctx: #ctx_param_ty) -> Self {
                 Self {
+                    epoch: 0,
                     inner: ::core::option::Option::Some(#initial_state_constructor),
                     last_state: #state_enum_name::#initial_state,
                     completions: ::state_machines::__private::Vec::new(),
@@ -543,6 +562,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
             /// Create a new dynamic machine in the specified state.
             pub fn new_init_state(ctx: #ctx_param_ty, state: #state_enum_name) -> Self {
                 Self {
+                    epoch: 0,
                     inner: ::core::option::Option::Some(match state {
                         #( #state_constructor_arms, )*
                     }),
@@ -588,6 +608,10 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
                 self.last_state
             }
 
+            /// Increments on committed external transitions, including re-entry.
+            /// Internal transitions preserve the epoch; construction/restore start at zero.
+            pub fn transition_epoch(&self) -> u64 { self.epoch }
+
             /// Cancellation/unwinding dropped an owned in-flight transition.
             /// No rollback of resources or side effects is promised.
             pub fn is_poisoned(&self) -> bool {
@@ -619,6 +643,21 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
         }
 
         #default_impl
+
+        ::state_machines::__sm_if_runtime! {
+            impl #generics ::state_machines::runtime::Machine for #dynamic_name #generics {
+                type Event = #event_name;
+                type Error = #dynamic_error_ty;
+                type State = #state_enum_name;
+                fn state(&self) -> Self::State { self.current_state() }
+                fn epoch(&self) -> u64 { self.transition_epoch() }
+                fn is_finished(&self) -> bool { self.is_finished() }
+                fn is_poisoned(&self) -> bool { self.is_poisoned() }
+                async fn dispatch(&mut self, event: Self::Event) -> Result<(), Self::Error> {
+                    self.handle(event) #maybe_await
+                }
+            }
+        }
     })
 }
 
@@ -654,6 +693,7 @@ fn generate_conversions(machine: &StateMachine) -> Result<TokenStream2> {
                 /// compile-time guarantees about state transitions.
                 pub fn into_dynamic(self) -> #dynamic_name #generics {
                     #dynamic_name {
+                        epoch: 0,
                         inner: ::core::option::Option::Some(#any_state_name::#state(self)),
                         last_state: #state_enum_name::#state,
                         completions: ::state_machines::__private::Vec::new(),

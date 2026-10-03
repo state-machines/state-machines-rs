@@ -5,6 +5,23 @@
 
 extern crate alloc;
 
+#[cfg(feature = "runtime")]
+pub mod runtime;
+
+#[doc(hidden)]
+#[cfg(feature = "runtime")]
+#[macro_export]
+macro_rules! __sm_if_runtime {
+    ($($item:tt)*) => { $($item)* };
+}
+
+#[doc(hidden)]
+#[cfg(not(feature = "runtime"))]
+#[macro_export]
+macro_rules! __sm_if_runtime {
+    ($($item:tt)*) => {};
+}
+
 #[doc(hidden)]
 pub mod __private {
     pub use alloc::string::String;

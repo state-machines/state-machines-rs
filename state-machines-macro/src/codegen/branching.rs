@@ -123,6 +123,7 @@ pub fn methods(
     let outcome = outcome_name(machine, source, name);
     let generics = ctx_generics(machine);
     let can_name = format_ident!("can_{}", name);
+    let select_name = format_ident!("__sm_select_{}", name);
     let async_ = maybe_async(machine.async_mode);
     let await_ = maybe_await(machine.async_mode);
     let (param, can_param, payload_ref, payload_arg) =
@@ -182,9 +183,10 @@ pub fn methods(
         let enabled = condition(machine, &edge.selection, &payload_ref);
         let history = super::history::condition(edge);
         let target = &edge.target;
+        let external = !edge.internal;
         choices.push(quote! {
             if #history && (#enabled) {
-                return self.#helper(#payload_arg) #await_.map(#outcome::#target);
+                return self.#helper(#payload_arg) #await_.map(|machine| (#outcome::#target(machine), #external));
             }
         });
     }
@@ -199,7 +201,10 @@ pub fn methods(
     });
     Ok(quote! {
         #( #helpers )*
-        pub #async_ fn #name(mut self #param) -> Result<#outcome #generics, (Self, #error_ty)> {
+        pub #async_ fn #name(self #param) -> Result<#outcome #generics, (Self, #error_ty)> {
+            self.#select_name(#payload_arg) #await_.map(|(outcome, _)| outcome)
+        }
+        #async_ fn #select_name(mut self #param) -> Result<(#outcome #generics, bool), (Self, #error_ty)> {
             #( #event_guards )*
             #( #choices )*
             #no_match

@@ -171,6 +171,7 @@ pub fn generate(machine: &StateMachine) -> TokenStream {
                         _ => return Err((snapshot, ::state_machines::SnapshotError::UnknownState)),
                     };
                     Ok(Self {
+                        epoch: 0,
                         last_state: inner.state(),
                         inner: Some(inner),
                         completions: ::state_machines::__private::Vec::new(),

@@ -140,7 +140,7 @@ static NETWORK_AVAILABLE: AtomicBool = AtomicBool::new(true);
 static PREP_SHOULD_FAIL: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum DroneError {
+pub enum DroneError {
     PreparationFailed,
 }
 
