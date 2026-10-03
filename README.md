@@ -61,6 +61,11 @@ While learning Rust, I chose to port something familiar and widely used—so I c
 
 **Introspection** – `schema()` metadata with JSON and Mermaid rendering (via the `inspect` feature, implied by `std`)
 
+**Graph Validation** – `schema().validate()` reports invalid references and ambiguous
+transitions as errors, and unreachable states/dead ends as warnings. The CLI's
+`validate` command runs these checks too. Reachability is structural, not a
+prediction of user guards.
+
 ---
 
 ## Quick Start

@@ -13,6 +13,7 @@
 use crate::codegen::utils::to_snake_case;
 use crate::types::*;
 use proc_macro2::Span;
+use std::collections::HashSet;
 use syn::Result;
 
 /// Return a spanned validation error when `cond` holds.
@@ -106,7 +107,13 @@ impl StateMachine {
 
         // Validate events and transitions
 
+        let mut event_names = HashSet::new();
         for event in &self.events {
+            err_if(
+                !event_names.insert(event.name.to_string()),
+                event.name.span(),
+                "duplicate event",
+            )?;
             // Validate event naming convention
             // Events must be in snake_case to generate proper method names
             let event_name = event.name.to_string();
@@ -201,6 +208,17 @@ impl StateMachine {
             }
         }
 
+        for state in &self.states {
+            let mut events = HashSet::new();
+            for edge in self.transition_graph.outgoing(state).into_iter().flatten() {
+                err_if(
+                    !events.insert(edge.event.to_string()),
+                    edge.event.span(),
+                    "ambiguous transition: event has multiple transitions from the same leaf state",
+                )?;
+            }
+        }
+
         // Validate global callback filters
 
         // Every state referenced in a `from`/`to` filter must be a declared
@@ -244,6 +262,20 @@ mod tests {
 
     fn validate(tokens: proc_macro2::TokenStream) -> Result<()> {
         syn::parse2::<StateMachine>(tokens)?.validate()
+    }
+
+    #[test]
+    fn rejects_ambiguous_graphs() {
+        for events in [
+            quote! { go { transition: { from: A, to: B } } go { transition: { from: B, to: A } } },
+            quote! { go { transition: { from: A, to: B } transition: { from: A, to: A } } },
+        ] {
+            let err = validate(quote! {
+                name: Test, initial: A, states: [A, B], events { #events }
+            })
+            .unwrap_err();
+            assert!(err.to_string().contains("duplicate") || err.to_string().contains("ambiguous"));
+        }
     }
 
     #[test]

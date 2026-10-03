@@ -6,7 +6,10 @@ use core::fmt::Debug;
 pub mod schema;
 
 #[cfg(feature = "inspect")]
-pub use schema::{EventSchema, Inspectable, MachineSchema, SuperstateSchema, TransitionSchema};
+pub use schema::{
+    DiagnosticLevel, EventSchema, Inspectable, MachineSchema, SchemaDiagnostic, SuperstateSchema,
+    TransitionSchema,
+};
 
 /// Marker trait for states used by the generated state machines.
 pub trait MachineState: Copy + Eq + Debug + Send + Sync + 'static {}

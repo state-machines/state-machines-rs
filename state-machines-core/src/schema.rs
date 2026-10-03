@@ -8,6 +8,7 @@ extern crate alloc;
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use alloc::{collections::BTreeSet, format};
 use serde::{Deserialize, Serialize};
 
 fn is_false(b: &bool) -> bool {
@@ -77,7 +78,149 @@ pub trait Inspectable {
     fn schema() -> MachineSchema;
 }
 
+/// Structural graph diagnostics do not evaluate user guards or callbacks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiagnosticLevel {
+    Error,
+    Warning,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchemaDiagnostic {
+    pub level: DiagnosticLevel,
+    pub message: String,
+}
+
 impl MachineSchema {
+    /// Validate references and determinism, and lint structural reachability.
+    ///
+    /// Dead ends and unreachable states are warnings: both can be intentional.
+    /// Guard-dependent reachability cannot be decided from a schema.
+    pub fn validate(&self) -> Vec<SchemaDiagnostic> {
+        let mut diagnostics = Vec::new();
+        let mut report = |level, message| {
+            diagnostics.push(SchemaDiagnostic { level, message });
+        };
+        let mut names = BTreeSet::new();
+        for state in &self.states {
+            if !names.insert(state) {
+                report(DiagnosticLevel::Error, format!("duplicate state `{state}`"));
+            }
+        }
+        if !self.states.contains(&self.initial) {
+            report(
+                DiagnosticLevel::Error,
+                format!("unknown initial state `{}`", self.initial),
+            );
+        }
+        for superstate in &self.superstates {
+            if !names.insert(&superstate.name) {
+                report(
+                    DiagnosticLevel::Error,
+                    format!("duplicate state `{}`", superstate.name),
+                );
+            }
+            if !superstate.descendants.contains(&superstate.initial)
+                || !self.states.contains(&superstate.initial)
+            {
+                report(
+                    DiagnosticLevel::Error,
+                    format!("invalid initial child of `{}`", superstate.name),
+                );
+            }
+            for child in &superstate.descendants {
+                if !self.states.contains(child) {
+                    report(DiagnosticLevel::Error, format!("unknown child `{child}`"));
+                }
+            }
+        }
+        let expand = |name: &String| -> Vec<&String> {
+            if let Some(superstate) = self.superstates.iter().find(|s| &s.name == name) {
+                superstate.descendants.iter().collect()
+            } else {
+                self.states.iter().filter(|s| *s == name).collect()
+            }
+        };
+        let mut events = BTreeSet::new();
+        let mut edges = Vec::new();
+        for event in &self.events {
+            if !events.insert(&event.name) {
+                report(
+                    DiagnosticLevel::Error,
+                    format!("duplicate event `{}`", event.name),
+                );
+            }
+            if event.transitions.is_empty() {
+                report(
+                    DiagnosticLevel::Error,
+                    format!("event `{}` has no transitions", event.name),
+                );
+            }
+            let mut sources = BTreeSet::new();
+            for transition in &event.transitions {
+                let target = self
+                    .superstates
+                    .iter()
+                    .find(|s| s.name == transition.target)
+                    .map_or(&transition.target, |s| &s.initial);
+                if !self.states.contains(target) {
+                    report(
+                        DiagnosticLevel::Error,
+                        format!("unknown target `{}`", transition.target),
+                    );
+                }
+                if transition.sources.is_empty() {
+                    report(
+                        DiagnosticLevel::Error,
+                        format!("event `{}` has an empty source set", event.name),
+                    );
+                }
+                for source in &transition.sources {
+                    let leaves = expand(source);
+                    if leaves.is_empty() {
+                        report(DiagnosticLevel::Error, format!("unknown source `{source}`"));
+                    }
+                    for leaf in leaves {
+                        if !sources.insert(leaf) {
+                            report(
+                                DiagnosticLevel::Error,
+                                format!("ambiguous event `{}` from `{leaf}`", event.name),
+                            );
+                        }
+                        edges.push((leaf, target));
+                    }
+                }
+            }
+        }
+        let mut reachable = BTreeSet::from([&self.initial]);
+        loop {
+            let before = reachable.len();
+            for &(source, target) in &edges {
+                if reachable.contains(source) {
+                    reachable.insert(target);
+                }
+            }
+            if reachable.len() == before {
+                break;
+            }
+        }
+        for state in &self.states {
+            if !reachable.contains(state) {
+                report(
+                    DiagnosticLevel::Warning,
+                    format!("unreachable state `{state}`"),
+                );
+            }
+            if !edges.iter().any(|(source, _)| *source == state) {
+                report(
+                    DiagnosticLevel::Warning,
+                    format!("dead-end state `{state}`"),
+                );
+            }
+        }
+        diagnostics
+    }
+
     /// Render the state machine as a Mermaid state diagram.
     pub fn to_mermaid(&self) -> String {
         use alloc::fmt::Write;
@@ -199,5 +342,46 @@ mod tests {
         let json = schema.to_json();
         let parsed: MachineSchema = serde_json::from_str(&json).unwrap();
         assert_eq!(schema, parsed);
+    }
+
+    #[test]
+    fn graph_validation() {
+        let mut schema = sample_schema();
+        assert_eq!(schema.validate(), []);
+        schema.states.push("Unused".into());
+        let warnings = schema.validate();
+        assert_eq!(warnings.len(), 2);
+        assert!(warnings.iter().all(|d| d.level == DiagnosticLevel::Warning));
+
+        let duplicate = schema.events[0].transitions[0].clone();
+        schema.events[0].transitions.push(duplicate);
+        schema.events[1].transitions[0].target = "Missing".into();
+        schema.initial = "Missing".into();
+        let errors: Vec<_> = schema
+            .validate()
+            .into_iter()
+            .filter(|d| d.level == DiagnosticLevel::Error)
+            .collect();
+        assert_eq!(errors.len(), 3);
+    }
+
+    #[test]
+    fn validates_expanded_superstate_sources() {
+        let mut schema = sample_schema();
+        schema.superstates.push(SuperstateSchema {
+            name: "Air".into(),
+            descendants: schema.states.clone(),
+            initial: schema.initial.clone(),
+        });
+        schema.events[0].transitions[0].sources = vec!["Air".into()];
+        schema.events[0].transitions.push(TransitionSchema {
+            sources: vec!["Vacuum".into()],
+            target: "Air".into(),
+            ..Default::default()
+        });
+        let diagnostics = schema.validate();
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].level, DiagnosticLevel::Error);
+        assert!(diagnostics[0].message.contains("ambiguous"));
     }
 }

@@ -18,7 +18,7 @@
 //! ```
 
 use clap::{Parser, Subcommand};
-use state_machines_core::schema::MachineSchema;
+use state_machines_core::schema::{DiagnosticLevel, MachineSchema};
 use std::io::{self, Read};
 
 #[derive(Parser)]
@@ -91,6 +91,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let json = read_input(input)?;
             match serde_json::from_str::<MachineSchema>(&json) {
                 Ok(schema) => {
+                    let diagnostics = schema.validate();
+                    for diagnostic in &diagnostics {
+                        eprintln!("{:?}: {}", diagnostic.level, diagnostic.message);
+                    }
+                    if diagnostics
+                        .iter()
+                        .any(|d| d.level == DiagnosticLevel::Error)
+                    {
+                        return Err("schema failed graph validation".into());
+                    }
                     println!("✓ Valid schema: {}", schema.name);
                     println!("  States: {}", schema.states.len());
                     println!("  Events: {}", schema.events.len());
