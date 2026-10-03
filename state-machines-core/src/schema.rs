@@ -54,6 +54,8 @@ pub struct SuperstateSchema {
 /// Serializable representation of an event.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EventSchema {
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub hierarchical: bool,
     pub name: String,
     pub transitions: Vec<TransitionSchema>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -184,6 +186,12 @@ impl MachineSchema {
         let mut events = BTreeSet::new();
         let mut edges = Vec::new();
         for event in &self.events {
+            if event.hierarchical && event.branching {
+                report(
+                    DiagnosticLevel::Error,
+                    "hierarchical and branching selection conflict".into(),
+                );
+            }
             if !events.insert(&event.name) {
                 report(
                     DiagnosticLevel::Error,
@@ -197,6 +205,7 @@ impl MachineSchema {
                 );
             }
             let mut sources = BTreeSet::new();
+            let mut declared_scopes = BTreeSet::new();
             let mut fallbacks = BTreeSet::new();
             for transition in &event.transitions {
                 if let Some(kind) = &transition.kind {
@@ -261,6 +270,12 @@ impl MachineSchema {
                     );
                 }
                 for source in &transition.sources {
+                    if event.hierarchical && !declared_scopes.insert(source) {
+                        report(
+                            DiagnosticLevel::Error,
+                            format!("ambiguous hierarchical scope `{source}`"),
+                        );
+                    }
                     let leaves = expand(source);
                     if leaves.is_empty() {
                         report(DiagnosticLevel::Error, format!("unknown source `{source}`"));
@@ -275,7 +290,7 @@ impl MachineSchema {
                         if transition.fallback {
                             fallbacks.insert(leaf);
                         }
-                        if !sources.insert(leaf) && !event.branching {
+                        if !sources.insert(leaf) && !event.branching && !event.hierarchical {
                             report(
                                 DiagnosticLevel::Error,
                                 format!("ambiguous event `{}` from `{leaf}`", event.name),

@@ -115,6 +115,11 @@ impl StateMachine {
         let mut event_names = HashSet::new();
         for event in &self.events {
             err_if(
+                event.hierarchical && event.branching,
+                event.name.span(),
+                "choose either hierarchical specificity or ordered branching",
+            )?;
+            err_if(
                 !event_names.insert(event.name.to_string()),
                 event.name.span(),
                 "duplicate event",
@@ -279,10 +284,20 @@ impl StateMachine {
                     || (edges.len() > 1 && edges.iter().all(|edge| edge.history.is_none()))
                 {
                     err_if(
-                        !event.branching,
+                        !event.branching && !event.hierarchical,
                         event.name.span(),
                         "ambiguous transition: use `branching: true` for guarded choices",
                     )?;
+                }
+                if event.hierarchical {
+                    let mut scopes = HashSet::new();
+                    for edge in &candidates {
+                        err_if(
+                            !scopes.insert(edge.scope.to_string()),
+                            edge.scope.span(),
+                            "hierarchical handlers at the same scope are ambiguous",
+                        )?;
+                    }
                 }
                 if event.branching {
                     for (index, edge) in candidates.iter().enumerate() {

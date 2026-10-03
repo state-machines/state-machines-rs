@@ -131,9 +131,11 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
                 quote! { ::core::option::Option::None }
             };
             let branching = event.branching;
+            let hierarchical = event.hierarchical;
 
             quote! {
                 ::state_machines::EventSchema {
+                    hierarchical: #hierarchical,
                     name: ::state_machines::__private::String::from(#event_name),
                     transitions: ::state_machines::__private::vec![
                         #( #transition_schemas, )*

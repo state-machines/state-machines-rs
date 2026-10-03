@@ -404,6 +404,7 @@ pub fn parse_events(input: &ParseBuffer<'_>) -> Result<Vec<Event>> {
         let mut hooks = Hooks::default();
         let mut payload = None;
         let mut branching = false;
+        let mut hierarchical = false;
 
         // Parse each field in the event block
         while !content.is_empty() {
@@ -421,6 +422,7 @@ pub fn parse_events(input: &ParseBuffer<'_>) -> Result<Vec<Event>> {
                     payload = Some(content.parse()?);
                 }
                 "branching" => branching = content.parse::<syn::LitBool>()?.value,
+                "hierarchical" => hierarchical = content.parse::<syn::LitBool>()?.value,
                 other => {
                     if !hooks.parse_field(other, &content)? {
                         return Err(unexpected_key(&key));
@@ -432,6 +434,7 @@ pub fn parse_events(input: &ParseBuffer<'_>) -> Result<Vec<Event>> {
         }
 
         events.push(Event {
+            hierarchical,
             name,
             payload,
             transitions,

@@ -33,6 +33,7 @@ fn sample_schema() -> MachineSchema {
                 on_error: vec![],
                 payload: None,
                 branching: false,
+                hierarchical: false,
             },
             EventSchema {
                 name: "repressurize".into(),
@@ -59,6 +60,7 @@ fn sample_schema() -> MachineSchema {
                 on_error: vec![],
                 payload: None,
                 branching: false,
+                hierarchical: false,
             },
         ],
         async_mode: false,

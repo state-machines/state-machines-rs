@@ -21,6 +21,30 @@ pub fn groups<'a>(machine: &'a StateMachine, state: &Ident) -> Vec<Vec<&'a Trans
             groups.push(vec![edge]);
         }
     }
+    for group in &mut groups {
+        let event = machine
+            .events
+            .iter()
+            .find(|event| event.name == group[0].event)
+            .unwrap();
+        if event.hierarchical {
+            let path = machine
+                .hierarchy
+                .ancestors
+                .get(&state.to_string())
+                .cloned()
+                .unwrap_or_default();
+            group.sort_by_key(|edge| {
+                std::cmp::Reverse(if &edge.scope == state {
+                    path.len() + 1
+                } else {
+                    path.iter()
+                        .position(|scope| scope == &edge.scope)
+                        .map_or(0, |depth| depth + 1)
+                })
+            });
+        }
+    }
     groups
 }
 

@@ -1424,6 +1424,16 @@ History records successful re-entry exits too. Omit `kind` to retain legacy
 common-ancestor-preserving behavior; external leaf self-transitions still reset
 the leaf. Callback failures recover old control state/data, not external effects.
 
+### Hierarchical event precedence
+
+Set event `hierarchical: true` to select the deepest enabled declared source
+first, falling back through ancestors when child guards reject. Declaration
+order does not let a parent shadow a child. A guardless parent handler is a
+natural fallback. Same-scope overlaps are rejected; `hierarchical` and ordered
+`branching` are mutually exclusive. Event guards run once, and only the selected
+transition runs callbacks. Both typestate outcomes and dynamic dispatch share
+this policy; events without this option retain existing behavior.
+
 - **[API Docs](https://docs.rs/state-machines)** – Full API reference
 - **[Crates.io](https://crates.io/crates/state-machines)** – Published crate versions
 - **[GitHub](https://github.com/state-machines/state-machines-rs)** – Source code and issues
