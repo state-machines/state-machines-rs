@@ -1,4 +1,5 @@
 use state_machines::state_machine;
+use std::assert_matches;
 use std::cell::RefCell;
 
 #[derive(Debug, Default)]
@@ -48,7 +49,7 @@ fn startup_is_explicit_ordered_and_fallible() {
     .initialize()
     .unwrap_err();
     assert_eq!(*machine.ctx.log.borrow(), ["region", "idle"]);
-    assert!(matches!(error, state_machines::EventError::Callback(_)));
+    assert_matches!(error, state_machines::EventError::Callback(_));
     assert!(
         !DynamicStartup::initialize(Context::default())
             .unwrap()

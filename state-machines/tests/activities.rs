@@ -3,6 +3,7 @@ use state_machines::{
     runtime::{InvokeFailure, QueueError, RunError, Runner},
     state_machine,
 };
+use std::assert_matches;
 use std::{
     cell::{Cell, RefCell},
     future::Future,
@@ -112,7 +113,7 @@ fn wait_for_work_registers_real_wakers_without_busy_polling() {
         control.ready.set(true);
         control.waker.borrow().as_ref().unwrap().wake_by_ref();
         assert_eq!(wake_count.0.load(Ordering::Relaxed), 1);
-        assert!(matches!(wait.as_mut().poll(&mut cx), Poll::Ready(Ok(()))));
+        assert_matches!(wait.as_mut().poll(&mut cx), Poll::Ready(Ok(())));
     }
     assert_eq!(control.drops.get(), 1);
     assert_eq!(pollster::block_on(runner.drain(1)), Ok(1));
@@ -129,7 +130,7 @@ fn mailbox_wakes_a_waiting_runner_and_backpressure_retains_future() {
         assert!(wait.as_mut().poll(&mut cx).is_pending());
         sink.enqueue(ParentEvent::Heartbeat).unwrap();
         assert_eq!(woken.0.load(Ordering::Relaxed), 1);
-        assert!(matches!(wait.as_mut().poll(&mut cx), Poll::Ready(Ok(()))));
+        assert_matches!(wait.as_mut().poll(&mut cx), Poll::Ready(Ok(())));
     }
     let control = Rc::new(Control::default());
     let error = runner.invoke_future(Activity(control.clone())).unwrap_err();
@@ -179,10 +180,7 @@ fn child_channel_routes_completion_and_closes_after_done() {
     assert_eq!(pollster::block_on(runner.drain(2)), Ok(1));
     assert_eq!(completions.get(), 1);
     assert_eq!(runner.machine().current_state(), ParentState::Success);
-    assert!(matches!(
-        sink.enqueue(ChildEvent::Finish),
-        Err(QueueError::Closed(_))
-    ));
+    assert_matches!(sink.enqueue(ChildEvent::Finish), Err(QueueError::Closed(_)));
 }
 #[test]
 fn child_cancels_on_parent_exit_and_rejection_preserves_child() {
@@ -197,10 +195,7 @@ fn child_cancels_on_parent_exit_and_rejection_preserves_child() {
         .unwrap();
     runner.raise(ParentEvent::Reset).unwrap();
     assert_eq!(pollster::block_on(runner.drain(2)), Ok(1));
-    assert!(matches!(
-        sink.enqueue(ChildEvent::Finish),
-        Err(QueueError::Closed(_))
-    ));
+    assert_matches!(sink.enqueue(ChildEvent::Finish), Err(QueueError::Closed(_)));
     let child = Runner::new(DynamicChild::new(()), 1);
     let sink = child.sink();
     let error = runner
@@ -209,10 +204,7 @@ fn child_cancels_on_parent_exit_and_rejection_preserves_child() {
     assert_eq!(error.reason, InvokeFailure::ZeroBudget);
     sink.enqueue(ChildEvent::Finish).unwrap();
     drop(error.child);
-    assert!(matches!(
-        sink.enqueue(ChildEvent::Finish),
-        Err(QueueError::Closed(_))
-    ));
+    assert_matches!(sink.enqueue(ChildEvent::Finish), Err(QueueError::Closed(_)));
 }
 #[test]
 fn child_dispatch_failure_maps_to_exactly_one_error_event() {
@@ -280,7 +272,7 @@ fn child_batches_yield_and_child_mailbox_wakes_parent() {
         assert!(woken.0.load(Ordering::Relaxed) > 0);
         // The first batch cannot spin through the second event in the same poll.
         assert!(wait.as_mut().poll(&mut cx).is_pending());
-        assert!(matches!(wait.as_mut().poll(&mut cx), Poll::Ready(Ok(()))));
+        assert_matches!(wait.as_mut().poll(&mut cx), Poll::Ready(Ok(())));
     }
     assert_eq!(pollster::block_on(runner.drain(1)), Ok(1));
     assert_eq!(runner.machine().current_state(), ParentState::Success);

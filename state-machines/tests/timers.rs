@@ -3,6 +3,7 @@ use state_machines::{
     runtime::{Clock, ClockError, Runner, ScheduleError},
     state_machine,
 };
+use std::assert_matches;
 use std::{cell::Cell, rc::Rc};
 
 struct VirtualClock(Cell<u64>);
@@ -89,7 +90,7 @@ fn cancellation_backpressure_and_errors_preserve_owned_payloads() {
     let rejected = runner
         .schedule_after(&clock, 1, resource(&drops))
         .unwrap_err();
-    assert!(matches!(rejected, ScheduleError::Full(_)));
+    assert_matches!(rejected, ScheduleError::Full(_));
     assert_eq!(drops.get(), 0);
     drop(rejected.into_event());
     assert!(runner.cancel_timer(id));
@@ -103,17 +104,17 @@ fn cancellation_backpressure_and_errors_preserve_owned_payloads() {
     assert_eq!(pollster::block_on(runner.drain(1)), Ok(1));
     assert_eq!(drops.get(), 3);
     clock.0.set(u64::MAX);
-    assert!(matches!(
+    assert_matches!(
         runner.schedule_after(&clock, 1, resource(&drops)),
         Err(ScheduleError::Overflow(_))
-    ));
+    );
     runner.tick(&clock).unwrap();
     clock.0.set(1);
     assert_eq!(runner.tick(&clock), Err(ClockError::Backwards));
-    assert!(matches!(
+    assert_matches!(
         runner.schedule_after(&clock, 1, resource(&drops)),
         Err(ScheduleError::Backwards(_))
-    ));
+    );
 }
 #[test]
 fn closing_runner_releases_queued_resources_even_with_live_sink() {

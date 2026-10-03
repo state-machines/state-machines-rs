@@ -1,6 +1,7 @@
 #![cfg(feature = "async")]
 
 use state_machines::{DynamicError, state_machine};
+use std::assert_matches;
 use std::{
     future::Future,
     pin::pin,
@@ -31,12 +32,12 @@ fn cancellation_has_an_explicit_non_panicking_poison_contract() {
     let mut machine = DynamicInterruptible::new(());
     {
         let mut future = pin!(machine.handle(InterruptibleEvent::Wait));
-        assert!(matches!(
+        assert_matches!(
             future
                 .as_mut()
                 .poll(&mut Context::from_waker(Waker::noop())),
             Poll::Pending
-        ));
+        );
     }
     assert!(machine.is_poisoned());
     assert_eq!(machine.current_state(), InterruptibleState::Ready);
@@ -46,13 +47,13 @@ fn cancellation_has_an_explicit_non_panicking_poison_contract() {
     assert!(!pollster::block_on(
         machine.is_available_event(&InterruptibleEvent::Wait)
     ));
-    assert!(matches!(
+    assert_matches!(
         pollster::block_on(machine.handle(InterruptibleEvent::Wait)),
         Err(DynamicError::Poisoned {
             from: "Ready",
             event: "wait"
         })
-    ));
+    );
     #[cfg(feature = "serde")]
     assert!(machine.try_into_snapshot().unwrap_err().is_poisoned());
 }
@@ -85,9 +86,9 @@ mod unwind {
             .is_err()
         );
         assert!(machine.is_poisoned());
-        assert!(matches!(
+        assert_matches!(
             machine.handle(PanicMachineEvent::Go),
             Err(DynamicError::Poisoned { .. })
-        ));
+        );
     }
 }

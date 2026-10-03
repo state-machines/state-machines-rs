@@ -1,4 +1,5 @@
 use state_machines::{DynamicError, state_machine};
+use std::assert_matches;
 use std::cell::Cell;
 #[derive(Debug, Default)]
 pub struct Policy {
@@ -46,10 +47,10 @@ fn automatic_callback_failure_recovers_source_without_silent_fallback() {
         fail: true,
         ..Policy::default()
     });
-    assert!(matches!(
+    assert_matches!(
         machine.handle(AutomaticEvent::Begin),
         Err(DynamicError::CallbackFailed { .. })
-    ));
+    );
     assert_eq!(machine.current_state(), AutomaticState::Checking);
     assert!(!machine.is_poisoned());
 }

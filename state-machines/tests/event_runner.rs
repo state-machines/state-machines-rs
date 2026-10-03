@@ -3,6 +3,7 @@ use state_machines::{
     runtime::{QueueError, RunError, Runner},
     state_machine,
 };
+use std::assert_matches;
 use std::sync::atomic::{AtomicBool, Ordering};
 static INTERNAL: AtomicBool = AtomicBool::new(true);
 #[derive(Debug)]
@@ -57,7 +58,7 @@ fn raised_events_have_priority_and_backpressure_preserves_ownership() {
         .enqueue(QueuedEvent::Load(Request(Some("full".into()))))
         .unwrap_err()
         .into_event();
-    assert!(matches!(event, QueuedEvent::Load(Request(Some(value))) if value == "full"));
+    assert_matches!(event, QueuedEvent::Load(Request(Some(value))) if value == "full");
     assert_eq!(
         pollster::block_on(runner.drain(1)),
         Err(RunError::StepLimit { limit: 1 })
@@ -65,10 +66,7 @@ fn raised_events_have_priority_and_backpressure_preserves_ownership() {
     assert_eq!(runner.machine().current_state(), QueuedState::Ready);
     assert_eq!(pollster::block_on(runner.drain(2)), Ok(1));
     drop(runner);
-    assert!(matches!(
-        sink.raise(QueuedEvent::Ready),
-        Err(QueueError::Closed(_))
-    ));
+    assert_matches!(sink.raise(QueuedEvent::Ready), Err(QueueError::Closed(_)));
 }
 #[test]
 fn internal_dispatch_preserves_epoch_and_external_self_reentry_changes_it() {
@@ -115,12 +113,12 @@ mod callbacks {
         *signals.borrow_mut() = Some(runner.sink());
         runner.enqueue(RaisedEvent::Begin).unwrap();
         runner.enqueue(RaisedEvent::Begin).unwrap();
-        assert!(matches!(
+        assert_matches!(
             pollster::block_on(runner.drain(3)),
             Err(RunError::Dispatch(
                 state_machines::DynamicError::InvalidTransition { from: "Done", .. }
             ))
-        ));
+        );
         assert_eq!(runner.machine().current_state(), RaisedState::Done);
     }
 }
@@ -129,10 +127,10 @@ fn rejected_event_does_not_lose_the_remaining_queue() {
     let mut runner = Runner::new(DynamicQueued::new(()), 2);
     runner.enqueue(QueuedEvent::Heartbeat).unwrap();
     runner.enqueue(QueuedEvent::Ready).unwrap();
-    assert!(matches!(
+    assert_matches!(
         pollster::block_on(runner.drain(2)),
         Err(RunError::Dispatch(_))
-    ));
+    );
     assert_eq!(runner.pending(), 1);
     assert_eq!(pollster::block_on(runner.drain(2)), Ok(1));
 }
