@@ -1680,6 +1680,22 @@ cargo build --manifest-path tests/feature_split/Cargo.toml
 
 CI tests, lints and runs these examples separately from the release workspace.
 
+The existing programs include these runnable statechart scenarios:
+
+| Program (`-p`) | New scenario |
+| --- | --- |
+| `basic_transitions` | Explicit startup, optional initial data and owned entry factories without `Clone`/`Default` on the resource |
+| `traffic_light` | Logical-clock deadlines, composite timer retention, raised events, owned deferral/recall and external reset |
+| `hierarchical_thinking` | Local/external domains, child-first fallback, eventless boot and bottom-up final-composite completion |
+| `async_patterns` | Owned child activity, mailbox wakeups, sibling retention, reset cancellation and ownership-preserving retry |
+| `dynamic_dispatch_when` | Native named regions, owned common routes, partial fork errors, unified snapshots, independent deep/shallow history and one-shot join |
+
+These scenarios use assertions in the executable and reuse/reset machines for
+repeat passes; they do not duplicate the crate's unit tests. Async simulated I/O
+yields cooperatively and deadline examples use logical ticks, not sleeps.
+`callbacks_lifecycle` and `guards_and_validation` retain their focused callback/
+guard walkthroughs; `no_std_flight` remains an allocation-free embedded library.
+
 ## Contributing
 
 Contributions are welcome! This is a learning project, so:

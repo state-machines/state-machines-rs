@@ -67,8 +67,9 @@ impl<C, S> FlightController<C, S> {
 // anywhere inside the superstate: it is default-initialised when entering
 // `Armed`, carried across `verify` (ChecklistComplete -> EnginesPrimed), and
 // cleared when `launch` or `abort` leaves the superstate. While inside, the
-// guaranteed accessors `armed_data()` / `armed_data_mut()` are available on
-// every substate, alongside each leaf's own `*_data()` accessors.
+// typed accessors `armed_data()` / `armed_data_mut()` are available on every
+// substate, alongside each leaf's own accessors. They return Option: construction
+// and restoration may leave data absent until it is explicitly installed/entered.
 
 // Note: The typestate pattern requires consuming and returning the machine at each step.
 // The old runtime-based helper functions have been removed as they don't fit this pattern.
