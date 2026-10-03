@@ -227,37 +227,45 @@ impl<C, S> LifeSupportSystem<C, S> {
 impl<C> LifeSupportSystem<C, O2Generation> {
     /// Access O2 generation data (only available in O2Generation state)
     fn display_o2_status(&self) {
-        let data = self.o2_generation_data();
+        let data = self.o2_generation_data().expect("initialized on entry");
         println!("  O2 Production: {:.1} L/min", data.production_rate);
     }
 
     /// Modify O2 data
     fn set_production_rate(&mut self, rate: f32) {
-        self.o2_generation_data_mut().production_rate = rate;
+        self.o2_generation_data_mut()
+            .expect("initialized on entry")
+            .production_rate = rate;
     }
 }
 
 impl<C> LifeSupportSystem<C, CO2Scrubbing> {
     /// Access CO2 scrubbing data (only available in CO2Scrubbing state)
     fn display_co2_status(&self) {
-        let data = self.co2_scrubbing_data();
+        let data = self.co2_scrubbing_data().expect("initialized on entry");
         println!("  CO2 Scrubbing Efficiency: {:.1}%", data.scrub_efficiency);
     }
 
     fn set_scrub_efficiency(&mut self, efficiency: f32) {
-        self.co2_scrubbing_data_mut().scrub_efficiency = efficiency;
+        self.co2_scrubbing_data_mut()
+            .expect("initialized on entry")
+            .scrub_efficiency = efficiency;
     }
 }
 
 impl<C> LifeSupportSystem<C, PressureRegulation> {
     /// Access pressure data (only available in PressureRegulation state)
     fn display_pressure_status(&self) {
-        let data = self.pressure_regulation_data();
+        let data = self
+            .pressure_regulation_data()
+            .expect("initialized on entry");
         println!("  Target Pressure: {:.1} kPa", data.target_pressure);
     }
 
     fn set_target_pressure(&mut self, pressure: f32) {
-        self.pressure_regulation_data_mut().target_pressure = pressure;
+        self.pressure_regulation_data_mut()
+            .expect("initialized on entry")
+            .target_pressure = pressure;
     }
 }
 

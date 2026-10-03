@@ -54,20 +54,20 @@ fn state_specific_data_accessors_work() {
     assert_eq!(machine.state_data_configured().unwrap().version, 0);
 
     // State-specific data accessor provides guaranteed access (state-named method)
-    let config_data: &ConfigData = machine.configured_data();
+    let config_data: &ConfigData = machine.configured_data().unwrap();
     assert_eq!(config_data.version, 0);
 
     // Mutable accessor also works
-    let config_data_mut: &mut ConfigData = machine.configured_data_mut();
+    let config_data_mut: &mut ConfigData = machine.configured_data_mut().unwrap();
     config_data_mut.version = 42;
 
     // Verify the mutation worked
-    assert_eq!(machine.configured_data().version, 42);
+    assert_eq!(machine.configured_data().unwrap().version, 42);
     assert_eq!(machine.state_data_configured().unwrap().version, 42);
     let machine = machine.heartbeat().expect("internal transition");
-    assert_eq!(machine.configured_data().version, 42);
+    assert_eq!(machine.configured_data().unwrap().version, 42);
     let machine = machine.reconfigure().expect("external self-transition");
-    assert_eq!(machine.configured_data().version, 0);
+    assert_eq!(machine.configured_data().unwrap().version, 0);
 
     // The key is that these methods ONLY exist on DataMachine<C, Configured>
     // and NOT on DataMachine<C, Idle> or DataMachine<C, Active>
@@ -80,14 +80,14 @@ fn data_persists_across_transitions() {
     let mut machine = machine.configure().expect("configure");
 
     // Modify the data
-    machine.configured_data_mut().version = 100;
-    assert_eq!(machine.configured_data().version, 100);
+    machine.configured_data_mut().unwrap().version = 100;
+    assert_eq!(machine.configured_data().unwrap().version, 100);
 
     // Transition to Active state
     let machine = machine.activate().expect("activate");
 
     // Active state has its own data (initialized with default)
-    assert_eq!(machine.active_data().connection_id, 0);
+    assert_eq!(machine.active_data().unwrap().connection_id, 0);
 
     // Configured data should be cleared (not in that state anymore)
     assert!(machine.state_data_configured().is_none());

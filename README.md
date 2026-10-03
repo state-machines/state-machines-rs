@@ -524,7 +524,7 @@ fn main() {
     let sequence = sequence.enter_flight().unwrap();
 
     // Access state-specific data (guaranteed non-None)
-    let prep_data = sequence.launch_prep_data();
+    let prep_data = sequence.launch_prep_data().expect("initialized on entry");
     println!("Checklist complete: {}", prep_data.checklist_complete);
 
     // Move to Launching within Flight superstate
@@ -1390,6 +1390,14 @@ empty. `current_state()` is the last committed state, not a live state when
 poisoned. Replace the wrapper with a fresh/restored machine. Use
 `try_into_snapshot()` when interruption is possible; the legacy `into_snapshot()`
 panics on poison. Dropping an unpolled future does not poison the machine.
+
+### State-data accessor migration
+
+Typed `state_name_data()` / `state_name_data_mut()` now return `Option<&T>` /
+`Option<&mut T>`, just like dynamic accessors. This is an API change: initial
+construction and restore may legitimately leave active data absent, so being
+in the right state alone cannot guarantee data exists. Match on the option, or
+use `.expect("initialized on entry")` when your application enforces that invariant.
 
 - **[API Docs](https://docs.rs/state-machines)** – Full API reference
 - **[Crates.io](https://crates.io/crates/state-machines)** – Published crate versions

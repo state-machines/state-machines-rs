@@ -370,7 +370,7 @@ fn test_dynamic_state_data_with_typestate_conversion() {
     let typed = counter.into_running().unwrap();
 
     // Access data via typestate-specific accessor (guaranteed non-null)
-    assert_eq!(typed.running_data().count, 50);
+    assert_eq!(typed.running_data().unwrap().count, 50);
 
     // Convert back to dynamic
     let mut dynamic = typed.into_dynamic();

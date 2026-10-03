@@ -816,23 +816,22 @@ fn generate_storage_accessors(machine: &StateMachine) -> Result<Vec<TokenStream2
     Ok(accessors)
 }
 
-/// Generate state-specific guaranteed data accessors.
+/// Generate state-specific optional data accessors.
 ///
 /// For each state with associated data, we generate an impl block with
 /// a uniquely named accessor based on the state name:
 /// ```rust,ignore
 /// impl<C> Machine<C, LaunchPrep> {
-///     pub fn launch_prep_data(&self) -> &PrepData {
-///         self.__state_data_launch_prep.as_ref().unwrap()
+///     pub fn launch_prep_data(&self) -> Option<&PrepData> {
+///         self.__state_data_launch_prep.as_ref()
 ///     }
-///     pub fn launch_prep_data_mut(&mut self) -> &mut PrepData {
-///         self.__state_data_launch_prep.as_mut().unwrap()
+///     pub fn launch_prep_data_mut(&mut self) -> Option<&mut PrepData> {
+///         self.__state_data_launch_prep.as_mut()
 ///     }
 /// }
 /// ```
 ///
-/// These methods provide guaranteed access to state data without Option,
-/// as we know the data exists when in that specific state.
+/// State membership restricts access, but constructors/restore can leave data absent.
 /// The method names are unique per state to avoid conflicts.
 fn generate_state_specific_accessors(machine: &StateMachine) -> Result<Vec<TokenStream2>> {
     let mut impls = Vec::new();
@@ -849,8 +848,8 @@ fn generate_state_specific_accessors(machine: &StateMachine) -> Result<Vec<Token
         let data_method = syn::Ident::new(&format!("{}_data", snake), state_name.span());
         let data_mut_method = syn::Ident::new(&format!("{}_data_mut", snake), state_name.span());
 
-        // A leaf's guaranteed accessors live on that leaf's impl. Superstate
-        // data is guaranteed while inside the superstate, so its accessors
+        // A leaf's accessors live on that leaf's impl. Superstate
+        // data is accessible while inside the superstate, so its accessors
         // are emitted on every descendant leaf instead — the superstate
         // marker itself is never a machine's state parameter.
         let impl_states = if machine.hierarchy.is_superstate(state_name) {
@@ -865,18 +864,16 @@ fn generate_state_specific_accessors(machine: &StateMachine) -> Result<Vec<Token
                 impl #generics #machine_name #params {
                     /// Access the state-associated data for this specific state.
                     ///
-                    /// This method is guaranteed to return a reference because
-                    /// the data is always present when in this state.
-                    pub fn #data_method(&self) -> &#ty {
-                        self.#field.as_ref().unwrap()
+                    /// Initial construction and restore may leave active data absent.
+                    pub fn #data_method(&self) -> ::core::option::Option<&#ty> {
+                        self.#field.as_ref()
                     }
 
                     /// Mutably access the state-associated data for this specific state.
                     ///
-                    /// This method is guaranteed to return a mutable reference because
-                    /// the data is always present when in this state.
-                    pub fn #data_mut_method(&mut self) -> &mut #ty {
-                        self.#field.as_mut().unwrap()
+                    /// Initial construction and restore may leave active data absent.
+                    pub fn #data_mut_method(&mut self) -> ::core::option::Option<&mut #ty> {
+                        self.#field.as_mut()
                     }
                 }
             };

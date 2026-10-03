@@ -82,18 +82,18 @@ fn superstate_data_lifecycle() {
 
     // Entering the superstate initialises its data
     let mut runner = runner.begin().expect("begin");
-    assert_eq!(runner.mission_data().entries, 0);
+    assert_eq!(runner.mission_data().unwrap().entries, 0);
 
     // Mutations survive intra-superstate transitions in both directions
-    runner.mission_data_mut().entries = 3;
+    runner.mission_data_mut().unwrap().entries = 3;
     let runner = runner.execute().expect("execute");
-    assert_eq!(runner.mission_data().entries, 3);
+    assert_eq!(runner.mission_data().unwrap().entries, 3);
     // Leaf data of the target state is freshly initialised alongside
-    assert_eq!(runner.executing_data().step, 0);
+    assert_eq!(runner.executing_data().unwrap().step, 0);
 
     let mut runner = runner.replan().expect("replan");
-    assert_eq!(runner.mission_data().entries, 3);
-    runner.mission_data_mut().entries += 1;
+    assert_eq!(runner.mission_data().unwrap().entries, 3);
+    runner.mission_data_mut().unwrap().entries += 1;
 
     // Leaving the superstate clears its data
     let runner = runner.finish().expect("finish");
@@ -114,16 +114,16 @@ fn superstate_data_lifecycle() {
         panic!("shallow history restores the direct child");
     };
     assert_eq!(
-        runner.executing_data().step,
+        runner.executing_data().unwrap().step,
         0,
         "history restores control state, not old data"
     );
-    runner.mission_data_mut().entries = 9;
+    runner.mission_data_mut().unwrap().entries = 9;
 
     // Failed exits must not replace remembered Verifying with Executing.
     FAIL_PAUSE.store(true, Ordering::SeqCst);
     let (runner, _) = runner.pause().unwrap_err();
-    assert_eq!(runner.mission_data().entries, 9);
+    assert_eq!(runner.mission_data().unwrap().entries, 9);
     let runner = {
         #[cfg(feature = "serde")]
         {
@@ -192,13 +192,16 @@ mod initial_inside_superstate {
     fn initial_state_starts_without_data_like_leaf_states() {
         // Constructors never require Default: storage starts as None even
         // when the initial state sits inside a data-carrying superstate.
-        let runner = PreloadedRunner::new(());
+        let mut runner = PreloadedRunner::new(());
         assert!(runner.state_data_mission().is_none());
+        assert!(runner.mission_data().is_none());
+        assert!(runner.mission_data_mut().is_none());
 
         // An intra-superstate transition from the initial state keeps the
         // (still absent) data absent rather than conjuring a default.
         let runner = runner.take_off().expect("take off");
         assert!(runner.state_data_mission().is_none());
+        assert!(runner.mission_data().is_none());
 
         let runner = runner.land().expect("land");
         assert!(runner.state_data_mission().is_none());
@@ -250,15 +253,15 @@ mod rollback_preserves_superstate_data {
 
         let runner = FallibleRunner::new(());
         let mut runner = runner.begin().expect("begin");
-        runner.mission_data_mut().entries = 7;
+        runner.mission_data_mut().unwrap().entries = 7;
 
         // The after callback fails on an intra-superstate transition; the
         // machine rolls back to Planning and must keep the mission data.
         let (runner, _err) = runner.execute().expect_err("after callback fails");
-        assert_eq!(runner.mission_data().entries, 7);
+        assert_eq!(runner.mission_data().unwrap().entries, 7);
 
         FAIL_AFTER.store(false, Ordering::SeqCst);
         let runner = runner.execute().expect("execute succeeds now");
-        assert_eq!(runner.mission_data().entries, 7);
+        assert_eq!(runner.mission_data().unwrap().entries, 7);
     }
 }
