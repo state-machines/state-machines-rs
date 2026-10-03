@@ -459,14 +459,30 @@ fn generate_transition_method(
         #core_path::GuardError::with_kind(callback_name, stringify!(#event_name), err.kind)
     });
 
+    // Cleanup is infallible and runs on the recovered source machine. It
+    // cannot replace the original error or silently claim an external
+    // transaction was rolled back.
+    let failure = |owner: TokenStream2, error: TokenStream2| {
+        let notifications = edge.hooks.on_error.iter().map(|callback| {
+            quote! { let (): () = failed_machine.#callback(&failure) #maybe_await; }
+        });
+        quote! {
+            let mut failed_machine = #owner;
+            let failure = #error;
+            #( #notifications )*
+            return ::core::result::Result::Err((failed_machine, failure));
+        }
+    };
+
     // `guards` reject when they return false, `unless` when they return true.
     let guard_check = |guard: &Ident, reject_when: TokenStream2| {
         let guard_error = wrap_guard_error(quote! {
             #core_path::GuardError::new(stringify!(#guard), stringify!(#event_name))
         });
+        let fail = failure(quote! { self }, guard_error);
         quote! {
             if #reject_when self.#guard(&self.ctx #guard_args) #maybe_await {
-                return ::core::result::Result::Err((self, #guard_error));
+                #fail
             }
         }
     };
@@ -536,19 +552,20 @@ fn generate_transition_method(
         };
         let call = quote! { #receiver.#callback(#args) #maybe_await };
         if let Some(error_ty) = error_ty {
+            let fail = failure(
+                owner.clone(),
+                quote! {
+                    #core_path::EventError::callback(
+                        stringify!(#callback), stringify!(#event_name), source,
+                    )
+                },
+            );
             quote! {
                 let callback_result: ::core::result::Result<(), #error_ty> =
                     #core_path::FallibleCallbackReturn::into_result(#call);
                 if let Err(source) = callback_result {
                     #rollback
-                    return ::core::result::Result::Err((
-                        #owner,
-                        #core_path::EventError::callback(
-                            stringify!(#callback),
-                            stringify!(#event_name),
-                            source,
-                        ),
-                    ));
+                    #fail
                 }
             }
         } else {
@@ -565,6 +582,7 @@ fn generate_transition_method(
             rollback,
             owner,
         } = phase;
+        let fail = failure(owner.clone(), kind_error.clone());
         quote! {
             match #receiver.#callback(#core_path::AroundStage::#stage) #maybe_await {
                 #core_path::AroundOutcome::Proceed => {},
@@ -575,7 +593,7 @@ fn generate_transition_method(
                         #core_path::TransitionErrorKind::InvalidTransition => stringify!(#callback),
                     };
                     #rollback
-                    return ::core::result::Result::Err((#owner, #kind_error));
+                    #fail
                 }
             }
         }

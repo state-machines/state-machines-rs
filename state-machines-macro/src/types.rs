@@ -47,6 +47,7 @@ pub struct GlobalCallbacks {
     pub before: Vec<GlobalCallback>,
     pub after: Vec<GlobalCallback>,
     pub around: Vec<GlobalCallback>,
+    pub on_error: Vec<GlobalCallback>,
 }
 
 impl GlobalCallback {
@@ -153,6 +154,7 @@ pub struct Hooks {
     pub before: Vec<Ident>,
     pub after: Vec<Ident>,
     pub around: Vec<Ident>,
+    pub on_error: Vec<Ident>,
 }
 
 impl Hooks {
@@ -167,6 +169,7 @@ impl Hooks {
             before: concat(&self.before, &inner.before),
             after: concat(&self.after, &inner.after),
             around: concat(&self.around, &inner.around),
+            on_error: concat(&self.on_error, &inner.on_error),
         }
     }
 }

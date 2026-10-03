@@ -228,6 +228,7 @@ impl StateMachine {
             &self.callbacks.before,
             &self.callbacks.after,
             &self.callbacks.around,
+            &self.callbacks.on_error,
         ];
         for callback in buckets.iter().copied().flatten() {
             for filter in [&callback.from, &callback.to].into_iter().flatten() {

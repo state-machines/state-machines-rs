@@ -429,11 +429,12 @@ pub fn parse_global_callbacks(input: &ParseBuffer<'_>) -> Result<GlobalCallbacks
             "before_transition" => &mut callbacks.before,
             "after_transition" => &mut callbacks.after,
             "around_transition" => &mut callbacks.around,
+            "error_transition" => &mut callbacks.on_error,
             _ => {
                 return Err(unexpected_key_in(
                     &key,
                     "`callbacks`",
-                    "`before_transition`, `after_transition`, or `around_transition`",
+                    "`before_transition`, `after_transition`, `around_transition`, or `error_transition`",
                 ));
             }
         };
@@ -544,6 +545,7 @@ impl Hooks {
             "before" => &mut self.before,
             "after" => &mut self.after,
             "around" => &mut self.around,
+            "on_error" => &mut self.on_error,
             _ => return Ok(false),
         };
         *slot = parse_ident_list_value(input)?;
@@ -698,6 +700,9 @@ impl StateMachine {
                         edge_hooks
                             .around
                             .splice(0..0, matching_globals(&self.callbacks.around));
+                        edge_hooks
+                            .on_error
+                            .splice(0..0, matching_globals(&self.callbacks.on_error));
 
                         self.transition_graph.add_edge(
                             &actual_source,

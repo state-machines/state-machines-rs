@@ -66,6 +66,13 @@ transitions as errors, and unreachable states/dead ends as warnings. The CLI's
 `validate` command runs these checks too. Reachability is structural, not a
 prediction of user guards.
 
+**Failure Hooks** – Event/transition `on_error: [cleanup]` and global
+`callbacks: { error_transition [{ name: cleanup }] }` run once on the recovered
+source machine when a guard, around callback, or fallible callback rejects.
+Hooks take `&GuardError` (or `&EventError<E>` with `error: E`) and return `()`;
+async machines await them. They do not run for panics, cancellation, or invalid
+dynamic events, and do not undo external side effects.
+
 ---
 
 ## Quick Start

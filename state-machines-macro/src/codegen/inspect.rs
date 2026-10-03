@@ -26,12 +26,14 @@ fn hook_schema_fields(hooks: &Hooks) -> TokenStream2 {
     let before = string_vec(&hooks.before);
     let after = string_vec(&hooks.after);
     let around = string_vec(&hooks.around);
+    let on_error = string_vec(&hooks.on_error);
     quote! {
         guards: #guards,
         unless: #unless,
         before: #before,
         after: #after,
         around: #around,
+        on_error: #on_error,
     }
 }
 

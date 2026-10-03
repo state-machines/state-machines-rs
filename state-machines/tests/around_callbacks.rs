@@ -65,12 +65,19 @@ fn around_callback_can_abort_at_before_stage() {
         events {
             advance {
                 around: [abort_guard],
-                transition: { from: Start, to: End }
+                on_error: [record_failure],
+                transition: { from: Start, to: End, on_error: [record_failure] }
             }
-        }
+        },
+        callbacks: { error_transition [{ name: record_failure, on: advance }] }
     }
 
     impl<C, S> Guarded<C, S> {
+        fn record_failure(&self, error: &state_machines::core::GuardError) {
+            assert_eq!(error.guard, "abort_guard");
+            assert_eq!(error.event, "advance");
+            FAILURE_COUNT.fetch_add(1, Ordering::SeqCst);
+        }
         fn abort_guard(&self, stage: AroundStage) -> AroundOutcome<Start> {
             match stage {
                 AroundStage::Before => {
@@ -86,6 +93,7 @@ fn around_callback_can_abort_at_before_stage() {
     }
 
     let machine = Guarded::new(());
+    static FAILURE_COUNT: AtomicUsize = AtomicUsize::new(0);
     let result = machine.advance();
 
     // Should have failed
@@ -95,6 +103,7 @@ fn around_callback_can_abort_at_before_stage() {
     // Machine should be returned
     assert_eq!(err.guard, "abort_guard");
     assert_eq!(err.event, "advance");
+    assert_eq!(FAILURE_COUNT.load(Ordering::SeqCst), 3);
 
     // Can retry
     let _machine = machine;

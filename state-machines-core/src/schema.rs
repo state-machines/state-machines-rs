@@ -51,6 +51,8 @@ pub struct EventSchema {
     pub after: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub around: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub on_error: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload: Option<String>,
 }
@@ -70,6 +72,8 @@ pub struct TransitionSchema {
     pub after: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub around: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub on_error: Vec<String>,
 }
 
 /// Trait for types that can provide their schema for introspection.
@@ -294,12 +298,14 @@ mod tests {
                         before: vec![],
                         after: vec![],
                         around: vec![],
+                        on_error: vec![],
                     }],
                     guards: vec![],
                     unless: vec![],
                     before: vec![],
                     after: vec![],
                     around: vec![],
+                    on_error: vec![],
                     payload: None,
                 },
                 EventSchema {
@@ -312,12 +318,14 @@ mod tests {
                         before: vec![],
                         after: vec![],
                         around: vec![],
+                        on_error: vec![],
                     }],
                     guards: vec![],
                     unless: vec![],
                     before: vec![],
                     after: vec![],
                     around: vec![],
+                    on_error: vec![],
                     payload: None,
                 },
             ],

@@ -15,6 +15,7 @@ static AFTER_FAILS: AtomicBool = AtomicBool::new(false);
 static BEFORE_CALLED: AtomicBool = AtomicBool::new(false);
 static AFTER_CALLED: AtomicBool = AtomicBool::new(false);
 static TEST_LOCK: Mutex<()> = Mutex::new(());
+static ERRORS: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum AuthError {
@@ -33,12 +34,20 @@ state_machine! {
         refresh {
             before: [refresh_token],
             after: [record_completion],
+            on_error: [recover],
             transition: { from: RefreshToken, to: Done }
         }
     }
 }
 
 impl<C, S> AuthRecovery<C, S> {
+    async fn recover(&self, error: &EventError<AuthError>) {
+        let EventError::Callback(error) = error else {
+            panic!("expected callback failure");
+        };
+        ERRORS.lock().unwrap().push(error.action);
+    }
+
     async fn refresh_token(&self) -> Result<(), AuthError> {
         BEFORE_CALLED.store(true, Ordering::SeqCst);
         if BEFORE_FAILS.load(Ordering::SeqCst) {
@@ -59,6 +68,7 @@ impl<C, S> AuthRecovery<C, S> {
 }
 
 fn reset_flags() {
+    ERRORS.lock().unwrap().clear();
     BEFORE_FAILS.store(false, Ordering::SeqCst);
     AFTER_FAILS.store(false, Ordering::SeqCst);
     BEFORE_CALLED.store(false, Ordering::SeqCst);
@@ -90,12 +100,14 @@ fn async_before_callback_failure_returns_source_machine() {
 
         assert!(BEFORE_CALLED.load(Ordering::SeqCst));
         assert!(!AFTER_CALLED.load(Ordering::SeqCst));
+        assert_eq!(*ERRORS.lock().unwrap(), ["refresh_token"]);
 
         BEFORE_FAILS.store(false, Ordering::SeqCst);
         let _done = machine
             .refresh()
             .await
             .expect("retry should succeed from the original state");
+        assert_eq!(*ERRORS.lock().unwrap(), ["refresh_token"]);
     });
 }
 
@@ -124,6 +136,7 @@ fn async_after_callback_failure_rolls_back_transition() {
 
         assert!(BEFORE_CALLED.load(Ordering::SeqCst));
         assert!(AFTER_CALLED.load(Ordering::SeqCst));
+        assert_eq!(*ERRORS.lock().unwrap(), ["record_completion"]);
 
         AFTER_FAILS.store(false, Ordering::SeqCst);
         let _done = machine
@@ -161,6 +174,7 @@ fn async_dynamic_callback_failure_keeps_runtime_state() {
         }
 
         assert_eq!(machine.current_state(), AuthRecoveryState::RefreshToken);
+        assert_eq!(*ERRORS.lock().unwrap(), ["refresh_token"]);
 
         BEFORE_FAILS.store(false, Ordering::SeqCst);
         machine
