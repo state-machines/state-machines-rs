@@ -325,12 +325,10 @@ impl<M: Machine> Runner<M> {
         inbox.external = recalled;
     }
     pub async fn drain(&mut self, max_steps: usize) -> Result<usize, RunError<M::Error>> {
-        self.reconcile_work();
-        self.recall();
-        if self.machine().is_poisoned() {
-            return Err(RunError::Poisoned);
-        }
-        self.setup_entries().map_err(RunError::Setup)?;
+        // Explicit driving (not construction/restore) settles the initial
+        // configuration even without an external event. Reuse the same bounded
+        // microstep/lifecycle path used after dispatch.
+        self.stabilize(64).await?;
         let mut steps = 0;
         loop {
             core::future::poll_fn(|cx| {

@@ -1572,6 +1572,11 @@ must not rely on I/O compensation if their own code panics. Root automatic cycle
 return `RunError::AutomaticStepLimit`, distinct from the queued-event budget.
 Runtime declarations are included in the inspectable schema.
 
+Explicit `Runner::drain` also settles the initial automatic configuration before
+processing queued events. This lets eventless-only children/regions finish
+without waiting for a mailbox event. Construction and restore remain inert;
+automatic cycles use the same bounded stabilization error.
+
 ### Orthogonal regions, fork and join
 
 `runtime::Parallel::new(left, right)` composes independent machines with a tuple
