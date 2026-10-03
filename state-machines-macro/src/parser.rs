@@ -544,6 +544,7 @@ fn parse_global_callback_entry(input: &ParseBuffer<'_>) -> Result<GlobalCallback
 }
 
 pub fn parse_transition(input: &ParseBuffer<'_>) -> Result<Transition> {
+    let mut kind = None;
     let mut data = None;
     let mut sources = None;
     let mut target = None;
@@ -558,6 +559,20 @@ pub fn parse_transition(input: &ParseBuffer<'_>) -> Result<Transition> {
         input.parse::<Token![:]>()?;
 
         match key_str.as_str() {
+            "kind" => {
+                let value: Ident = input.parse()?;
+                kind = Some(match value.to_string().as_str() {
+                    "internal" => TransitionKind::Internal,
+                    "local" => TransitionKind::Local,
+                    "external" => TransitionKind::External,
+                    _ => {
+                        return Err(syn::Error::new(
+                            value.span(),
+                            "kind must be internal, local, or external",
+                        ));
+                    }
+                });
+            }
             "data" => data = Some(input.parse()?),
             "from" => {
                 sources = Some(parse_state_set(input)?);
@@ -594,6 +609,13 @@ pub fn parse_transition(input: &ParseBuffer<'_>) -> Result<Transition> {
 
     let sources =
         sources.ok_or_else(|| syn::Error::new(Span::call_site(), "transition missing `from`"))?;
+    if internal && kind.is_some_and(|kind| kind != TransitionKind::Internal) {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            "`internal` conflicts with transition kind",
+        ));
+    }
+    internal |= kind == Some(TransitionKind::Internal);
     if internal && target.is_some() {
         return Err(syn::Error::new(
             Span::call_site(),
@@ -607,6 +629,7 @@ pub fn parse_transition(input: &ParseBuffer<'_>) -> Result<Transition> {
     }
     .ok_or_else(|| syn::Error::new(Span::call_site(), "transition missing `to` or source"))?;
     Ok(Transition {
+        kind,
         data,
         sources,
         target,
@@ -794,6 +817,8 @@ impl StateMachine {
                             self.transition_graph.add_edge(
                                 &actual_source,
                                 TransitionEdge {
+                                    scope: source.clone(),
+                                    kind: transition.kind,
                                     data: transition.data.clone(),
                                     target: resolved_target.clone(),
                                     event: event.name.clone(),

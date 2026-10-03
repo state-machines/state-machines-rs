@@ -102,9 +102,16 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
                         let name = name.to_string();
                         quote! { Some(::state_machines::__private::String::from(#name)) }
                     });
+                    let kind = match trans.kind {
+                        Some(TransitionKind::Internal) => quote! { Some("internal".into()) },
+                        Some(TransitionKind::Local) => quote! { Some("local".into()) },
+                        Some(TransitionKind::External) => quote! { Some("external".into()) },
+                        None => quote! { None },
+                    };
 
                     quote! {
                         ::state_machines::TransitionSchema {
+                            kind: #kind,
                             data: #data,
                             sources: #sources,
                             target: ::state_machines::__private::String::from(#target_str),

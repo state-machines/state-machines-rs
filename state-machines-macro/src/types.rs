@@ -46,9 +46,9 @@ impl StateMachine {
         &self,
         source: &Ident,
         target: &Ident,
-        internal: bool,
+        edge: &TransitionEdge,
     ) -> (Vec<Ident>, Vec<Ident>) {
-        if internal {
+        if edge.internal {
             return (Vec::new(), Vec::new());
         }
         let path = |leaf: &Ident| {
@@ -63,12 +63,17 @@ impl StateMachine {
         };
         let source_path = path(source);
         let target_path = path(target);
-        let common = source_path
+        let mut common = source_path
             .iter()
             .zip(&target_path)
             .take_while(|(a, b)| a == b)
             .count()
             .min(source_path.len() - 1);
+        if edge.kind == Some(TransitionKind::External)
+            && let Some(domain) = source_path.iter().position(|state| state == &edge.scope)
+        {
+            common = common.min(domain);
+        }
         let exit = source_path[common..]
             .iter()
             .rev()
@@ -89,6 +94,27 @@ impl StateMachine {
             .flat_map(|hooks| hooks.enter.iter().cloned())
             .collect();
         (exit, enter)
+    }
+
+    pub fn reentered_superstate(
+        &self,
+        source: &Ident,
+        edge: &TransitionEdge,
+        owner: &Ident,
+    ) -> bool {
+        if edge.kind != Some(TransitionKind::External) {
+            return false;
+        }
+        let Some(path) = self.hierarchy.ancestors.get(&source.to_string()) else {
+            return false;
+        };
+        match (
+            path.iter().position(|s| s == &edge.scope),
+            path.iter().position(|s| s == owner),
+        ) {
+            (Some(domain), Some(index)) => index >= domain,
+            _ => false,
+        }
     }
 }
 
@@ -164,6 +190,8 @@ pub struct TransitionGraph {
 /// receive payloads.
 #[derive(Clone)]
 pub struct TransitionEdge {
+    pub scope: Ident,
+    pub kind: Option<TransitionKind>,
     pub data: Option<Ident>,
     pub target: Ident,
     pub event: Ident,
@@ -225,6 +253,7 @@ pub struct Event {
 /// Defines a transition from one or more source states to a target state.
 /// Can have its own guards and callbacks in addition to event-level ones.
 pub struct Transition {
+    pub kind: Option<TransitionKind>,
     pub data: Option<Ident>,
     pub sources: Vec<Ident>,
     pub target: Ident,
@@ -232,6 +261,13 @@ pub struct Transition {
     pub internal: bool,
     pub fallback: bool,
     pub history: Option<HistoryMode>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum TransitionKind {
+    Internal,
+    Local,
+    External,
 }
 
 /// The guard and callback lists declarable on an event or a transition.

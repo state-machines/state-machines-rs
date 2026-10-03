@@ -78,6 +78,8 @@ pub struct EventSchema {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TransitionSchema {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data: Option<String>,
     pub sources: Vec<String>,
     pub target: String,
@@ -197,6 +199,31 @@ impl MachineSchema {
             let mut sources = BTreeSet::new();
             let mut fallbacks = BTreeSet::new();
             for transition in &event.transitions {
+                if let Some(kind) = &transition.kind {
+                    if !["internal", "local", "external"].contains(&kind.as_str())
+                        || (kind == "internal") != transition.internal
+                    {
+                        report(
+                            DiagnosticLevel::Error,
+                            format!("invalid transition kind `{kind}`"),
+                        );
+                    }
+                    if kind == "local"
+                        && transition.sources.iter().any(|source| {
+                            !self.superstates.iter().any(|s| {
+                                &s.name == source
+                                    && s.descendants
+                                        .iter()
+                                        .any(|leaf| expand(&transition.target).contains(&leaf))
+                            })
+                        })
+                    {
+                        report(
+                            DiagnosticLevel::Error,
+                            "local transition leaves its source superstate".into(),
+                        );
+                    }
+                }
                 if let Some(mode) = &transition.history
                     && (transition.internal
                         || !["shallow", "deep"].contains(&mode.as_str())

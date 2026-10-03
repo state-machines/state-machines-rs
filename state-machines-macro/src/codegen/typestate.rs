@@ -375,6 +375,7 @@ fn storage_transfers(
     machine: &StateMachine,
     source_state: &Ident,
     target_state: &Ident,
+    edge: &TransitionEdge,
 ) -> Vec<TokenStream2> {
     machine
         .state_storage
@@ -390,7 +391,12 @@ fn storage_transfers(
                 let source_inside = spec_covers(machine, spec, source_state);
                 let target_inside = spec_covers(machine, spec, target_state);
                 match (source_inside, target_inside) {
-                    (true, true) => prev_binding(field),
+                    (true, true)
+                        if !machine.reentered_superstate(source_state, edge, &spec.state_name) =>
+                    {
+                        prev_binding(field)
+                    }
+                    (true, true) => init,
                     (false, true) => init,
                     _ => clear,
                 }
@@ -410,12 +416,14 @@ fn preserved_storage_fields(
     machine: &StateMachine,
     source_state: &Ident,
     target_state: &Ident,
+    edge: &TransitionEdge,
 ) -> Vec<Ident> {
     machine
         .state_storage
         .iter()
         .filter(|spec| {
             machine.hierarchy.is_superstate(&spec.state_name)
+                && !machine.reentered_superstate(source_state, edge, &spec.state_name)
                 && spec_covers(machine, spec, source_state)
                 && spec_covers(machine, spec, target_state)
         })
@@ -582,7 +590,7 @@ pub(super) fn generate_transition_method(
     let mut storage_transfers = if edge.internal {
         source_field_bindings.clone()
     } else {
-        storage_transfers(machine, source_state, target_state)
+        storage_transfers(machine, source_state, target_state, edge)
     };
     if !edge.internal {
         storage_transfers.extend(history_fields.iter().map(prev_binding));
@@ -616,7 +624,7 @@ pub(super) fn generate_transition_method(
     let preserved_rebinds: Vec<_> = if edge.internal {
         source_field_bindings.clone()
     } else {
-        preserved_storage_fields(machine, source_state, target_state)
+        preserved_storage_fields(machine, source_state, target_state, edge)
             .iter()
             .map(prev_binding)
             .collect()
@@ -725,8 +733,7 @@ pub(super) fn generate_transition_method(
         .iter()
         .map(|cb| callback_step(&after, cb, false));
     let around_after_checks = edge.hooks.around.iter().map(|cb| around_step(&after, cb));
-    let (exit_hooks, enter_hooks) =
-        machine.lifecycle_callbacks(source_state, target_state, edge.internal);
+    let (exit_hooks, enter_hooks) = machine.lifecycle_callbacks(source_state, target_state, edge);
     let exit_calls = exit_hooks
         .iter()
         .map(|cb| callback_step(&before, cb, false));

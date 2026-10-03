@@ -164,6 +164,21 @@ impl StateMachine {
             )?;
 
             for transition in &event.transitions {
+                if transition.kind == Some(TransitionKind::Local) {
+                    for source in &transition.sources {
+                        err_if(
+                            !self.hierarchy.is_superstate(source)
+                                || !self.hierarchy.expand_state(source, &self.states).contains(
+                                    &self
+                                        .hierarchy
+                                        .resolve_target(&transition.target)
+                                        .unwrap_or_else(|| transition.target.clone()),
+                                ),
+                            source.span(),
+                            "local transitions must remain inside their source superstate",
+                        )?;
+                    }
+                }
                 err_if(
                     transition.data.is_some()
                         && (transition.internal

@@ -1414,6 +1414,16 @@ resources using `Option::take()` without Clone. It runs after exit hooks and
 before target entry hooks. After callbacks see the remaining payload. Factories
 must target data-carrying leaves and support async machines.
 
+### Composite transition kinds
+
+`kind: internal` is the targetless form of `internal: true`. `kind: local`
+requires a superstate source and stays within it, preserving the parent.
+`kind: external` exits and re-enters the declared source scope even when its
+target is inside that scope: parent entry/exit hooks run and parent data resets.
+History records successful re-entry exits too. Omit `kind` to retain legacy
+common-ancestor-preserving behavior; external leaf self-transitions still reset
+the leaf. Callback failures recover old control state/data, not external effects.
+
 - **[API Docs](https://docs.rs/state-machines)** – Full API reference
 - **[Crates.io](https://crates.io/crates/state-machines)** – Published crate versions
 - **[GitHub](https://github.com/state-machines/state-machines-rs)** – Source code and issues

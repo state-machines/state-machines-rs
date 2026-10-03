@@ -115,7 +115,9 @@ pub fn record_exit(machine: &StateMachine, source: &Ident, edge: &TransitionEdge
         .into_iter()
         .filter(|region| {
             let leaves = machine.hierarchy.expand_state(region, &machine.states);
-            leaves.contains(source) && !leaves.contains(&edge.target)
+            leaves.contains(source)
+                && (!leaves.contains(&edge.target)
+                    || machine.reentered_superstate(source, edge, region))
         })
         .map(|region| {
             let field = field(region);
