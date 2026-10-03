@@ -1,4 +1,4 @@
-#![cfg(feature = "async")]
+#![cfg(all(feature = "async", not(feature = "runtime-send")))]
 
 use state_machines::{DynamicError, state_machine};
 use std::assert_matches;

@@ -1406,6 +1406,13 @@ use `.expect("initialized on entry")` when your application enforces that invari
 
 ### Explicit startup and owned entry data
 
+Concrete `context:` declarations no longer generate `Default` for the dynamic
+wrapper: construct with `new(context)` or implement `Default` explicitly when
+appropriate. This permits owned configuration/resources without a Default
+implementation. Generic-context wrappers retain `Default` when `C: Default`.
+Generated dynamic state selector enums implement `Default` as their declared
+initial leaf, independently of context construction.
+
 `Machine::new(ctx).initialize()` runs active entry hooks outer-to-inner and returns
 the source machine on a fallible hook error. `DynamicMachine::initialize(ctx)` is the
 runtime equivalent. Both are async for async machines. Call startup once on a
@@ -1487,6 +1494,22 @@ deferred events; full/closed errors return the original event without Clone.
 Dispatch errors consume the attempted event but preserve the remaining queue.
 Extraction/drop closes the mailbox. The runner is single-executor (`Rc`), uses
 `no_std` + `alloc`, and creates no threads. Queues are not part of FSM snapshots.
+Enable `runtime-send` for a `std`-backed, thread-safe mailbox and Send dispatch,
+automatic-step and activity futures. The same driver owns and dispatches the
+machine; cloned sinks may enqueue owned events from other threads, and runners
+and child/native-region compositions may move into `tokio::spawn`. This adds no
+executor, threads, or parallel dispatch. Events, state, errors and machines must
+be Send; async guards/callbacks must yield Send futures. Generic generated async
+adapters additionally require Sync contexts; synchronous adapters only need Send.
+Activities still cancel by
+dropping their futures, not by aborting detached tasks. Mailbox guards do not
+span dispatch, polling, event destruction, waker callbacks or debug output.
+
+`runtime-send` selects the runtime contract for the linked facade. Cargo feature
+unification means it applies to every consumer of that facade in a build, not
+just the crate requesting it. For non-Send contexts/resources or no-std targets,
+use `runtime` without `runtime-send`; CI tests both contracts separately.
+
 Dynamic `transition_epoch()` advances on committed external edges, including
 self-re-entry, but not internal edges; conversions/restore reset this runtime tag.
 With `runtime`, custom error types on public generated machines must also be

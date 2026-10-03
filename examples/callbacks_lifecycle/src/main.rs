@@ -133,7 +133,7 @@
 //! - Every state change is logged to telemetry (after callbacks)
 //! - Timestamps show exact execution order
 
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use state_machines::{
     core::{AroundOutcome, AroundStage, TransitionError},
     state_machine,
@@ -144,7 +144,8 @@ static TIMESTAMP: AtomicU64 = AtomicU64::new(0);
 
 /// Simulated fuel system state
 static FUEL_PRESSURE_PSI: AtomicU64 = AtomicU64::new(0);
-static FUEL_VALVE_OPEN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+static FUEL_VALVE_OPEN: AtomicBool = AtomicBool::new(false);
+static FUEL_VALVE_STUCK: AtomicBool = AtomicBool::new(false);
 
 /// Helper to get/advance timestamp
 fn timestamp() -> u64 {
@@ -164,6 +165,10 @@ impl FuelSystem {
     }
 
     fn open_valve() {
+        if FUEL_VALVE_STUCK.load(Ordering::Relaxed) {
+            println!("    [FuelSystem] Valve is stuck closed");
+            return;
+        }
         FUEL_VALVE_OPEN.store(true, Ordering::Relaxed);
         println!("    [FuelSystem] Valve opened");
     }
@@ -362,10 +367,7 @@ fn main() {
             println!("\n[{}] ✓ Transition to Armed complete\n", timestamp());
             engine
         }
-        Err((_engine, err)) => {
-            println!("\n✗ Transition failed: {}", err.guard);
-            return;
-        }
+        Err((_engine, err)) => panic!("nominal ignition failed: {}", err.guard),
     };
 
     println!("Calling engine.start()...\n");
@@ -390,7 +392,8 @@ fn main() {
     // Scenario 3: Around callback abort
     println!("\n\n--- Scenario 2: Around Callback Abort ---");
     TIMESTAMP.store(100, Ordering::Relaxed); // Reset timestamp
-    FuelSystem::close_valve(); // Close valve to trigger abort
+    FuelSystem::close_valve();
+    FUEL_VALVE_STUCK.store(true, Ordering::Relaxed);
 
     // Temporarily make valve fail to open (simulation)
     println!("Simulating fuel valve failure...\n");
@@ -399,17 +402,26 @@ fn main() {
     println!("Calling engine.ignite() with faulty valve...\n");
 
     // This will abort in the Around::Before callback
-    match engine.ignite() {
-        Ok(_) => println!("✗ ERROR: Should have aborted!"),
-        Err((_engine, err)) => {
+    let engine = match engine.ignite() {
+        Ok(_) => panic!("a stuck fuel valve must abort ignition"),
+        Err((engine, err)) => {
+            assert_eq!(err.guard, "fuel_valve_transaction");
+            assert_eq!(TIMESTAMP.load(Ordering::Relaxed), 101);
+            assert!(!FuelSystem::is_valve_open());
             println!(
                 "\n[{}] ✓ Transition aborted by around callback",
                 timestamp()
             );
             println!("  Failed in: {}", err.guard);
             println!("  Machine still in Idle state - safe to retry after fixing valve");
+            engine
         }
-    }
+    };
+    FUEL_VALVE_STUCK.store(false, Ordering::Relaxed);
+    let engine = engine.ignite().expect("repaired valve permits retry");
+    assert!(FuelSystem::is_valve_open());
+    let _idle = engine.abort().expect("abort returns to Idle");
+    assert!(!FuelSystem::is_valve_open());
 
     println!("\n\n=== Key Takeaways ===");
     println!("✓ Around callbacks wrap the entire transition (Before + AfterSuccess)");

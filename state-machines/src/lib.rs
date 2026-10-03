@@ -4,6 +4,22 @@
 #![doc = include_str!("../README.md")]
 
 extern crate alloc;
+#[cfg(feature = "runtime-send")]
+extern crate std;
+
+/// Select runtime adapter bounds using the facade's features, not the macro host's.
+#[doc(hidden)]
+#[cfg(feature = "runtime-send")]
+#[macro_export]
+macro_rules! __sm_runtime_mode {
+    (local { $($local:tt)* } send { $($send:tt)* }) => { $($send)* };
+}
+#[doc(hidden)]
+#[cfg(not(feature = "runtime-send"))]
+#[macro_export]
+macro_rules! __sm_runtime_mode {
+    (local { $($local:tt)* } send { $($send:tt)* }) => { $($local)* };
+}
 
 #[cfg(feature = "runtime")]
 pub mod runtime;

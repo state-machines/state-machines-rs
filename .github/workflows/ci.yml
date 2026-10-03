@@ -17,7 +17,9 @@ jobs:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v4
       - name: Run tests
-        run: cargo test --workspace --all-features
+        run: |
+          cargo test --workspace --all-features
+          cargo test --workspace --features state-machines/runtime,state-machines/serde,state-machines/async,state-machines/dynamic,state-machines/std
       - name: Test examples
         run: cargo test --manifest-path examples/Cargo.toml --workspace --all-features
       - name: Run example programs
@@ -49,6 +51,7 @@ jobs:
       - name: Run clippy
         run: |
           cargo clippy --workspace --all-targets --all-features -- -D warnings
+          cargo clippy --workspace --all-targets --features state-machines/runtime,state-machines/serde,state-machines/async,state-machines/dynamic,state-machines/std -- -D warnings
           cargo clippy --manifest-path examples/Cargo.toml --workspace --all-targets --all-features -- -D warnings
           cargo clippy --manifest-path tests/feature_split/Cargo.toml --all-targets -- -D warnings
 
@@ -66,6 +69,8 @@ jobs:
         run: cargo build -p state-machines --no-default-features
       - name: Build snapshots (no_std + alloc)
         run: cargo build -p state-machines --no-default-features --features serde,dynamic
+      - name: Build local runtime (no_std + alloc)
+        run: cargo build -p state-machines --no-default-features --features runtime,serde,dynamic
       # Built alone: a workspace build unifies features and hides the split
       - name: Build feature-split fixture (host inspect, target without)
         run: cargo build --manifest-path tests/feature_split/Cargo.toml

@@ -1,4 +1,6 @@
-use super::{Envelope, EventSink, Machine, RunError, Runner, Visit, WorkScope};
+use super::{
+    Envelope, EventSink, Machine, RunError, Runner, RuntimeFuture, RuntimeValue, Visit, WorkScope,
+};
 use alloc::boxed::Box;
 use core::{
     fmt,
@@ -43,7 +45,10 @@ impl<C: Machine> fmt::Debug for ChildInvokeError<C> {
     }
 }
 
+#[cfg(not(feature = "runtime-send"))]
 pub(super) type Task<E> = Pin<Box<dyn Future<Output = E> + 'static>>;
+#[cfg(feature = "runtime-send")]
+pub(super) type Task<E> = Pin<Box<dyn Future<Output = E> + Send + 'static>>;
 
 impl<M: Machine> Runner<M> {
     pub(super) fn reserve_activity(
@@ -80,7 +85,7 @@ impl<M: Machine> Runner<M> {
     /// Cancellation drops the future, it does not abort detached executor tasks.
     pub fn invoke_future<F>(&mut self, future: F) -> Result<ActivityId, InvokeError<F>>
     where
-        F: Future<Output = M::Event> + 'static,
+        F: RuntimeFuture<Output = M::Event> + 'static,
     {
         self.invoke_future_in(WorkScope::Leaf, future)
     }
@@ -90,7 +95,7 @@ impl<M: Machine> Runner<M> {
         future: F,
     ) -> Result<ActivityId, InvokeError<F>>
     where
-        F: Future<Output = M::Event> + 'static,
+        F: RuntimeFuture<Output = M::Event> + 'static,
     {
         let (id, visit) = match self.reserve_activity(scope) {
             Ok(value) => value,
@@ -150,11 +155,18 @@ impl<M: Machine> Runner<M> {
                 return Poll::Ready(Err(RunError::Poisoned));
             }
             // Register before polling activities, whose callbacks may enqueue input.
-            self.sink.inbox.borrow_mut().waker = Some(cx.waker().clone());
+            // Waker clone/drop callbacks may themselves access this mailbox.
+            let waker = cx.waker().clone();
+            let previous = self.sink.inbox.borrow_mut().waker.replace(waker);
+            drop(previous);
             self.poll_activities(cx);
-            let mut inbox = self.sink.inbox.borrow_mut();
-            if !inbox.internal.is_empty() || !inbox.external.is_empty() {
-                inbox.waker = None;
+            let (ready, waker) = {
+                let mut inbox = self.sink.inbox.borrow_mut();
+                let ready = !inbox.internal.is_empty() || !inbox.external.is_empty();
+                (ready, if ready { inbox.waker.take() } else { None })
+            };
+            drop(waker);
+            if ready {
                 Poll::Ready(Ok(()))
             } else {
                 Poll::Pending
@@ -181,8 +193,8 @@ impl<M: Machine> Runner<M> {
         C::Event: 'static,
         C::Error: 'static,
         M::Event: 'static,
-        Done: FnOnce(C) -> M::Event + 'static,
-        Failed: FnOnce(RunError<C::Error>, C) -> M::Event + 'static,
+        Done: FnOnce(C) -> M::Event + RuntimeValue + 'static,
+        Failed: FnOnce(RunError<C::Error>, C) -> M::Event + RuntimeValue + 'static,
     {
         self.invoke_child_in(WorkScope::Leaf, child, max_steps, done, failed)
     }
@@ -202,8 +214,8 @@ impl<M: Machine> Runner<M> {
         C::Event: 'static,
         C::Error: 'static,
         M::Event: 'static,
-        Done: FnOnce(C) -> M::Event + 'static,
-        Failed: FnOnce(RunError<C::Error>, C) -> M::Event + 'static,
+        Done: FnOnce(C) -> M::Event + RuntimeValue + 'static,
+        Failed: FnOnce(RunError<C::Error>, C) -> M::Event + RuntimeValue + 'static,
     {
         if max_steps == 0 {
             return Err(ChildInvokeError {

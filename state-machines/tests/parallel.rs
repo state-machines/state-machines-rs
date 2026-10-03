@@ -1,4 +1,4 @@
-#![cfg(feature = "runtime")]
+#![cfg(all(feature = "runtime", not(feature = "runtime-send")))]
 use state_machines::{
     runtime::{Machine, Parallel, ParallelError, ParallelEvent, Runner},
     state_machine,

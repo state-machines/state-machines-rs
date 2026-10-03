@@ -1,4 +1,4 @@
-#![cfg(feature = "runtime")]
+#![cfg(all(feature = "runtime", not(feature = "runtime-send")))]
 use state_machines::{
     runtime::{Clock, InvokeFailure, RunError, Runner, SetupFailure},
     state_machine,

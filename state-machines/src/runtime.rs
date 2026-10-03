@@ -1,7 +1,12 @@
 //! Optional, executor-independent event processing (`no_std` + `alloc`).
 //! Queued events are owned; no payload Clone bounds or hidden threads.
-use alloc::{collections::VecDeque, rc::Rc, vec::Vec};
-use core::{cell::RefCell, fmt, task::Waker};
+use alloc::{collections::VecDeque, vec::Vec};
+use core::{fmt, task::Waker};
+
+mod bounds;
+pub use bounds::{RuntimeFuture, RuntimeValue};
+mod mailbox;
+use mailbox::Shared;
 
 mod timers;
 pub use timers::{Clock, ClockError, ScheduleError, TimerId};
@@ -27,10 +32,10 @@ use work::{Registry, Visit};
 /// self-re-entry or a commit followed by a failed automatic step. Internal edges
 /// must retain it. State/epoch must not change through shared references.
 #[allow(async_fn_in_trait)]
-pub trait Machine {
-    type Event;
-    type Error;
-    type State: Copy + Eq;
+pub trait Machine: RuntimeValue {
+    type Event: RuntimeValue;
+    type Error: RuntimeValue;
+    type State: Copy + Eq + RuntimeValue;
     fn state(&self) -> Self::State;
     fn epoch(&self) -> u64;
     /// Optional named hierarchical scope visits. Defaults to no named scopes.
@@ -45,15 +50,21 @@ pub trait Machine {
     }
     fn is_finished(&self) -> bool;
     fn is_poisoned(&self) -> bool;
-    async fn dispatch(&mut self, event: Self::Event) -> Result<(), Self::Error>;
-    async fn dispatch_one(&mut self, event: Self::Event) -> Result<(), Self::Error> {
-        self.dispatch(event).await
+    fn dispatch(
+        &mut self,
+        event: Self::Event,
+    ) -> impl RuntimeFuture<Output = Result<(), Self::Error>>;
+    fn dispatch_one(
+        &mut self,
+        event: Self::Event,
+    ) -> impl RuntimeFuture<Output = Result<(), Self::Error>> {
+        self.dispatch(event)
     }
-    async fn automatic_step(&mut self) -> Result<bool, Self::Error> {
-        Ok(false)
+    fn automatic_step(&mut self) -> impl RuntimeFuture<Output = Result<bool, Self::Error>> {
+        core::future::ready(Ok(false))
     }
-    async fn automatic_enabled(&self) -> bool {
-        false
+    fn automatic_enabled(&self) -> impl RuntimeFuture<Output = bool> {
+        core::future::ready(false)
     }
     /// Host-driven lifecycle operations for composed regions. Ordinary machines
     /// use their enclosing Runner; compositions forward these to region runners.
@@ -66,8 +77,11 @@ pub trait Machine {
     fn poll_regions(&mut self, _cx: &mut core::task::Context<'_>) -> usize {
         0
     }
-    async fn drive_regions(&mut self, _max_steps: usize) -> Result<usize, Self::Error> {
-        Ok(0)
+    fn drive_regions(
+        &mut self,
+        _max_steps: usize,
+    ) -> impl RuntimeFuture<Output = Result<usize, Self::Error>> {
+        core::future::ready(Ok(0))
     }
 }
 
@@ -107,9 +121,10 @@ impl<E> Inbox<E> {
     }
 }
 
-/// A clonable single-executor mailbox. Cloning this handle never clones events.
+/// A clonable mailbox. `runtime-send` makes ingress thread-safe for Send events.
+/// Cloning this handle never clones events; dispatch still has a single owner.
 pub struct EventSink<E> {
-    inbox: Rc<RefCell<Inbox<E>>>,
+    inbox: Shared<Inbox<E>>,
 }
 impl<E> Clone for EventSink<E> {
     fn clone(&self) -> Self {
@@ -120,24 +135,27 @@ impl<E> Clone for EventSink<E> {
 }
 impl<E> fmt::Debug for EventSink<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let inbox = self.inbox.borrow();
+        let (pending, closed) = {
+            let inbox = self.inbox.borrow();
+            (inbox.pending, inbox.closed)
+        };
         f.debug_struct("EventSink")
-            .field("pending", &inbox.pending)
-            .field("closed", &inbox.closed)
+            .field("pending", &pending)
+            .field("closed", &closed)
             .finish()
     }
 }
 impl<E> EventSink<E> {
     fn new(capacity: usize) -> Self {
         Self {
-            inbox: Rc::new(RefCell::new(Inbox {
+            inbox: Shared::new(Inbox {
                 internal: VecDeque::new(),
                 external: VecDeque::new(),
                 pending: 0,
                 capacity,
                 closed: false,
                 waker: None,
-            })),
+            }),
         }
     }
     fn push(&self, event: E, internal: bool) -> Result<(), QueueError<E>> {

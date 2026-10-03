@@ -364,8 +364,54 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
     let scope_count = super::scopes::names(machine).len();
     let scope_methods = super::scopes::methods(machine);
     let (require_runtime, runtime_factories, runtime_rules) = super::runtime::generate(machine);
+    let send_generics = if machine.context.is_some() {
+        quote! {}
+    } else if machine.async_mode {
+        quote! { <C: ::core::marker::Send + ::core::marker::Sync> }
+    } else {
+        quote! { <C: ::core::marker::Send> }
+    };
+    let automatic_enabled = if !machine.events.iter().any(|event| event.automatic) {
+        // Inherit ready(false) without capturing &self or requiring Sync state data.
+        quote! {}
+    } else if machine.async_mode {
+        quote! { async fn automatic_enabled(&self) -> bool { self.__sm_has_automatic().await } }
+    } else {
+        quote! {
+            fn automatic_enabled(&self) -> impl ::state_machines::runtime::RuntimeFuture<Output = bool> {
+                ::core::future::ready(self.__sm_has_automatic())
+            }
+        }
+    };
+    let runtime_impl = quote! {
+        #runtime_rules
+        type Event = #event_name;
+        type Error = #dynamic_error_ty;
+        type State = #state_enum_name;
+        fn state(&self) -> Self::State { self.current_state() }
+        fn epoch(&self) -> u64 { self.transition_epoch() }
+        fn scope_epoch(&self, scope: &str) -> Option<u64> { self.scope_epoch(scope) }
+        fn is_finished(&self) -> bool { self.is_finished() }
+        fn is_poisoned(&self) -> bool { self.is_poisoned() }
+        async fn dispatch(&mut self, event: Self::Event) -> Result<(), Self::Error> {
+            self.handle(event) #maybe_await
+        }
+        async fn dispatch_one(&mut self, event: Self::Event) -> Result<(), Self::Error> {
+            self.__sm_handle_one(event) #maybe_await
+        }
+        async fn automatic_step(&mut self) -> Result<bool, Self::Error> {
+            self.__sm_automatic_step() #maybe_await
+        }
+        #automatic_enabled
+    };
 
-    let state_variants = &machine.states;
+    let state_variants = machine.states.iter().map(|state| {
+        if state == initial_state {
+            quote! { #[default] #state }
+        } else {
+            quote! { #state }
+        }
+    });
     let state_name_arms = machine.states.iter().map(|state| {
         let state_str = state.to_string();
         quote! { Self::#state => #state_str }
@@ -398,17 +444,11 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
         }
     });
 
-    // Default impl only for generic context with Default bound, or concrete context with Default
-    let default_impl = if let Some(concrete_ctx) = &machine.context {
-        // Concrete context: only generate Default impl if the concrete type has Default
-        // We can't check that at macro time, so we conditionally generate with where clause
-        quote! {
-            impl Default for #dynamic_name where #concrete_ctx: ::core::default::Default {
-                fn default() -> Self {
-                    Self::new(<#concrete_ctx as ::core::default::Default>::default())
-                }
-            }
-        }
+    // Rust eagerly checks concrete where-clauses. They cannot conditionally
+    // implement Default for a context that intentionally has no default value.
+    // Concrete-context callers construct explicitly or provide their own impl.
+    let default_impl = if machine.context.is_some() {
+        quote! {}
     } else {
         // Generic context: use C: Default bound
         quote! {
@@ -512,7 +552,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
 
     Ok(quote! {
         /// Runtime state selector used when constructing a dynamic machine.
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
         pub enum #state_enum_name {
             #( #state_variants, )*
         }
@@ -656,26 +696,17 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
         #require_runtime
 
         ::state_machines::__sm_if_runtime! {
-            impl #generics ::state_machines::runtime::Machine for #dynamic_name #generics {
-                #runtime_rules
-                type Event = #event_name;
-                type Error = #dynamic_error_ty;
-                type State = #state_enum_name;
-                fn state(&self) -> Self::State { self.current_state() }
-                fn epoch(&self) -> u64 { self.transition_epoch() }
-                fn scope_epoch(&self, scope: &str) -> Option<u64> { self.scope_epoch(scope) }
-                fn is_finished(&self) -> bool { self.is_finished() }
-                fn is_poisoned(&self) -> bool { self.is_poisoned() }
-                async fn dispatch(&mut self, event: Self::Event) -> Result<(), Self::Error> {
-                    self.handle(event) #maybe_await
+            ::state_machines::__sm_runtime_mode! {
+                local {
+                    impl #generics ::state_machines::runtime::Machine for #dynamic_name #generics {
+                        #runtime_impl
+                    }
                 }
-                async fn dispatch_one(&mut self, event: Self::Event) -> Result<(), Self::Error> {
-                    self.__sm_handle_one(event) #maybe_await
+                send {
+                    impl #send_generics ::state_machines::runtime::Machine for #dynamic_name #generics {
+                        #runtime_impl
+                    }
                 }
-                async fn automatic_step(&mut self) -> Result<bool, Self::Error> {
-                    self.__sm_automatic_step() #maybe_await
-                }
-                async fn automatic_enabled(&self) -> bool { self.__sm_has_automatic() #maybe_await }
             }
         }
     })

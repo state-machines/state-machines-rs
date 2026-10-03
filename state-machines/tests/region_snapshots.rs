@@ -1,4 +1,4 @@
-#![cfg(all(feature = "runtime", feature = "serde"))]
+#![cfg(all(feature = "runtime", feature = "serde", not(feature = "runtime-send")))]
 use state_machines::{
     SnapshotError,
     runtime::{Clock, Machine, Parallel, QueueError, SnapshotMachine},

@@ -192,7 +192,8 @@ pub fn generate(machine: &StateMachine) -> TokenStream {
                 }
             }
             ::state_machines::__sm_if_runtime! {
-                impl #generics ::state_machines::runtime::SnapshotMachine for #dynamic #generics {
+                impl #generics ::state_machines::runtime::SnapshotMachine for #dynamic #generics
+                where #dynamic #generics: ::state_machines::runtime::Machine {
                     type Snapshot = #snapshot_name #generics;
                     fn validate_snapshot(snapshot: &Self::Snapshot) -> Result<(), ::state_machines::SnapshotError> {
                         Self::validate_snapshot(snapshot)
