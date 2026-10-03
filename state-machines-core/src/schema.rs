@@ -55,6 +55,8 @@ pub struct SuperstateSchema {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EventSchema {
     #[serde(default, skip_serializing_if = "is_false")]
+    pub automatic: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
     pub hierarchical: bool,
     pub name: String,
     pub transitions: Vec<TransitionSchema>,
@@ -186,6 +188,12 @@ impl MachineSchema {
         let mut events = BTreeSet::new();
         let mut edges = Vec::new();
         for event in &self.events {
+            if event.automatic && event.payload.is_some() {
+                report(
+                    DiagnosticLevel::Error,
+                    "automatic event has an external payload".into(),
+                );
+            }
             if event.hierarchical && event.branching {
                 report(
                     DiagnosticLevel::Error,

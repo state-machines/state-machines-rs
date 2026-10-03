@@ -247,6 +247,15 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
     let handle_sig = quote! {
         pub #maybe_async fn handle(&mut self, event: #event_name) -> Result<(), #dynamic_error_ty>
     };
+    let handle_one_sig = quote! {
+        #maybe_async fn __sm_handle_one(&mut self, event: #event_name) -> Result<(), #dynamic_error_ty>
+    };
+    let automatic_methods = super::automatic::dynamic_methods(machine);
+    let settle = if machine.events.iter().any(|event| event.automatic) {
+        quote! { self.stabilize(64) #maybe_await?; }
+    } else {
+        quote! {}
+    };
 
     let available_event_arms = machine.states.iter().map(|state| {
         let checks = super::branching::groups(machine, state)
@@ -549,6 +558,14 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
             /// - A guard callback fails
             /// - An action callback fails
             #handle_sig {
+                self.__sm_handle_one(event) #maybe_await?;
+                #settle
+                Ok(())
+            }
+
+            #automatic_methods
+
+            #handle_one_sig {
                 // Take ownership of inner state temporarily
                 let current = self.inner.take().ok_or(#dynamic_error_ctor::Poisoned {
                     from: self.last_state.name(),

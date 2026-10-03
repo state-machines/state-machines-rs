@@ -1055,6 +1055,9 @@ fn handle_network_events(conn: &mut DynamicConnection<()>) {
             Err(DynamicError::Poisoned { from, event }) => {
                 eprintln!("Dispatch {} from {} was interrupted; replace the machine", event, from);
             }
+            Err(DynamicError::StepLimit { limit }) => {
+                eprintln!("Automatic transitions exceeded {} microsteps", limit);
+            }
         }
     }
 }
@@ -1433,6 +1436,20 @@ natural fallback. Same-scope overlaps are rejected; `hierarchical` and ordered
 `branching` are mutually exclusive. Event guards run once, and only the selected
 transition runs callbacks. Both typestate outcomes and dynamic dispatch share
 this policy; events without this option retain existing behavior.
+
+### Eventless transitions
+
+Event `automatic: true` names an eventless trigger for inspection; it needs no
+external event and cannot have a payload. `dynamic.stabilize(max_steps)` selects
+enabled automatic edges in declaration order until stable. Event/candidate guards
+are evaluated once per selection, then only the chosen edge runs callbacks.
+Branching, hierarchical selection, history, factories, and async hooks still work.
+After ordinary `handle()` succeeds, machines with automatic edges stabilize with
+a 64-microstep budget. Explicitly call `stabilize()` after construction/restore;
+those remain inert. Cycles return `DynamicError::StepLimit` with the last committed
+state intact. A failed selected action propagates, not falls back to another edge.
+Typestate methods remain explicit; use dynamic mode to follow runtime-dependent
+automatic chains.
 
 - **[API Docs](https://docs.rs/state-machines)** – Full API reference
 - **[Crates.io](https://crates.io/crates/state-machines)** – Published crate versions

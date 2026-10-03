@@ -115,6 +115,11 @@ impl StateMachine {
         let mut event_names = HashSet::new();
         for event in &self.events {
             err_if(
+                event.automatic && event.payload.is_some(),
+                event.name.span(),
+                "automatic transitions cannot require an external payload",
+            )?;
+            err_if(
                 event.hierarchical && event.branching,
                 event.name.span(),
                 "choose either hierarchical specificity or ordered branching",

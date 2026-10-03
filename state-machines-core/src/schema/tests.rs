@@ -34,6 +34,7 @@ fn sample_schema() -> MachineSchema {
                 payload: None,
                 branching: false,
                 hierarchical: false,
+                automatic: false,
             },
             EventSchema {
                 name: "repressurize".into(),
@@ -61,6 +62,7 @@ fn sample_schema() -> MachineSchema {
                 payload: None,
                 branching: false,
                 hierarchical: false,
+                automatic: false,
             },
         ],
         async_mode: false,

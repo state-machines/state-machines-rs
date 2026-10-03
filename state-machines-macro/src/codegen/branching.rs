@@ -88,15 +88,24 @@ pub fn enums(machine: &StateMachine) -> TokenStream {
 }
 
 fn condition(machine: &StateMachine, hooks: &Hooks, payload: &TokenStream) -> TokenStream {
+    condition_on(machine, hooks, payload, &quote! { self })
+}
+
+pub fn condition_on(
+    machine: &StateMachine,
+    hooks: &Hooks,
+    payload: &TokenStream,
+    receiver: &TokenStream,
+) -> TokenStream {
     let await_ = maybe_await(machine.async_mode);
     let guards = hooks
         .guards
         .iter()
-        .map(|guard| quote! { self.#guard(&self.ctx #payload) #await_ });
+        .map(|guard| quote! { #receiver.#guard(&#receiver.ctx #payload) #await_ });
     let unless = hooks
         .unless
         .iter()
-        .map(|guard| quote! { !self.#guard(&self.ctx #payload) #await_ });
+        .map(|guard| quote! { !#receiver.#guard(&#receiver.ctx #payload) #await_ });
     quote! { true #( && #guards )* #( && #unless )* }
 }
 

@@ -91,13 +91,17 @@ pub fn choices(
 }
 
 pub fn condition(edge: &TransitionEdge) -> TokenStream {
+    condition_on(edge, &quote! { self })
+}
+
+pub fn condition_on(edge: &TransitionEdge, receiver: &TokenStream) -> TokenStream {
     let Some(choice) = &edge.history else {
         return quote! { true };
     };
     let field = field(&choice.region);
     let tests = choice.stored.iter().map(|index| match index {
-        Some(index) => quote! { self.#field == Some(#index) },
-        None => quote! { self.#field.is_none() },
+        Some(index) => quote! { #receiver.#field == Some(#index) },
+        None => quote! { #receiver.#field.is_none() },
     });
     quote! { (false #( || #tests )*) }
 }

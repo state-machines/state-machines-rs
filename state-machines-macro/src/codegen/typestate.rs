@@ -207,6 +207,20 @@ fn generate_state_impls(machine: &StateMachine) -> Result<Vec<TokenStream2>> {
                 methods.push(method);
                 let can_method = generate_can_method(machine, edge)?;
                 methods.push(can_method);
+                if machine
+                    .events
+                    .iter()
+                    .any(|event| event.name == edge.event && event.automatic)
+                {
+                    let helper = quote::format_ident!("__sm_auto_{}", edge.event);
+                    methods.push(generate_transition_method(
+                        machine,
+                        state,
+                        edge,
+                        Some(&helper),
+                        false,
+                    )?);
+                }
             }
         }
 
