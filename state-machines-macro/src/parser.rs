@@ -501,6 +501,7 @@ pub fn parse_transition(input: &ParseBuffer<'_>) -> Result<Transition> {
     let mut sources = None;
     let mut target = None;
     let mut hooks = Hooks::default();
+    let mut internal = false;
 
     while !input.is_empty() {
         let key: Ident = input.parse()?;
@@ -514,6 +515,9 @@ pub fn parse_transition(input: &ParseBuffer<'_>) -> Result<Transition> {
             "to" => {
                 target = Some(input.parse()?);
             }
+            "internal" => {
+                internal = input.parse::<syn::LitBool>()?.value;
+            }
             other => {
                 if !hooks.parse_field(other, input)? {
                     return Err(unexpected_key(&key));
@@ -524,12 +528,25 @@ pub fn parse_transition(input: &ParseBuffer<'_>) -> Result<Transition> {
         skip_optional_comma(input)?;
     }
 
+    let sources =
+        sources.ok_or_else(|| syn::Error::new(Span::call_site(), "transition missing `from`"))?;
+    if internal && target.is_some() {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            "internal transitions must omit `to`",
+        ));
+    }
+    let target = if internal {
+        sources.first().cloned()
+    } else {
+        target
+    }
+    .ok_or_else(|| syn::Error::new(Span::call_site(), "transition missing `to` or source"))?;
     Ok(Transition {
-        sources: sources
-            .ok_or_else(|| syn::Error::new(Span::call_site(), "transition missing `from`"))?,
-        target: target
-            .ok_or_else(|| syn::Error::new(Span::call_site(), "transition missing `to`"))?,
+        sources,
+        target,
         hooks,
+        internal,
     })
 }
 
@@ -673,6 +690,11 @@ impl StateMachine {
                         .unwrap_or_else(|| transition.target.clone());
 
                     for actual_source in expanded_sources {
+                        let resolved_target = if transition.internal {
+                            actual_source.clone()
+                        } else {
+                            resolved_target.clone()
+                        };
                         // Global callbacks whose filters match this concrete
                         // edge. Around callbacks take no payload, so global
                         // ones can share the around list; they are prepended
@@ -713,6 +735,7 @@ impl StateMachine {
                                 global_before,
                                 global_after,
                                 payload: event.payload.clone(),
+                                internal: transition.internal,
                             },
                         );
                     }

@@ -15,6 +15,7 @@ struct ActiveData {
 
 state_machine! {
     name: DataMachine,
+    dynamic: true,
     initial: Idle,
     states: [
         Idle,
@@ -27,6 +28,12 @@ state_machine! {
         }
         activate {
             transition: { from: Configured, to: Active }
+        }
+        heartbeat {
+            transition: { from: [Configured, Active], internal: true }
+        }
+        reconfigure {
+            transition: { from: Configured, to: Configured }
         }
     }
 }
@@ -54,6 +61,10 @@ fn state_specific_data_accessors_work() {
     // Verify the mutation worked
     assert_eq!(machine.configured_data().version, 42);
     assert_eq!(machine.state_data_configured().unwrap().version, 42);
+    let machine = machine.heartbeat().expect("internal transition");
+    assert_eq!(machine.configured_data().version, 42);
+    let machine = machine.reconfigure().expect("external self-transition");
+    assert_eq!(machine.configured_data().version, 0);
 
     // The key is that these methods ONLY exist on DataMachine<C, Configured>
     // and NOT on DataMachine<C, Idle> or DataMachine<C, Active>
@@ -79,4 +90,9 @@ fn data_persists_across_transitions() {
     assert!(machine.state_data_configured().is_none());
     // Active data should be present
     assert!(machine.state_data_active().is_some());
+    let mut machine = machine.into_dynamic();
+    machine.active_data_mut().unwrap().connection_id = 7;
+    machine.handle(DataMachineEvent::Heartbeat).unwrap();
+    assert_eq!(machine.active_data().unwrap().connection_id, 7);
+    assert_eq!(machine.current_state(), DataMachineState::Active);
 }

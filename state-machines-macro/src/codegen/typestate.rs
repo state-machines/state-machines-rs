@@ -506,15 +506,23 @@ fn generate_transition_method(
         .map(|spec| prev_binding(&spec.field))
         .collect();
 
-    let storage_transfers = storage_transfers(machine, source_state, target_state);
+    let storage_transfers = if edge.internal {
+        source_field_bindings.clone()
+    } else {
+        storage_transfers(machine, source_state, target_state)
+    };
 
     // Superstate data carried into the new machine consumed its __sm_prev_*
     // local; rollback paths recover it from the new machine by rebinding
     // the same local name in the destructuring pattern.
-    let preserved_rebinds: Vec<_> = preserved_storage_fields(machine, source_state, target_state)
-        .iter()
-        .map(prev_binding)
-        .collect();
+    let preserved_rebinds: Vec<_> = if edge.internal {
+        source_field_bindings.clone()
+    } else {
+        preserved_storage_fields(machine, source_state, target_state)
+            .iter()
+            .map(prev_binding)
+            .collect()
+    };
 
     let before = Phase {
         receiver: quote! { self },

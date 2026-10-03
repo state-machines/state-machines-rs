@@ -280,6 +280,21 @@ mod tests {
     }
 
     #[test]
+    fn internal_transitions_omit_targets() {
+        validate(quote! {
+            name: Test, initial: A, states: [A, B],
+            events { ping { transition: { from: [A, B], internal: true } } }
+        })
+        .unwrap();
+        let err = validate(quote! {
+            name: Test, initial: A, states: [A],
+            events { ping { transition: { from: A, to: A, internal: true } } }
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("omit `to`"));
+    }
+
+    #[test]
     fn rejects_event_named_schema() {
         let err = validate(quote! {
             name: Doc,

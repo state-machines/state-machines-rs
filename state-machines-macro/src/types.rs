@@ -107,6 +107,7 @@ pub struct TransitionEdge {
     pub global_before: Vec<Ident>,
     pub global_after: Vec<Ident>,
     pub payload: Option<Type>,
+    pub internal: bool,
 }
 
 impl TransitionGraph {
@@ -144,6 +145,7 @@ pub struct Transition {
     pub sources: Vec<Ident>,
     pub target: Ident,
     pub hooks: Hooks,
+    pub internal: bool,
 }
 
 /// The guard and callback lists declarable on an event or a transition.

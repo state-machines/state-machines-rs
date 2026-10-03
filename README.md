@@ -73,6 +73,11 @@ Hooks take `&GuardError` (or `&EventError<E>` with `error: E`) and return `()`;
 async machines await them. They do not run for panics, cancellation, or invalid
 dynamic events, and do not undo external side effects.
 
+**Internal Transitions** – `transition: { from: [Active, Idle], internal: true }`
+handles an event without changing state or resetting state data. Omit `to`;
+guards and event callbacks still run. An ordinary `from: Active, to: Active`
+transition is external and resets leaf data.
+
 ---
 
 ## Quick Start

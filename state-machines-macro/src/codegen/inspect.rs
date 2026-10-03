@@ -91,11 +91,13 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
                     let sources = string_vec(&trans.sources);
                     let target_str = trans.target.to_string();
                     let trans_hooks = hook_schema_fields(&trans.hooks);
+                    let internal = trans.internal;
 
                     quote! {
                         ::state_machines::TransitionSchema {
                             sources: #sources,
                             target: ::state_machines::__private::String::from(#target_str),
+                            internal: #internal,
                             #trans_hooks
                         }
                     }

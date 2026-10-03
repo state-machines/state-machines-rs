@@ -62,6 +62,8 @@ pub struct EventSchema {
 pub struct TransitionSchema {
     pub sources: Vec<String>,
     pub target: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub internal: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub guards: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -167,7 +169,7 @@ impl MachineSchema {
                     .iter()
                     .find(|s| s.name == transition.target)
                     .map_or(&transition.target, |s| &s.initial);
-                if !self.states.contains(target) {
+                if !transition.internal && !self.states.contains(target) {
                     report(
                         DiagnosticLevel::Error,
                         format!("unknown target `{}`", transition.target),
@@ -191,7 +193,7 @@ impl MachineSchema {
                                 format!("ambiguous event `{}` from `{leaf}`", event.name),
                             );
                         }
-                        edges.push((leaf, target));
+                        edges.push((leaf, if transition.internal { leaf } else { target }));
                     }
                 }
             }
@@ -244,7 +246,17 @@ impl MachineSchema {
                     } else {
                         alloc::format!("{} [{}]", event.name, transition.guards.join(", "))
                     };
-                    writeln!(out, "    {} --> {} : {}", source, transition.target, label).unwrap();
+                    let target = if transition.internal {
+                        source
+                    } else {
+                        &transition.target
+                    };
+                    let label = if transition.internal {
+                        format!("{label} (internal)")
+                    } else {
+                        label
+                    };
+                    writeln!(out, "    {source} --> {target} : {label}").unwrap();
                 }
             }
         }
@@ -293,6 +305,7 @@ mod tests {
                     transitions: vec![TransitionSchema {
                         sources: vec!["Pressurized".into()],
                         target: "Vacuum".into(),
+                        internal: false,
                         guards: vec![],
                         unless: vec![],
                         before: vec![],
@@ -313,6 +326,7 @@ mod tests {
                     transitions: vec![TransitionSchema {
                         sources: vec!["Vacuum".into()],
                         target: "Pressurized".into(),
+                        internal: false,
                         guards: vec![],
                         unless: vec![],
                         before: vec![],
