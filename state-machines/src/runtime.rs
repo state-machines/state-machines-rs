@@ -5,6 +5,8 @@ use core::{cell::RefCell, fmt, task::Waker};
 
 mod timers;
 pub use timers::{Clock, ClockError, ScheduleError, TimerId};
+mod activities;
+pub use activities::{ActivityId, ChildInvokeError, InvokeError, InvokeFailure};
 
 /// Implemented by generated dynamic machines when the facade's runtime feature is enabled.
 #[allow(async_fn_in_trait)]
@@ -35,6 +37,7 @@ impl<E> QueueError<E> {
 struct Envelope<E> {
     event: E,
     timer: Option<TimerId>,
+    activity: Option<ActivityId>,
 }
 struct Inbox<E> {
     internal: VecDeque<Envelope<E>>,
@@ -87,7 +90,11 @@ impl<E> EventSink<E> {
             if inbox.pending == inbox.capacity {
                 return Err(QueueError::Full(event));
             }
-            let event = Envelope { event, timer: None };
+            let event = Envelope {
+                event,
+                timer: None,
+                activity: None,
+            };
             if internal {
                 inbox.internal.push_back(event);
             } else {
@@ -147,6 +154,8 @@ pub struct Runner<M: Machine> {
     timers: Vec<timers::Timer<M::State, M::Event>>,
     next_timer: u64,
     last_time: Option<u64>,
+    activities: Vec<activities::Activity<M::State, M::Event>>,
+    next_activity: u64,
 }
 impl<M: Machine> Runner<M> {
     pub fn new(machine: M, capacity: usize) -> Self {
@@ -158,6 +167,8 @@ impl<M: Machine> Runner<M> {
             timers: Vec::new(),
             next_timer: 0,
             last_time: None,
+            activities: Vec::new(),
+            next_activity: 0,
         }
     }
     pub fn machine(&self) -> &M {
@@ -195,7 +206,7 @@ impl<M: Machine> Runner<M> {
         let mut recalled = VecDeque::new();
         for _ in 0..self.deferred.len() {
             let (rule, event) = self.deferred.pop_front().unwrap();
-            if !self.live_timer(&event) {
+            if !self.live_timer(&event) || !self.live_activity(&event) {
                 self.sink.inbox.borrow_mut().pending -= 1;
             } else if self.rules[rule].scope.active(state) {
                 self.deferred.push_back((rule, event));
@@ -209,12 +220,18 @@ impl<M: Machine> Runner<M> {
     }
     pub async fn drain(&mut self, max_steps: usize) -> Result<usize, RunError<M::Error>> {
         self.reconcile_timers();
+        self.reconcile_activities();
         self.recall();
         if self.machine().is_poisoned() {
             return Err(RunError::Poisoned);
         }
         let mut steps = 0;
         loop {
+            core::future::poll_fn(|cx| {
+                self.poll_activities(cx);
+                core::task::Poll::Ready(())
+            })
+            .await;
             let runnable = {
                 let inbox = self.sink.inbox.borrow();
                 !inbox.internal.is_empty() || !inbox.external.is_empty()
@@ -234,7 +251,7 @@ impl<M: Machine> Runner<M> {
                     .unwrap()
             };
             let state = self.machine().state();
-            if !self.live_timer(&event) {
+            if !self.live_timer(&event) || !self.live_activity(&event) {
                 self.sink.inbox.borrow_mut().pending -= 1;
                 steps += 1;
                 continue;
@@ -250,9 +267,13 @@ impl<M: Machine> Runner<M> {
                 if let Some(id) = event.timer {
                     self.timers.retain(|timer| timer.id != id);
                 }
+                if let Some(id) = event.activity {
+                    self.activities.retain(|activity| activity.id != id);
+                }
                 let result = self.machine.as_mut().unwrap().dispatch(event.event).await;
                 // A failed automatic microstep may follow a committed external edge.
                 self.reconcile_timers();
+                self.reconcile_activities();
                 self.recall();
                 result.map_err(RunError::Dispatch)?;
             }

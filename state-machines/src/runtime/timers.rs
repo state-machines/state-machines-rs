@@ -100,6 +100,7 @@ impl<M: Machine> Runner<M> {
                 inbox.external.push_back(Envelope {
                     event: timer.event.take().unwrap(),
                     timer: Some(timer.id),
+                    activity: None,
                 });
             }
             if count > 0 { inbox.waker.take() } else { None }

@@ -1498,6 +1498,28 @@ of an already queued/deferred event releases capacity when `drain` skips it.
 Scheduling errors return the original owned event; backwards clocks and deadline
 overflow are rejected. Timers, queues and runtime epochs are not persisted snapshots.
 
+### Activities and invoked child machines
+
+`runner.invoke_future(future)` owns and polls a future whose output is a parent
+event. Map an operation's `Result` to done/error events inside that future.
+Completion enters the internal queue exactly once; each invocation reserves one
+mailbox slot. `cancel_activity(id)` or exit/re-entry of the invoking leaf drops
+the future and suppresses stale queued completion events. Internal edges retain
+activities. This does **not** promise to abort detached executor tasks merely
+because their join handle was dropped.
+
+`invoke_child(child_runner, batch_limit, on_done, on_error)` returns an activity
+ID and the child's owned-event sink. A child final state maps to `on_done(child)`;
+a dispatch failure maps to `on_error(error, child)`. Both recover the owned child
+machine. Completion/cancellation closes its channel; full/invalid invocation
+returns the unpolled future or child to the caller.
+
+`drain` polls pending activities without waiting for them. Use
+`wait_for_work().await` to sleep on real mailbox/activity wakers, then drain.
+Child batches yield cooperatively at their step limit. There are no spawned
+tasks or threads; the host drives this single-executor runner. Invocations are
+explicit runtime operations, scoped to leaf visits (not declarative entry hooks
+or automatically inherited composite activities), and are not snapshots.
 - **[API Docs](https://docs.rs/state-machines)** – Full API reference
 - **[Crates.io](https://crates.io/crates/state-machines)** – Published crate versions
 - **[GitHub](https://github.com/state-machines/state-machines-rs)** – Source code and issues
