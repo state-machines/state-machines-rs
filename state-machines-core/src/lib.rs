@@ -40,6 +40,14 @@ pub enum CompletionEvent {
     Superstate(&'static str),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SnapshotError {
+    UnsupportedVersion { expected: u32, actual: u32 },
+    WrongMachine,
+    UnknownState,
+    InactiveData { state: &'static str },
+}
+
 /// Represents an error that occurred while attempting a transition.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransitionError<S>

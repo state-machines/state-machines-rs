@@ -106,6 +106,18 @@ For multiple candidates, typestate returns
 dynamic dispatch selects the same outcome without duplicate available events.
 Branch selection precedes around/before callbacks.
 
+**Snapshot/Restore** – Enable the optional `serde` feature and declare
+`dynamic: true, snapshot: true`. `into_snapshot()` consumes a dynamic machine
+into its generated `<Machine>Snapshot<C>`: version, machine identity, active
+leaf, context, and leaf/superstate data. No `Clone` bound is needed.
+`Dynamic<Machine>::from_snapshot(snapshot)` validates version, identity, state,
+and inactive-data consistency, returning the intact snapshot on error.
+Context/data must support Serde. Restore invokes no callbacks and emits no
+completion notifications; pending notifications are not persisted.
+Active data may be `None`, matching the existing constructors' lazy data
+initialization. Version 1 describes the snapshot format, not automatic
+application-schema migration. The feature works with `no_std` + `alloc`.
+
 ---
 
 ## Quick Start

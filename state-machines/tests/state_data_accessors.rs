@@ -4,11 +4,13 @@
 use state_machines::state_machine;
 
 #[derive(Default, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct ConfigData {
     version: u32,
 }
 
 #[derive(Default, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct ActiveData {
     connection_id: u64,
 }
@@ -16,6 +18,7 @@ struct ActiveData {
 state_machine! {
     name: DataMachine,
     dynamic: true,
+    snapshot: true,
     initial: Idle,
     states: [
         Idle,
@@ -95,4 +98,44 @@ fn data_persists_across_transitions() {
     machine.handle(DataMachineEvent::Heartbeat).unwrap();
     assert_eq!(machine.active_data().unwrap().connection_id, 7);
     assert_eq!(machine.current_state(), DataMachineState::Active);
+
+    #[cfg(feature = "serde")]
+    {
+        let json = serde_json::to_string(&machine.into_snapshot()).unwrap();
+        let mut snapshot: DataMachineSnapshot<()> = serde_json::from_str(&json).unwrap();
+        snapshot.version = 2;
+        let (mut snapshot, error) = DynamicDataMachine::from_snapshot(snapshot).unwrap_err();
+        assert_eq!(
+            error,
+            state_machines::SnapshotError::UnsupportedVersion {
+                expected: 1,
+                actual: 2
+            }
+        );
+        snapshot.version = 1;
+        snapshot.machine = "Other".into();
+        let (mut snapshot, error) = DynamicDataMachine::from_snapshot(snapshot).unwrap_err();
+        assert_eq!(error, state_machines::SnapshotError::WrongMachine);
+        snapshot.machine = "DataMachine".into();
+        snapshot.state = "Missing".into();
+        let data = snapshot.__state_data_active.take();
+        let (mut snapshot, error) = DynamicDataMachine::from_snapshot(snapshot).unwrap_err();
+        assert_eq!(error, state_machines::SnapshotError::UnknownState);
+        snapshot.state = "Active".into();
+        snapshot.__state_data_active = data;
+        snapshot.__state_data_configured = Some(ConfigData::default());
+        let (mut snapshot, error) = DynamicDataMachine::from_snapshot(snapshot).unwrap_err();
+        assert_eq!(
+            error,
+            state_machines::SnapshotError::InactiveData {
+                state: "Configured"
+            }
+        );
+        snapshot.__state_data_configured = None;
+        let mut restored = DynamicDataMachine::from_snapshot(snapshot).unwrap();
+        assert_eq!(restored.active_data().unwrap().connection_id, 7);
+        assert_eq!(restored.take_completion_events(), []);
+        restored.handle(DataMachineEvent::Heartbeat).unwrap();
+        assert_eq!(restored.active_data().unwrap().connection_id, 7);
+    }
 }

@@ -32,6 +32,7 @@ impl Parse for StateMachine {
         let mut callbacks = GlobalCallbacks::default();
         let mut lifecycle = Vec::new();
         let mut final_states = Vec::new();
+        let mut snapshot = false;
         let mut async_mode = false;
         let mut dynamic_mode = false;
         let mut state_storage = Vec::new();
@@ -54,6 +55,10 @@ impl Parse for StateMachine {
                         input.parse::<Token![:]>()?;
                         let value: syn::LitBool = input.parse()?;
                         dynamic_mode = value.value();
+                    }
+                    "snapshot" => {
+                        input.parse::<Token![:]>()?;
+                        snapshot = input.parse::<syn::LitBool>()?.value;
                     }
                     "name" => {
                         input.parse::<Token![:]>()?;
@@ -170,6 +175,7 @@ impl Parse for StateMachine {
             callbacks,
             lifecycle,
             final_states,
+            snapshot,
             async_mode,
             dynamic_mode,
             transition_graph: TransitionGraph::default(),

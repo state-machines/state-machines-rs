@@ -10,6 +10,22 @@ pub mod __private {
     pub use alloc::string::String;
     pub use alloc::vec;
     pub use alloc::vec::Vec;
+    #[cfg(feature = "serde")]
+    pub use serde;
+}
+
+#[doc(hidden)]
+#[cfg(feature = "serde")]
+#[macro_export]
+macro_rules! __sm_if_serde {
+    ($($item:tt)*) => { $($item)* };
+}
+
+#[doc(hidden)]
+#[cfg(not(feature = "serde"))]
+#[macro_export]
+macro_rules! __sm_if_serde {
+    ($($item:tt)*) => {};
 }
 
 /// Emit the macro-generated introspection code only when this crate's
@@ -38,7 +54,7 @@ pub mod core {
 
 pub use state_machines_core::{
     AroundOutcome, AroundStage, CallbackError, CompletionEvent, DynamicError, EventError,
-    MachineState, SubstateOf, TransitionError, TransitionErrorKind,
+    MachineState, SnapshotError, SubstateOf, TransitionError, TransitionErrorKind,
 };
 pub use state_machines_macro::state_machine;
 

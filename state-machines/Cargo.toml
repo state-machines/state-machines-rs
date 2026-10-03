@@ -17,9 +17,11 @@ include = ["src/**/*", "Cargo.toml", "README.md", "LICENSE-MIT", "LICENSE-APACHE
 [dependencies]
 state-machines-core = { version = "0.10.0", path = "../state-machines-core" }
 state-machines-macro = { version = "0.22.1", path = "../state-machines-macro" }
+serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 
 [dev-dependencies]
 pollster = "0.4"
+serde_json = "1"
 criterion = { version = "0.8", features = ["async_tokio"] }
 tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 
@@ -32,6 +34,7 @@ default = []
 async = ["state-machines-macro/async"]
 dynamic = ["state-machines-macro/dynamic"]
 inspect = ["state-machines-core/inspect"]
+serde = ["dep:serde"]
 std = ["inspect", "state-machines-core/std"]
 
 [package.metadata.docs.rs]

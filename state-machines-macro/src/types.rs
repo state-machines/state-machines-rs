@@ -26,6 +26,7 @@ pub struct StateMachine {
     pub callbacks: GlobalCallbacks,
     pub lifecycle: Vec<StateLifecycle>,
     pub final_states: Vec<Ident>,
+    pub snapshot: bool,
     pub async_mode: bool,
     pub dynamic_mode: bool,
     pub transition_graph: TransitionGraph,

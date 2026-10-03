@@ -80,6 +80,11 @@ impl StateMachine {
     /// and a descriptive message.
     pub fn validate(&self) -> Result<()> {
         err_if(
+            self.snapshot && !(self.dynamic_mode || cfg!(feature = "dynamic")),
+            self.name.span(),
+            "`snapshot: true` requires dynamic mode",
+        )?;
+        err_if(
             self.async_mode && !cfg!(feature = "async"),
             self.name.span(),
             "`async: true` requires enabling the `async` feature on `state-machines`",

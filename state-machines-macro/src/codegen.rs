@@ -7,6 +7,7 @@ pub mod branching;
 pub mod dynamic;
 pub mod finality;
 pub mod inspect;
+pub mod snapshot;
 pub mod typestate;
 pub mod utils;
 
@@ -36,10 +37,12 @@ impl StateMachine {
 
         if should_generate_dynamic {
             let dynamic_code = dynamic::generate_dynamic_wrapper(self)?;
+            let snapshot_code = snapshot::generate(self);
             Ok(quote! {
                 #typestate_code
                 #inspect_code
                 #dynamic_code
+                #snapshot_code
             })
         } else {
             Ok(quote! {
