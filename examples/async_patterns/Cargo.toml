@@ -7,4 +7,4 @@ publish = false
 
 [dependencies]
 state-machines = { path = "../../state-machines", features = ["async"] }
-pollster = "0.4"
+pollster.workspace = true

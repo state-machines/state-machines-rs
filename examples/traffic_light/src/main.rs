@@ -7,6 +7,8 @@
 
 use state_machines::state_machine;
 
+mod timed;
+
 state_machine! {
     name: TrafficLight,
     dynamic: true,
@@ -48,4 +50,6 @@ fn main() {
 
     let is_available = light.is_available_event(&TrafficLightEvent::Next);
     println!("is_available: {:?}", is_available);
+
+    pollster::block_on(timed::run_demo());
 }

@@ -14,3 +14,6 @@ resolver = "2"
 
 [workspace.package]
 rust-version = "1.99"
+
+[workspace.dependencies]
+pollster = "0.4"

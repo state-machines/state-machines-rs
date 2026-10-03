@@ -6,4 +6,5 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
-state-machines = { path = "../../state-machines", features = ["std"] }
+state-machines = { path = "../../state-machines", features = ["std", "runtime"] }
+pollster.workspace = true
