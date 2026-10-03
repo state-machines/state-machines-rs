@@ -95,6 +95,8 @@
 
 use state_machines::state_machine;
 
+mod startup;
+
 // Define the airlock state machine
 //
 // This macro generates:
@@ -182,4 +184,6 @@ fn main() {
     println!(
         "Rust: let airlock = airlock.depressurize().unwrap()  # Type change, compile-time check"
     );
+
+    startup::run_demo();
 }
