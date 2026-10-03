@@ -130,7 +130,9 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use state_machines::{EventError, state_machine};
-use std::time::Duration;
+use std::task::Poll;
+
+mod invocation;
 
 /// Simulated signal strength (0-100)
 static SIGNAL_STRENGTH: AtomicU64 = AtomicU64::new(0);
@@ -155,7 +157,7 @@ impl SignalSystem {
     async fn scan_for_signal() -> u64 {
         println!("  [SignalSystem] Scanning for signals...");
         // Simulate async I/O delay
-        pollster::block_on(async_std_sleep(Duration::from_millis(100)));
+        simulated_io().await;
         let strength = SIGNAL_STRENGTH.load(Ordering::Relaxed);
         println!("  [SignalSystem] Scan complete: {} strength", strength);
         strength
@@ -164,7 +166,7 @@ impl SignalSystem {
     async fn establish_lock() -> bool {
         println!("  [SignalSystem] Establishing signal lock...");
         // Simulate network round-trip
-        pollster::block_on(async_std_sleep(Duration::from_millis(50)));
+        simulated_io().await;
         let available = NETWORK_AVAILABLE.load(Ordering::Relaxed);
         println!("  [SignalSystem] Lock status: {}", available);
         available
@@ -173,18 +175,27 @@ impl SignalSystem {
     async fn transmit_data() {
         println!("  [SignalSystem] Transmitting data packets...");
         for i in 1..=3 {
-            pollster::block_on(async_std_sleep(Duration::from_millis(30)));
+            simulated_io().await;
             println!("  [SignalSystem]   Packet {} sent", i);
         }
         println!("  [SignalSystem] Transmission complete");
     }
 }
 
-/// Simple async sleep using standard library (for no_std compatibility demo)
-async fn async_std_sleep(duration: Duration) {
-    // In real code, use tokio::time::sleep or similar
-    // This is a simplified version for the example
-    std::thread::sleep(duration);
+/// Deterministic simulated I/O yields once without blocking or sleeping.
+/// Real hardware/network futures should use their driver's actual wakeups.
+async fn simulated_io() {
+    let mut yielded = false;
+    std::future::poll_fn(|cx| {
+        if yielded {
+            Poll::Ready(())
+        } else {
+            yielded = true;
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        }
+    })
+    .await;
 }
 
 // Define async drone scout state machine
@@ -242,7 +253,7 @@ impl<C, S> DroneScout<C, S> {
     async fn has_power(&self, _ctx: &C) -> bool {
         println!("[Guard] Checking power status...");
         // Simulate async hardware query
-        pollster::block_on(async_std_sleep(Duration::from_millis(10)));
+        simulated_io().await;
         let has_power = true; // Always have power in this demo
         println!("[Guard] Power status: {}", has_power);
         has_power
@@ -277,7 +288,7 @@ impl<C, S> DroneScout<C, S> {
     async fn log_scan_start(&self) {
         println!("[Before] Starting scan sequence...");
         // Simulate logging to remote telemetry
-        pollster::block_on(async_std_sleep(Duration::from_millis(20)));
+        simulated_io().await;
         println!("[Before] Scan sequence logged to mission control");
     }
 
@@ -285,7 +296,7 @@ impl<C, S> DroneScout<C, S> {
     async fn log_signal_locked(&self) {
         println!("[After] Signal lock acquired!");
         // Simulate async logging
-        pollster::block_on(async_std_sleep(Duration::from_millis(15)));
+        simulated_io().await;
         println!("[After] Lock status transmitted to base");
     }
 
@@ -293,13 +304,13 @@ impl<C, S> DroneScout<C, S> {
     async fn prepare_transmission(&self) -> Result<(), DroneError> {
         println!("[Before] Preparing data transmission...");
         println!("[Before]   Compressing data...");
-        pollster::block_on(async_std_sleep(Duration::from_millis(25)));
+        simulated_io().await;
         if PREP_SHOULD_FAIL.load(Ordering::Relaxed) {
             println!("[Before]   Compression worker unavailable!");
             return Err(DroneError::PreparationFailed);
         }
         println!("[Before]   Encryption enabled...");
-        pollster::block_on(async_std_sleep(Duration::from_millis(25)));
+        simulated_io().await;
         println!("[Before] Ready to transmit");
         Ok(())
     }
@@ -324,6 +335,22 @@ fn print_async_error(err: EventError<DroneError>) {
     }
 }
 
+type StepResult<From, To> =
+    Result<DroneScout<(), To>, (DroneScout<(), From>, EventError<DroneError>)>;
+
+fn nominal_step<From, To>(result: StepResult<From, To>, state: &str) -> DroneScout<(), To> {
+    match result {
+        Ok(drone) => {
+            println!("✓ Transitioned to {state}\n");
+            drone
+        }
+        Err((_drone, error)) => {
+            print_async_error(error);
+            panic!("nominal transition to {state} failed");
+        }
+    }
+}
+
 fn main() {
     println!("=== Drone Scout Communication Demo ===\n");
     println!("This example demonstrates async state machine patterns.\n");
@@ -339,56 +366,16 @@ fn main() {
 
     // IMPORTANT: Notice .await on every transition
     println!("Calling drone.scan().await...\n");
-    let drone = pollster::block_on(async {
-        match drone.scan().await {
-            Ok(d) => {
-                println!("✓ Transitioned to Scanning\n");
-                Ok(d)
-            }
-            Err((_d, err)) => {
-                println!("✗ Scan failed:");
-                print_async_error(err);
-                Err(())
-            }
-        }
-    });
-    let drone = drone.unwrap();
+    let drone = nominal_step(pollster::block_on(drone.scan()), "Scanning");
 
     println!("Calling drone.lock().await...\n");
-    let drone = pollster::block_on(async {
-        match drone.lock().await {
-            Ok(d) => {
-                println!("✓ Transitioned to SignalLock\n");
-                Ok(d)
-            }
-            Err((_d, err)) => {
-                println!("✗ Lock failed:");
-                print_async_error(err);
-                Err(())
-            }
-        }
-    });
-    let drone = drone.unwrap();
+    let drone = nominal_step(pollster::block_on(drone.lock()), "SignalLock");
 
     println!("Calling drone.transmit().await...\n");
-    let drone = pollster::block_on(async {
-        match drone.transmit().await {
-            Ok(d) => {
-                println!("✓ Transitioned to Transmitting\n");
-                Ok(d)
-            }
-            Err((_d, err)) => {
-                println!("✗ Transmission failed:");
-                print_async_error(err);
-                Err(())
-            }
-        }
-    });
-    let drone = drone.unwrap();
+    let drone = nominal_step(pollster::block_on(drone.transmit()), "Transmitting");
 
     println!("Calling drone.complete().await...\n");
-    let _drone = pollster::block_on(async { drone.complete().await.unwrap() });
-    println!("✓ Transitioned to DataReceived\n");
+    let _drone = nominal_step(pollster::block_on(drone.complete()), "DataReceived");
 
     // Scenario 2: Weak signal - guard failure
     println!("\n--- Scenario 2: Weak Signal (Guard Failure) ---");
@@ -448,7 +435,7 @@ fn main() {
     println!("✓ Must .await every transition");
     println!("✓ Can use async I/O in guards (scan_for_signal, etc.)");
     println!("✓ Callback errors return the original machine for retry");
-    println!("✓ Context must be Send for async machines");
+    println!("✓ Executor choice determines whether a future/context must be Send");
     println!("✓ Don't use blocking operations in async guards");
 
     println!("\n=== Sync vs Async Decision Guide ===");
@@ -464,7 +451,9 @@ fn main() {
 
     println!("\n=== Common Mistakes ===");
     println!("✗ Mixing sync and async guards (all must be async)");
-    println!("✗ Using Rc instead of Arc in context (not Send)");
+    println!("✗ Moving a non-Send future to a multi-threaded executor");
     println!("✗ Blocking with thread::sleep instead of async sleep");
     println!("✗ Forgetting .await on transitions");
+
+    pollster::block_on(invocation::run_demo());
 }

@@ -6,5 +6,5 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
-state-machines = { path = "../../state-machines", features = ["async"] }
+state-machines = { path = "../../state-machines", features = ["async", "runtime"] }
 pollster.workspace = true
