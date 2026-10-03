@@ -3,6 +3,9 @@
 use alloc::{collections::VecDeque, rc::Rc, vec::Vec};
 use core::{cell::RefCell, fmt, task::Waker};
 
+mod timers;
+pub use timers::{Clock, ClockError, ScheduleError, TimerId};
+
 /// Implemented by generated dynamic machines when the facade's runtime feature is enabled.
 #[allow(async_fn_in_trait)]
 pub trait Machine {
@@ -29,9 +32,13 @@ impl<E> QueueError<E> {
     }
 }
 
+struct Envelope<E> {
+    event: E,
+    timer: Option<TimerId>,
+}
 struct Inbox<E> {
-    internal: VecDeque<E>,
-    external: VecDeque<E>,
+    internal: VecDeque<Envelope<E>>,
+    external: VecDeque<Envelope<E>>,
     pending: usize,
     capacity: usize,
     closed: bool,
@@ -80,6 +87,7 @@ impl<E> EventSink<E> {
             if inbox.pending == inbox.capacity {
                 return Err(QueueError::Full(event));
             }
+            let event = Envelope { event, timer: None };
             if internal {
                 inbox.internal.push_back(event);
             } else {
@@ -135,7 +143,10 @@ pub struct Runner<M: Machine> {
     machine: Option<M>,
     sink: EventSink<M::Event>,
     rules: Vec<Deferral<M::State, M::Event>>,
-    deferred: VecDeque<(usize, M::Event)>,
+    deferred: VecDeque<(usize, Envelope<M::Event>)>,
+    timers: Vec<timers::Timer<M::State, M::Event>>,
+    next_timer: u64,
+    last_time: Option<u64>,
 }
 impl<M: Machine> Runner<M> {
     pub fn new(machine: M, capacity: usize) -> Self {
@@ -144,6 +155,9 @@ impl<M: Machine> Runner<M> {
             sink: EventSink::new(capacity),
             rules: Vec::new(),
             deferred: VecDeque::new(),
+            timers: Vec::new(),
+            next_timer: 0,
+            last_time: None,
         }
     }
     pub fn machine(&self) -> &M {
@@ -181,7 +195,9 @@ impl<M: Machine> Runner<M> {
         let mut recalled = VecDeque::new();
         for _ in 0..self.deferred.len() {
             let (rule, event) = self.deferred.pop_front().unwrap();
-            if self.rules[rule].scope.active(state) {
+            if !self.live_timer(&event) {
+                self.sink.inbox.borrow_mut().pending -= 1;
+            } else if self.rules[rule].scope.active(state) {
                 self.deferred.push_back((rule, event));
             } else {
                 recalled.push_back(event);
@@ -192,6 +208,8 @@ impl<M: Machine> Runner<M> {
         inbox.external = recalled;
     }
     pub async fn drain(&mut self, max_steps: usize) -> Result<usize, RunError<M::Error>> {
+        self.reconcile_timers();
+        self.recall();
         if self.machine().is_poisoned() {
             return Err(RunError::Poisoned);
         }
@@ -216,21 +234,27 @@ impl<M: Machine> Runner<M> {
                     .unwrap()
             };
             let state = self.machine().state();
+            if !self.live_timer(&event) {
+                self.sink.inbox.borrow_mut().pending -= 1;
+                steps += 1;
+                continue;
+            }
             if let Some(rule) = self
                 .rules
                 .iter()
-                .position(|rule| rule.scope.active(state) && (rule.matches)(&event))
+                .position(|rule| rule.scope.active(state) && (rule.matches)(&event.event))
             {
                 self.deferred.push_back((rule, event));
             } else {
                 self.sink.inbox.borrow_mut().pending -= 1;
-                self.machine
-                    .as_mut()
-                    .unwrap()
-                    .dispatch(event)
-                    .await
-                    .map_err(RunError::Dispatch)?;
+                if let Some(id) = event.timer {
+                    self.timers.retain(|timer| timer.id != id);
+                }
+                let result = self.machine.as_mut().unwrap().dispatch(event.event).await;
+                // A failed automatic microstep may follow a committed external edge.
+                self.reconcile_timers();
                 self.recall();
+                result.map_err(RunError::Dispatch)?;
             }
             steps += 1;
         }
@@ -242,6 +266,20 @@ impl<M: Machine> Runner<M> {
 }
 impl<M: Machine> Drop for Runner<M> {
     fn drop(&mut self) {
-        self.sink.inbox.borrow_mut().closed = true;
+        let (waker, internal, external) = {
+            let mut inbox = self.sink.inbox.borrow_mut();
+            inbox.closed = true;
+            inbox.pending = 0;
+            (
+                inbox.waker.take(),
+                core::mem::take(&mut inbox.internal),
+                core::mem::take(&mut inbox.external),
+            )
+        };
+        // User event destructors may use a sink; never run them under its borrow.
+        drop((internal, external));
+        if let Some(waker) = waker {
+            waker.wake();
+        }
     }
 }

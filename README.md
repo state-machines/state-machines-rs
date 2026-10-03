@@ -1482,6 +1482,22 @@ self-re-entry, but not internal edges; conversions/restore reset this runtime ta
 With `runtime`, custom error types on public generated machines must also be
 public, because they are exposed as the adapter's associated error type.
 
+### State-scoped deadlines
+
+`runner.schedule_after(&clock, delay, event)` reserves mailbox capacity and
+returns a cancellable `TimerId`. Implement `runtime::Clock::now()` in monotonic
+`u64` ticks; the host calls `tick(&clock)` to enqueue due timeouts, then `drain`.
+`next_deadline()` helps integrate an executor's timer driver. No wall clock,
+sleeping task, or executor dependency is built in.
+
+Timers belong to the current leaf **visit**: internal transitions retain them;
+external transitions (including self-re-entry) cancel them. The visit is checked
+again at delivery, so a queued timeout cannot leak into a new visit. Equal
+deadlines use scheduling order; due events join the external FIFO. Cancellation
+of an already queued/deferred event releases capacity when `drain` skips it.
+Scheduling errors return the original owned event; backwards clocks and deadline
+overflow are rejected. Timers, queues and runtime epochs are not persisted snapshots.
+
 - **[API Docs](https://docs.rs/state-machines)** – Full API reference
 - **[Crates.io](https://crates.io/crates/state-machines)** – Published crate versions
 - **[GitHub](https://github.com/state-machines/state-machines-rs)** – Source code and issues
