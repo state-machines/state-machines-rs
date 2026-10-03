@@ -1,4 +1,4 @@
-use super::Machine;
+use super::{Clock, Machine};
 use alloc::collections::VecDeque;
 
 /// Explicit region routing; forked payloads are owned separately, never cloned.
@@ -61,6 +61,12 @@ impl<L: Machine, R: Machine> Parallel<L, R> {
     pub fn right(&self) -> &R {
         &self.right
     }
+    pub fn left_mut(&mut self) -> &mut L {
+        &mut self.left
+    }
+    pub fn right_mut(&mut self) -> &mut R {
+        &mut self.right
+    }
     pub fn current_state(&self) -> (L::State, R::State) {
         (self.left.state(), self.right.state())
     }
@@ -119,13 +125,17 @@ impl<L: Machine, R: Machine> Parallel<L, R> {
                     }),
             },
         };
+        self.observe_join();
+        result
+    }
+
+    fn observe_join(&mut self) {
         // Also observe partial progress before a failed automatic microstep.
         let finished = self.is_finished();
         if finished && !self.was_finished {
             self.joins.push_back(self.current_state());
         }
         self.was_finished = finished;
-        result
     }
 }
 impl<L: Machine, R: Machine> Machine for Parallel<L, R> {
@@ -146,5 +156,44 @@ impl<L: Machine, R: Machine> Machine for Parallel<L, R> {
     }
     async fn dispatch(&mut self, event: Self::Event) -> Result<(), Self::Error> {
         self.handle(event).await
+    }
+    fn start_regions(&mut self, clock: &impl Clock) -> Result<(), Self::Error> {
+        self.left
+            .start_regions(clock)
+            .map_err(ParallelError::Left)?;
+        self.right
+            .start_regions(clock)
+            .map_err(|error| ParallelError::Right {
+                error,
+                left_committed: true,
+            })
+    }
+    fn tick_regions(&mut self, clock: &impl Clock) -> Result<(), Self::Error> {
+        self.left.tick_regions(clock).map_err(ParallelError::Left)?;
+        self.right
+            .tick_regions(clock)
+            .map_err(|error| ParallelError::Right {
+                error,
+                left_committed: true,
+            })
+    }
+    fn poll_regions(&mut self, cx: &mut core::task::Context<'_>) -> usize {
+        self.left.poll_regions(cx) + self.right.poll_regions(cx)
+    }
+    async fn drive_regions(&mut self, max_steps: usize) -> Result<usize, Self::Error> {
+        let result = match self.left.drive_regions(max_steps).await {
+            Err(error) => Err(ParallelError::Left(error)),
+            Ok(left) => self
+                .right
+                .drive_regions(max_steps)
+                .await
+                .map(|right| left + right)
+                .map_err(|error| ParallelError::Right {
+                    error,
+                    left_committed: true,
+                }),
+        };
+        self.observe_join();
+        result
     }
 }

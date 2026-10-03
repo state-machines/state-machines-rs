@@ -216,6 +216,7 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
                         lifecycle: ::state_machines::__private::vec![ #( #lifecycle, )* ],
                         runtime: ::state_machines::__private::vec![#(#runtime),*],
                         final_states: #final_states,
+                        ..::core::default::Default::default()
                     }
                 }
             }

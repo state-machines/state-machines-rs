@@ -7,8 +7,8 @@ pub mod schema;
 
 #[cfg(feature = "inspect")]
 pub use schema::{
-    DeadlineSchema, DiagnosticLevel, EventSchema, Inspectable, MachineSchema,
-    RuntimeLifecycleSchema, SchemaDiagnostic, StateLifecycleSchema, SuperstateSchema,
+    DeadlineSchema, DiagnosticLevel, EventSchema, Inspectable, MachineSchema, RegionEventSchema,
+    RegionSchema, RuntimeLifecycleSchema, SchemaDiagnostic, StateLifecycleSchema, SuperstateSchema,
     TransitionSchema,
 };
 

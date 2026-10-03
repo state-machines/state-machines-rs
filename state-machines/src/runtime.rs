@@ -9,6 +9,8 @@ mod activities;
 pub use activities::{ActivityId, ChildInvokeError, InvokeError, InvokeFailure};
 mod parallel;
 pub use parallel::{Parallel, ParallelError, ParallelEvent};
+mod region;
+pub use region::{Region, RegionError};
 mod work;
 pub use work::WorkScope;
 mod lifecycle;
@@ -48,6 +50,20 @@ pub trait Machine {
     }
     async fn automatic_enabled(&self) -> bool {
         false
+    }
+    /// Host-driven lifecycle operations for composed regions. Ordinary machines
+    /// use their enclosing Runner; compositions forward these to region runners.
+    fn start_regions(&mut self, _clock: &impl Clock) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn tick_regions(&mut self, _clock: &impl Clock) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn poll_regions(&mut self, _cx: &mut core::task::Context<'_>) -> usize {
+        0
+    }
+    async fn drive_regions(&mut self, _max_steps: usize) -> Result<usize, Self::Error> {
+        Ok(0)
     }
 }
 

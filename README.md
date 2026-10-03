@@ -1586,10 +1586,49 @@ requires every region to finish; `take_join()` returns each newly completed
 configuration once. Construction from already-final regions remains inert.
 
 `Parallel` implements `Machine`, so it can use a runner or be invoked as a child.
-`into_regions()` recovers ownership for each region's own snapshot API. The
-adapter is not a macro-native parallel-state DSL: region history/snapshots remain
-separate, event routing is explicit, and there is no cross-region transaction or
+`into_regions()` recovers ownership. There is no cross-region transaction or
 automatic conflict arbitration.
+
+### Native named orthogonal regions
+
+With `runtime`, the same macro can compose two or more existing dynamic machines:
+
+```ignore
+state_machine! {
+    name: Session,
+    regions: { network: DynamicNetwork<()>, auth: DynamicAuth<()> },
+    events {
+        open {
+            payload: (NetworkRequest, Credentials),
+            routes: {
+                network: NetworkEvent::Connect(payload.0),
+                auth: AuthEvent::Login(payload.1),
+            }
+        }
+    }
+}
+let mut session = Session::new(network, auth, 32);
+session.start(&clock)?;
+session.handle(SessionEvent::Open((request, credentials))).await?;
+let configuration = session.current_state(); // SessionState { network, auth }
+```
+
+Routes explicitly split owned payloads without cloning. Dispatch follows region
+declaration order, including partial errors; unattempted route values are dropped
+on failure, not falsely reported as rolled back. Each region owns the existing
+`Runner`, so declarative deferral, deadlines, activities and automatic microsteps
+use the same driver. `start`, `tick`, `poll_activities` and `drain` drive all regions,
+including nested native compositions. Budgets are **per region**, not a global
+cross-region microstep budget. `take_join` returns a named configuration once on
+all-regions-finished; construction is inert.
+
+Named accessors (`network()` / `network_mut()`) expose region runners and sinks.
+After driving one region directly, call the composition's `drain` to observe joins.
+Named work scopes use qualified paths such as `"network/Connecting"`; `"network"`
+is the continuously active region, not a leaf visit. Schema metadata records
+region names/types and common-event routes. Start a native composition explicitly
+before enclosing it in an ordinary runner or invoking it as a child; its region
+clocks remain host-driven.
 - **[API Docs](https://docs.rs/state-machines)** – Full API reference
 - **[Crates.io](https://crates.io/crates/state-machines)** – Published crate versions
 - **[GitHub](https://github.com/state-machines/state-machines-rs)** – Source code and issues

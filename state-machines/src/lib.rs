@@ -93,8 +93,8 @@ pub use state_machines_macro::state_machine;
 
 #[cfg(feature = "inspect")]
 pub use state_machines_core::{
-    DeadlineSchema, DiagnosticLevel, EventSchema, Inspectable, MachineSchema,
-    RuntimeLifecycleSchema, SchemaDiagnostic, StateLifecycleSchema, SuperstateSchema,
+    DeadlineSchema, DiagnosticLevel, EventSchema, Inspectable, MachineSchema, RegionEventSchema,
+    RegionSchema, RuntimeLifecycleSchema, SchemaDiagnostic, StateLifecycleSchema, SuperstateSchema,
     TransitionSchema,
 };
 

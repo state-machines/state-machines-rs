@@ -37,6 +37,7 @@ use proc_macro::TokenStream;
 // Module declarations
 mod codegen;
 mod parser;
+mod regions;
 mod types;
 mod validation;
 
@@ -136,6 +137,14 @@ mod validation;
 /// extensive documentation explaining the what, why, and how.
 #[proc_macro]
 pub fn state_machine(input: TokenStream) -> TokenStream {
+    let tokens: Vec<_> = input.clone().into_iter().collect();
+    if tokens.windows(2).any(|pair| {
+        matches!(&pair[0], proc_macro::TokenTree::Ident(name) if name.to_string() == "regions")
+            && matches!(&pair[1], proc_macro::TokenTree::Punct(punct) if punct.as_char() == ':')
+    }) {
+        let machine = syn::parse_macro_input!(input as regions::Regions);
+        return machine.expand().into();
+    }
     // Parse the macro input into our StateMachine structure
     // The Parse trait implementation is in parser.rs
     let machine = syn::parse_macro_input!(input as types::StateMachine);

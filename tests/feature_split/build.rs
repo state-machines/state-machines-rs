@@ -30,4 +30,12 @@ fn main() {
     // The runtime adapter follows the host facade while vanishing on the target.
     fn assert_runtime<M: state_machines::runtime::Machine>(_: &M) {}
     assert_runtime(&DynamicProbe::new(()));
+    state_machine! {
+        name: RegionsProbe,
+        regions: { first: DynamicProbe<()>, second: DynamicProbe<()> },
+        events { scan { routes: { first: ProbeEvent::Scan, second: ProbeEvent::Scan } } }
+    }
+    let native = RegionsProbe::new(DynamicProbe::new(()), DynamicProbe::new(()), 4);
+    assert_runtime(&native);
+    assert_eq!(RegionsProbe::schema().regions.len(), 2);
 }

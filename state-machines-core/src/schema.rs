@@ -49,6 +49,23 @@ pub struct MachineSchema {
     pub runtime: Vec<RuntimeLifecycleSchema>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub final_states: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub regions: Vec<RegionSchema>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub region_events: Vec<RegionEventSchema>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RegionSchema {
+    pub name: String,
+    pub machine: String,
+}
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RegionEventSchema {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload: Option<String>,
+    pub regions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -210,6 +227,32 @@ impl MachineSchema {
         let mut report = |level, message| {
             diagnostics.push(SchemaDiagnostic { level, message });
         };
+        if !self.regions.is_empty() {
+            let names: BTreeSet<_> = self.regions.iter().map(|region| &region.name).collect();
+            if self.regions.len() < 2 || names.len() != self.regions.len() {
+                report(
+                    DiagnosticLevel::Error,
+                    "invalid or duplicate orthogonal regions".into(),
+                );
+            }
+            if !self.states.is_empty() || !self.events.is_empty() {
+                report(
+                    DiagnosticLevel::Error,
+                    "orthogonal schema cannot also declare exclusive states/events".into(),
+                );
+            }
+            let mut events = BTreeSet::new();
+            for event in &self.region_events {
+                if !events.insert(&event.name) || event.regions.is_empty() {
+                    report(
+                        DiagnosticLevel::Error,
+                        "invalid or duplicate region event".into(),
+                    );
+                }
+                validate_scopes(event.regions.iter(), &names, "routed region", &mut report);
+            }
+            return diagnostics;
+        }
         let mut names = BTreeSet::new();
         for state in &self.states {
             if !names.insert(state) {
@@ -492,6 +535,17 @@ impl MachineSchema {
         let mut out = String::new();
 
         writeln!(out, "stateDiagram-v2").unwrap();
+        if !self.regions.is_empty() {
+            for (index, region) in self.regions.iter().enumerate() {
+                if index > 0 {
+                    writeln!(out, "    --").unwrap();
+                }
+                writeln!(out, "    state {} {{", region.name).unwrap();
+                writeln!(out, "        [*] --> {}", region.machine).unwrap();
+                writeln!(out, "    }}").unwrap();
+            }
+            return out;
+        }
 
         // Initial state
         writeln!(out, "    [*] --> {}", self.initial).unwrap();
