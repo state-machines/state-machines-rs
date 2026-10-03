@@ -88,13 +88,15 @@ fallible returns like event callbacks, and participate in failure recovery.
 `new()` remains an infallible constructor and does not invoke entry hooks.
 
 **Final States and Completion** – `final_states: [Done]` declares terminal leaves
-and rejects outgoing transitions. `is_finished()` identifies a root final;
+and rejects directly declared outgoing transitions. Inherited parent exits remain
+legal. `is_finished()` identifies a root final;
 `completion_events()` reports `CompletionEvent::Machine` or
 `CompletionEvent::Superstate("Parent")` for a nested final's immediate parent.
 Dynamic `take_completion_events()` drains notifications from successful
 `handle()` calls only. A parent's `lifecycle: { Parent { complete: [notify] } }`
 hook runs after the ordinary transition callbacks. Completion does not
-implicitly dispatch another event or mark every ancestor complete.
+implicitly mark every ancestor complete. Use parent completion triggers for
+automatic progression.
 
 **Guarded Branching** – Opt in with event `branching: true`; candidates from the
 same source are tried in declaration order. Each needs transition-level
@@ -1450,6 +1452,16 @@ those remain inert. Cycles return `DynamicError::StepLimit` with the last commit
 state intact. A failed selected action propagates, not falls back to another edge.
 Typestate methods remain explicit; use dynamic mode to follow runtime-dependent
 automatic chains.
+
+### Parent completion transitions
+
+Event `completion: Processing` fires automatically only when Processing's
+immediate child is a declared final leaf. Its transitions must use
+`from: Processing` and cannot be internal or require a payload. Completion hooks
+and notifications run before the parent advances; nested parent completions use
+the same bounded stabilization loop. Final leaves cannot declare their own exits,
+but inherited parent exits are legal. An explicit typed completion method is
+available only on the appropriate final leaves. Constructors/restore remain inert.
 
 - **[API Docs](https://docs.rs/state-machines)** – Full API reference
 - **[Crates.io](https://crates.io/crates/state-machines)** – Published crate versions

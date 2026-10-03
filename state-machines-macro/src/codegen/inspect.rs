@@ -56,6 +56,19 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
         .lookup
         .iter()
         .map(|(name, descendants)| {
+            let parent = descendants
+                .first()
+                .and_then(|leaf| machine.hierarchy.ancestors.get(&leaf.to_string()))
+                .and_then(|path| {
+                    path.iter()
+                        .position(|scope| scope.to_string() == *name)
+                        .and_then(|index| index.checked_sub(1))
+                        .map(|index| path[index].to_string())
+                });
+            let parent = parent.map_or(
+                quote! { None },
+                |parent| quote! { Some(::state_machines::__private::String::from(#parent)) },
+            );
             let initial_str = machine
                 .hierarchy
                 .initial_children
@@ -67,6 +80,7 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
 
             quote! {
                 ::state_machines::SuperstateSchema {
+                    parent: #parent,
                     name: ::state_machines::__private::String::from(#name),
                     descendants: #descendants,
                     initial: ::state_machines::__private::String::from(#initial_str),
@@ -133,9 +147,14 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
             let branching = event.branching;
             let hierarchical = event.hierarchical;
             let automatic = event.automatic;
+            let completion = event.completion.as_ref().map_or(quote! { None }, |scope| {
+                let scope = scope.to_string();
+                quote! { Some(::state_machines::__private::String::from(#scope)) }
+            });
 
             quote! {
                 ::state_machines::EventSchema {
+                    completion: #completion,
                     automatic: #automatic,
                     hierarchical: #hierarchical,
                     name: ::state_machines::__private::String::from(#event_name),

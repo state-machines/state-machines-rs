@@ -241,6 +241,7 @@ impl TransitionGraph {
 /// - Around callbacks that wrap the entire transition
 /// - An optional payload type for passing data
 pub struct Event {
+    pub completion: Option<Ident>,
     pub automatic: bool,
     pub hierarchical: bool,
     pub name: Ident,

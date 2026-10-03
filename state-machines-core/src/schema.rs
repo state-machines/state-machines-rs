@@ -46,6 +46,8 @@ pub struct StateLifecycleSchema {
 /// Serializable representation of a superstate (hierarchical state).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SuperstateSchema {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
     pub name: String,
     pub descendants: Vec<String>,
     pub initial: String,
@@ -54,6 +56,8 @@ pub struct SuperstateSchema {
 /// Serializable representation of an event.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EventSchema {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub automatic: bool,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -149,6 +153,21 @@ impl MachineSchema {
             );
         }
         for superstate in &self.superstates {
+            if let Some(parent) = &superstate.parent
+                && (parent == &superstate.name
+                    || !self.superstates.iter().any(|s| {
+                        &s.name == parent
+                            && superstate
+                                .descendants
+                                .iter()
+                                .all(|leaf| s.descendants.contains(leaf))
+                    }))
+            {
+                report(
+                    DiagnosticLevel::Error,
+                    format!("invalid parent of `{}`", superstate.name),
+                );
+            }
             if !names.insert(&superstate.name) {
                 report(
                     DiagnosticLevel::Error,
@@ -188,6 +207,19 @@ impl MachineSchema {
         let mut events = BTreeSet::new();
         let mut edges = Vec::new();
         for event in &self.events {
+            if let Some(scope) = &event.completion
+                && (!event.automatic
+                    || !self.superstates.iter().any(|s| &s.name == scope)
+                    || event
+                        .transitions
+                        .iter()
+                        .any(|t| t.internal || t.sources.iter().any(|s| s != scope)))
+            {
+                report(
+                    DiagnosticLevel::Error,
+                    "invalid parent completion transition".into(),
+                );
+            }
             if event.automatic && event.payload.is_some() {
                 report(
                     DiagnosticLevel::Error,
@@ -289,6 +321,22 @@ impl MachineSchema {
                         report(DiagnosticLevel::Error, format!("unknown source `{source}`"));
                     }
                     for leaf in leaves {
+                        if let Some(scope) = &event.completion {
+                            let parent = self
+                                .superstates
+                                .iter()
+                                .find(|s| {
+                                    s.descendants.contains(leaf)
+                                        && !self.superstates.iter().any(|child| {
+                                            child.parent.as_ref() == Some(&s.name)
+                                                && child.descendants.contains(leaf)
+                                        })
+                                })
+                                .map(|s| &s.name);
+                            if !self.final_states.contains(leaf) || parent != Some(scope) {
+                                continue;
+                            }
+                        }
                         if fallbacks.contains(leaf) {
                             report(
                                 DiagnosticLevel::Error,
@@ -323,7 +371,12 @@ impl MachineSchema {
                     format!("invalid or duplicate final state `{state}`"),
                 );
             }
-            if edges.iter().any(|(source, _)| *source == state) {
+            if self.events.iter().any(|event| {
+                event
+                    .transitions
+                    .iter()
+                    .any(|transition| transition.sources.contains(state))
+            }) {
                 report(
                     DiagnosticLevel::Error,
                     format!("final state `{state}` has outgoing transitions"),

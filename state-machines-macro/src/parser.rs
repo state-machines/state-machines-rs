@@ -406,6 +406,7 @@ pub fn parse_events(input: &ParseBuffer<'_>) -> Result<Vec<Event>> {
         let mut branching = false;
         let mut hierarchical = false;
         let mut automatic = false;
+        let mut completion = None;
 
         // Parse each field in the event block
         while !content.is_empty() {
@@ -425,6 +426,7 @@ pub fn parse_events(input: &ParseBuffer<'_>) -> Result<Vec<Event>> {
                 "branching" => branching = content.parse::<syn::LitBool>()?.value,
                 "hierarchical" => hierarchical = content.parse::<syn::LitBool>()?.value,
                 "automatic" => automatic = content.parse::<syn::LitBool>()?.value,
+                "completion" => completion = Some(content.parse()?),
                 other => {
                     if !hooks.parse_field(other, &content)? {
                         return Err(unexpected_key(&key));
@@ -436,7 +438,8 @@ pub fn parse_events(input: &ParseBuffer<'_>) -> Result<Vec<Event>> {
         }
 
         events.push(Event {
-            automatic,
+            automatic: automatic || completion.is_some(),
+            completion,
             hierarchical,
             name,
             payload,
@@ -783,6 +786,13 @@ impl StateMachine {
                     let choices = crate::codegen::history::choices(self, transition);
 
                     for actual_source in expanded_sources {
+                        if let Some(scope) = &event.completion
+                            && (!self.final_states.contains(&actual_source)
+                                || crate::codegen::finality::parent(self, &actual_source)
+                                    != Some(scope))
+                        {
+                            continue;
+                        }
                         for (resolved_target, history) in &choices {
                             let resolved_target = if transition.internal {
                                 actual_source.clone()

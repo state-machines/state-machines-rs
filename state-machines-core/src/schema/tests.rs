@@ -35,6 +35,7 @@ fn sample_schema() -> MachineSchema {
                 branching: false,
                 hierarchical: false,
                 automatic: false,
+                completion: None,
             },
             EventSchema {
                 name: "repressurize".into(),
@@ -63,6 +64,7 @@ fn sample_schema() -> MachineSchema {
                 branching: false,
                 hierarchical: false,
                 automatic: false,
+                completion: None,
             },
         ],
         async_mode: false,
@@ -114,6 +116,7 @@ fn graph_validation() {
 fn validates_expanded_superstate_sources() {
     let mut schema = sample_schema();
     schema.superstates.push(SuperstateSchema {
+        parent: None,
         name: "Air".into(),
         descendants: schema.states.clone(),
         initial: schema.initial.clone(),

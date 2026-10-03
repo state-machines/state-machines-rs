@@ -114,6 +114,21 @@ impl StateMachine {
 
         let mut event_names = HashSet::new();
         for event in &self.events {
+            if let Some(scope) = &event.completion {
+                err_if(
+                    !self.hierarchy.is_superstate(scope),
+                    scope.span(),
+                    "completion must name a declared superstate",
+                )?;
+                err_if(
+                    event.transitions.iter().any(|transition| {
+                        transition.internal
+                            || transition.sources.iter().any(|source| source != scope)
+                    }),
+                    scope.span(),
+                    "completion transitions must exit their declared parent scope",
+                )?;
+            }
             err_if(
                 event.automatic && event.payload.is_some(),
                 event.name.span(),
@@ -383,9 +398,9 @@ impl StateMachine {
             err_if(
                 self.transition_graph
                     .outgoing(state)
-                    .is_some_and(|edges| !edges.is_empty()),
+                    .is_some_and(|edges| edges.iter().any(|edge| &edge.scope == state)),
                 state.span(),
-                "final states cannot have outgoing transitions",
+                "final states cannot declare their own outgoing transitions",
             )?;
         }
 
