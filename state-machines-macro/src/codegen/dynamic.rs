@@ -99,6 +99,10 @@ fn generate_event_enum(machine: &StateMachine) -> Result<TokenStream2> {
 fn generate_any_state_enum(machine: &StateMachine) -> Result<TokenStream2> {
     let machine_name = &machine.name;
     let any_state_name = quote::format_ident!("Any{}State", machine_name);
+    let state_enum_name = quote::format_ident!("{}State", machine_name);
+    let state_arms = machine.states.iter().map(|state| {
+        quote! { Self::#state(_) => #state_enum_name::#state }
+    });
 
     // Generate enum variants for each state
     let variants = machine.states.iter().map(|state| {
@@ -125,6 +129,9 @@ fn generate_any_state_enum(machine: &StateMachine) -> Result<TokenStream2> {
         }
 
         impl #generics #any_state_name #generics {
+            fn state(&self) -> #state_enum_name {
+                match self { #( #state_arms, )* }
+            }
             /// Get the name of the current state.
             fn name(&self) -> &'static str {
                 match self {
@@ -304,9 +311,8 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
         ) -> ::state_machines::__private::Vec<#event_name> {
             #[allow(unused_mut)]
             let mut events = ::state_machines::__private::Vec::new();
-            match self.inner.as_ref()
-                .expect("dynamic machine in invalid state")
-            {
+            let Some(inner) = self.inner.as_ref() else { return events; };
+            match inner {
                 #( #available_event_arms, )*
             }
             events
@@ -314,11 +320,8 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
 
         /// Return whether this event is enabled by the current state and guards.
         pub #maybe_async fn is_available_event(&self, event: &#event_name) -> bool {
-            match (
-                self.inner.as_ref()
-                    .expect("dynamic machine in invalid state"),
-                event,
-            ) {
+            let Some(inner) = self.inner.as_ref() else { return false; };
+            match (inner, event) {
                 #( #is_available_event_arms, )*
                 _ => false,
             }
@@ -332,9 +335,6 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
     let state_name_arms = machine.states.iter().map(|state| {
         let state_str = state.to_string();
         quote! { Self::#state => #state_str }
-    });
-    let current_state_arms = machine.states.iter().map(|state| {
-        quote! { #any_state_name::#state(_) => #state_enum_name::#state }
     });
     let finished_arms = machine.states.iter().map(|state| {
         quote! { #any_state_name::#state(machine) => machine.is_finished() }
@@ -461,11 +461,10 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
                                     stringify!(#set_method),
                                 )),
                             },
-                            ::core::option::Option::None => Err(#dynamic_error_ctor::wrong_state(
-                                #state_str,
-                                "<extracted>",
-                                stringify!(#set_method),
-                            )),
+                            ::core::option::Option::None => Err(#dynamic_error_ctor::Poisoned {
+                                from: self.last_state.name(),
+                                event: stringify!(#set_method),
+                            }),
                         }
                     }
                 }
@@ -507,6 +506,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
         #[derive(Debug)]
         pub struct #dynamic_name #generics {
             inner: ::core::option::Option<#any_state_name #generics>,
+            last_state: #state_enum_name,
             completions: ::state_machines::__private::Vec<::state_machines::CompletionEvent>,
         }
 
@@ -515,6 +515,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
             pub fn new(ctx: #ctx_param_ty) -> Self {
                 Self {
                     inner: ::core::option::Option::Some(#initial_state_constructor),
+                    last_state: #state_enum_name::#initial_state,
                     completions: ::state_machines::__private::Vec::new(),
                 }
             }
@@ -525,6 +526,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
                     inner: ::core::option::Option::Some(match state {
                         #( #state_constructor_arms, )*
                     }),
+                    last_state: state,
                     completions: ::state_machines::__private::Vec::new(),
                 }
             }
@@ -537,37 +539,45 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
             /// - An action callback fails
             #handle_sig {
                 // Take ownership of inner state temporarily
-                let current = self.inner.take().expect("dynamic machine in invalid state");
+                let current = self.inner.take().ok_or(#dynamic_error_ctor::Poisoned {
+                    from: self.last_state.name(),
+                    event: event.name(),
+                })?;
 
                 let new_state = match (current, event) {
                     #(#match_arms)*
                     #catch_all
                 };
 
+                self.last_state = new_state.state();
                 self.inner = ::core::option::Option::Some(new_state);
                 self.completions.extend_from_slice(self.completion_events());
                 Ok(())
             }
 
-            /// Get the current runtime state.
+            /// Last committed state. If poisoned this is diagnostic only.
             pub fn current_state(&self) -> #state_enum_name {
-                match self.inner.as_ref()
-                    .expect("dynamic machine in invalid state")
-                {
-                    #( #current_state_arms, )*
-                }
+                self.last_state
+            }
+
+            /// Cancellation/unwinding dropped an owned in-flight transition.
+            /// No rollback of resources or side effects is promised.
+            pub fn is_poisoned(&self) -> bool {
+                self.inner.is_none()
             }
 
             #available_events_method
 
             pub fn is_finished(&self) -> bool {
-                match self.inner.as_ref().expect("dynamic machine in invalid state") {
+                let Some(inner) = self.inner.as_ref() else { return false; };
+                match inner {
                     #( #finished_arms, )*
                 }
             }
 
             pub fn completion_events(&self) -> &'static [::state_machines::CompletionEvent] {
-                match self.inner.as_ref().expect("dynamic machine in invalid state") {
+                let Some(inner) = self.inner.as_ref() else { return &[]; };
+                match inner {
                     #( #completion_arms, )*
                 }
             }
@@ -601,6 +611,7 @@ fn generate_conversions(machine: &StateMachine) -> Result<TokenStream2> {
     let machine_name = &machine.name;
     let dynamic_name = quote::format_ident!("Dynamic{}", machine_name);
     let any_state_name = quote::format_ident!("Any{}State", machine_name);
+    let state_enum_name = quote::format_ident!("{}State", machine_name);
 
     let generics = ctx_generics(machine);
 
@@ -616,6 +627,7 @@ fn generate_conversions(machine: &StateMachine) -> Result<TokenStream2> {
                 pub fn into_dynamic(self) -> #dynamic_name #generics {
                     #dynamic_name {
                         inner: ::core::option::Option::Some(#any_state_name::#state(self)),
+                        last_state: #state_enum_name::#state,
                         completions: ::state_machines::__private::Vec::new(),
                     }
                 }

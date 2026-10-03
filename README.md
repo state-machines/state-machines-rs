@@ -1052,6 +1052,9 @@ fn handle_network_events(conn: &mut DynamicConnection<()>) {
             Err(DynamicError::WrongState { expected, actual, operation }) => {
                 eprintln!("Operation {} expected state {}, but in {}", operation, expected, actual);
             }
+            Err(DynamicError::Poisoned { from, event }) => {
+                eprintln!("Dispatch {} from {} was interrupted; replace the machine", event, from);
+            }
         }
     }
 }
@@ -1376,6 +1379,17 @@ cargo bench --bench typestate_transitions
 ---
 
 ## Documentation
+
+### Interrupted dynamic dispatch
+
+Cancelling an async `handle()` future after it has started, or unwinding through
+a callback, poisons its wrapper: the owned in-flight machine cannot be recovered
+without imposing `Clone`. `is_poisoned()` reports this, subsequent dispatch and
+setters return `DynamicError::Poisoned`, and availability/completion queries are
+empty. `current_state()` is the last committed state, not a live state when
+poisoned. Replace the wrapper with a fresh/restored machine. Use
+`try_into_snapshot()` when interruption is possible; the legacy `into_snapshot()`
+panics on poison. Dropping an unpolled future does not poison the machine.
 
 - **[API Docs](https://docs.rs/state-machines)** – Full API reference
 - **[Crates.io](https://crates.io/crates/state-machines)** – Published crate versions

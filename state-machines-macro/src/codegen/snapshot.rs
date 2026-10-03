@@ -129,7 +129,13 @@ pub fn generate(machine: &StateMachine) -> TokenStream {
             }
 
             impl #generics #dynamic #generics {
+                /// A poisoned wrapper has no recoverable owned snapshot.
+                pub fn try_into_snapshot(self) -> Result<#snapshot_name #generics, Self> {
+                    if self.is_poisoned() { Err(self) } else { Ok(self.into_snapshot()) }
+                }
+
                 /// Consume the wrapper without requiring Clone on its data.
+                /// Panics if poisoned; use `try_into_snapshot` after cancellation.
                 pub fn into_snapshot(mut self) -> #snapshot_name #generics {
                     let (state, ctx, #( #fields, )* #( #history_fields, )*) = match self.inner.take()
                         .expect("dynamic machine in invalid state")
@@ -165,6 +171,7 @@ pub fn generate(machine: &StateMachine) -> TokenStream {
                         _ => return Err((snapshot, ::state_machines::SnapshotError::UnknownState)),
                     };
                     Ok(Self {
+                        last_state: inner.state(),
                         inner: Some(inner),
                         completions: ::state_machines::__private::Vec::new(),
                     })

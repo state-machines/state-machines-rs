@@ -175,6 +175,12 @@ impl<E> FallibleCallbackReturn<E> for Result<(), E> {
 /// event dispatch encounters errors like invalid transitions or guard failures.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DynamicError<E = ()> {
+    /// Dispatch was cancelled or unwound after taking ownership of the machine.
+    /// The wrapper must be replaced; the last committed state is diagnostic only.
+    Poisoned {
+        from: &'static str,
+        event: &'static str,
+    },
     /// Attempted to trigger an event that's not valid from the current state.
     InvalidTransition {
         from: &'static str,
