@@ -1498,6 +1498,13 @@ of an already queued/deferred event releases capacity when `drain` skips it.
 Scheduling errors return the original owned event; backwards clocks and deadline
 overflow are rejected. Timers, queues and runtime epochs are not persisted snapshots.
 
+Use `schedule_after_in(WorkScope::Named("Running"), &clock, delay, event)`,
+`invoke_future_in(scope, future)` or `invoke_child_in(scope, ...)` for a composite
+visit instead. Work then survives sibling/local transitions, but exits and
+external re-entry invalidate it—even if automatic steps return to the same leaf.
+Generated `scope_epoch(name)` queries active leaf/composite visits; inactive names
+return `None`. An inactive invocation returns the original event/future/child.
+
 ### Activities and invoked child machines
 
 `runner.invoke_future(future)` owns and polls a future whose output is a parent

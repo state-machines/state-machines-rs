@@ -10,6 +10,7 @@ pub use activities::{ActivityId, ChildInvokeError, InvokeError, InvokeFailure};
 mod parallel;
 pub use parallel::{Parallel, ParallelError, ParallelEvent};
 mod work;
+pub use work::WorkScope;
 use work::{Registry, Visit};
 
 /// Implemented by generated dynamic machines when the facade's runtime feature is enabled.
@@ -23,6 +24,10 @@ pub trait Machine {
     type State: Copy + Eq;
     fn state(&self) -> Self::State;
     fn epoch(&self) -> u64;
+    /// Optional named hierarchical scope visits. Defaults to no named scopes.
+    fn scope_epoch(&self, _scope: &str) -> Option<u64> {
+        None
+    }
     fn is_finished(&self) -> bool;
     fn is_poisoned(&self) -> bool;
     async fn dispatch(&mut self, event: Self::Event) -> Result<(), Self::Error>;
@@ -217,8 +222,8 @@ impl<M: Machine> Runner<M> {
         });
     }
     fn reconcile_work(&mut self) {
-        let visit = Visit::capture(self.machine());
-        let released = self.timers.reconcile(visit) + self.activities.reconcile(visit);
+        let machine = self.machine.as_ref().unwrap();
+        let released = self.timers.reconcile(machine) + self.activities.reconcile(machine);
         self.release(released);
     }
     fn release(&self, count: usize) {

@@ -17,6 +17,7 @@ pub fn generate(machine: &StateMachine) -> TokenStream {
     let any = format_ident!("Any{}State", name);
     let generics = ctx_generics(machine);
     let context = ctx_ty(machine);
+    let scope_count = super::scopes::names(machine).len();
     let state_names = machine
         .states
         .iter()
@@ -172,6 +173,7 @@ pub fn generate(machine: &StateMachine) -> TokenStream {
                     };
                     Ok(Self {
                         epoch: 0,
+                        scope_epochs: [0; #scope_count],
                         last_state: inner.state(),
                         inner: Some(inner),
                         completions: ::state_machines::__private::Vec::new(),

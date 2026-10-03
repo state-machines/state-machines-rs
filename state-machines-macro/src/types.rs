@@ -57,6 +57,41 @@ impl StateMachine {
             .filter(move |hooks| &hooks.state == state)
     }
 
+    pub fn active_path(&self, leaf: &Ident) -> Vec<Ident> {
+        let mut path = self
+            .hierarchy
+            .ancestors
+            .get(&leaf.to_string())
+            .cloned()
+            .unwrap_or_default();
+        path.push(leaf.clone());
+        path
+    }
+
+    pub fn retained_prefix(&self, source: &Ident, target: &Ident, edge: &TransitionEdge) -> usize {
+        let source_path = self.active_path(source);
+        if edge.internal {
+            return source_path.len();
+        }
+        let target_path = self.active_path(target);
+        let common = source_path
+            .iter()
+            .zip(&target_path)
+            .take_while(|(a, b)| a == b)
+            .count()
+            .min(source_path.len() - 1);
+        if edge.kind == Some(TransitionKind::External) {
+            common.min(
+                source_path
+                    .iter()
+                    .position(|state| state == &edge.scope)
+                    .unwrap(),
+            )
+        } else {
+            common
+        }
+    }
+
     /// The shared ancestor prefix is not exited or re-entered. External
     /// self-transitions still exit and enter the leaf.
     pub fn lifecycle_callbacks(
@@ -68,29 +103,9 @@ impl StateMachine {
         if edge.internal {
             return (Vec::new(), Vec::new());
         }
-        let path = |leaf: &Ident| {
-            let mut path = self
-                .hierarchy
-                .ancestors
-                .get(&leaf.to_string())
-                .cloned()
-                .unwrap_or_default();
-            path.push(leaf.clone());
-            path
-        };
-        let source_path = path(source);
-        let target_path = path(target);
-        let mut common = source_path
-            .iter()
-            .zip(&target_path)
-            .take_while(|(a, b)| a == b)
-            .count()
-            .min(source_path.len() - 1);
-        if edge.kind == Some(TransitionKind::External)
-            && let Some(domain) = source_path.iter().position(|state| state == &edge.scope)
-        {
-            common = common.min(domain);
-        }
+        let source_path = self.active_path(source);
+        let target_path = self.active_path(target);
+        let common = self.retained_prefix(source, target, edge);
         let exit = source_path[common..]
             .iter()
             .rev()

@@ -1,4 +1,4 @@
-use super::{Envelope, EventSink, Machine, RunError, Runner, Visit};
+use super::{Envelope, EventSink, Machine, RunError, Runner, Visit, WorkScope};
 use alloc::boxed::Box;
 use core::{
     fmt,
@@ -16,6 +16,7 @@ pub enum InvokeFailure {
     Poisoned,
     Overflow,
     ZeroBudget,
+    InactiveScope,
 }
 
 /// Rejected futures remain owned by the caller, without being polled.
@@ -45,11 +46,15 @@ impl<C: Machine> fmt::Debug for ChildInvokeError<C> {
 pub(super) type Task<E> = Pin<Box<dyn Future<Output = E> + 'static>>;
 
 impl<M: Machine> Runner<M> {
-    fn reserve_activity(&mut self) -> Result<ActivityId, InvokeFailure> {
+    fn reserve_activity(
+        &mut self,
+        scope: WorkScope,
+    ) -> Result<(ActivityId, Visit<M::State>), InvokeFailure> {
         self.reconcile_work();
         if self.machine().is_poisoned() {
             return Err(InvokeFailure::Poisoned);
         }
+        let visit = Visit::capture(self.machine(), scope).ok_or(InvokeFailure::InactiveScope)?;
         let next = self
             .next_activity
             .checked_add(1)
@@ -58,12 +63,11 @@ impl<M: Machine> Runner<M> {
             return Err(InvokeFailure::Full);
         }
         self.next_activity = next;
-        Ok(ActivityId(next))
+        Ok((ActivityId(next), visit))
     }
 
-    fn store_activity(&mut self, id: ActivityId, future: Task<M::Event>) {
-        self.activities
-            .insert(id, Visit::capture(self.machine()).unwrap(), future);
+    fn store_activity(&mut self, id: ActivityId, visit: Visit<M::State>, future: Task<M::Event>) {
+        self.activities.insert(id, visit, future);
     }
 
     /// Invoke an owned future for the current leaf visit. It reserves one mailbox slot.
@@ -73,11 +77,21 @@ impl<M: Machine> Runner<M> {
     where
         F: Future<Output = M::Event> + 'static,
     {
-        let id = match self.reserve_activity() {
-            Ok(id) => id,
+        self.invoke_future_in(WorkScope::Leaf, future)
+    }
+    pub fn invoke_future_in<F>(
+        &mut self,
+        scope: WorkScope,
+        future: F,
+    ) -> Result<ActivityId, InvokeError<F>>
+    where
+        F: Future<Output = M::Event> + 'static,
+    {
+        let (id, visit) = match self.reserve_activity(scope) {
+            Ok(value) => value,
             Err(reason) => return Err(InvokeError { reason, future }),
         };
-        self.store_activity(id, Box::pin(future));
+        self.store_activity(id, visit, Box::pin(future));
         Ok(id)
     }
 
@@ -151,6 +165,27 @@ impl<M: Machine> Runner<M> {
     #[allow(clippy::result_large_err)]
     pub fn invoke_child<C, Done, Failed>(
         &mut self,
+        child: Runner<C>,
+        max_steps: usize,
+        done: Done,
+        failed: Failed,
+    ) -> Result<(ActivityId, EventSink<C::Event>), ChildInvokeError<C>>
+    where
+        C: Machine + 'static,
+        C::State: 'static,
+        C::Event: 'static,
+        C::Error: 'static,
+        M::Event: 'static,
+        Done: FnOnce(C) -> M::Event + 'static,
+        Failed: FnOnce(RunError<C::Error>, C) -> M::Event + 'static,
+    {
+        self.invoke_child_in(WorkScope::Leaf, child, max_steps, done, failed)
+    }
+
+    #[allow(clippy::result_large_err)]
+    pub fn invoke_child_in<C, Done, Failed>(
+        &mut self,
+        scope: WorkScope,
         mut child: Runner<C>,
         max_steps: usize,
         done: Done,
@@ -171,13 +206,14 @@ impl<M: Machine> Runner<M> {
                 child,
             });
         }
-        let id = match self.reserve_activity() {
-            Ok(id) => id,
+        let (id, visit) = match self.reserve_activity(scope) {
+            Ok(value) => value,
             Err(reason) => return Err(ChildInvokeError { reason, child }),
         };
         let sink = child.sink();
         self.store_activity(
             id,
+            visit,
             Box::pin(async move {
                 loop {
                     if child.machine().is_finished() {

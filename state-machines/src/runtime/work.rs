@@ -2,17 +2,38 @@
 use super::Machine;
 use alloc::vec::Vec;
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum WorkScope {
+    Leaf,
+    Named(&'static str),
+}
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub(super) struct Visit<S> {
-    state: S,
-    epoch: u64,
+pub(super) enum Visit<S> {
+    Leaf { state: S, epoch: u64 },
+    Named { name: &'static str, epoch: u64 },
 }
 impl<S: Copy + Eq> Visit<S> {
-    pub fn capture<M: Machine<State = S>>(machine: &M) -> Option<Self> {
-        (!machine.is_poisoned()).then(|| Self {
-            state: machine.state(),
-            epoch: machine.epoch(),
-        })
+    pub fn capture<M: Machine<State = S>>(machine: &M, scope: WorkScope) -> Option<Self> {
+        if machine.is_poisoned() {
+            return None;
+        }
+        match scope {
+            WorkScope::Leaf => Some(Self::Leaf {
+                state: machine.state(),
+                epoch: machine.epoch(),
+            }),
+            WorkScope::Named(name) => machine
+                .scope_epoch(name)
+                .map(|epoch| Self::Named { name, epoch }),
+        }
+    }
+    fn active<M: Machine<State = S>>(&self, machine: &M) -> bool {
+        match self {
+            Self::Leaf { .. } => Self::capture(machine, WorkScope::Leaf) == Some(*self),
+            Self::Named { name, .. } => {
+                Self::capture(machine, WorkScope::Named(name)) == Some(*self)
+            }
+        }
     }
 }
 
@@ -50,10 +71,10 @@ impl<I: Copy + Eq, S: Copy + Eq, W> Registry<I, S, W> {
         let _ = self.cancel(id);
     }
     /// Drop work whose visit ended, returning the number of unqueued reservations.
-    pub fn reconcile(&mut self, visit: Option<Visit<S>>) -> usize {
+    pub fn reconcile<M: Machine<State = S>>(&mut self, machine: &M) -> usize {
         let mut released = 0;
         self.entries.retain(|entry| {
-            let live = Some(entry.visit) == visit;
+            let live = entry.visit.active(machine);
             if !live && entry.pending.is_some() {
                 released += 1;
             }

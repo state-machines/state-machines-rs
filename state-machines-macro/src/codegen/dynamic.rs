@@ -203,22 +203,26 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
                         event_method.clone()
                     };
                     let success = if edges.len() > 1 {
+                        let commits = edges.iter().enumerate().map(|(index, edge)| {
+                            let commit = super::scopes::commit(machine, state, edge);
+                            quote! { #index => { #commit } }
+                        });
                         let outcome = super::branching::outcome_name(machine, state, event_snake);
                         let arms = super::branching::targets(&edges).into_iter().map(|target| {
                                 quote! { #outcome::#target(machine) => #any_state_name::#target(machine) }
                             });
                         quote! {
                             {
-                                let (new_machine, external) = new_machine;
-                                if external { self.epoch = self.epoch.wrapping_add(1); }
+                                let (new_machine, selected) = new_machine;
+                                match selected { #(#commits,)* _ => unreachable!("selected edge") }
                                 match new_machine { #( #arms, )* }
                             }
                         }
                     } else {
                         let target = &edges[0].target;
-                        let external = !edges[0].internal;
+                        let commit = super::scopes::commit(machine, state, edges[0]);
                         quote! { {
-                            if #external { self.epoch = self.epoch.wrapping_add(1); }
+                            #commit
                             #any_state_name::#target(new_machine)
                         } }
                     };
@@ -357,6 +361,8 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
     let generics = ctx_generics(machine);
     let ctx_param_ty = ctx_ty(machine);
     let startup_error = transition_error_ty(machine);
+    let scope_count = super::scopes::names(machine).len();
+    let scope_methods = super::scopes::methods(machine);
 
     let state_variants = &machine.states;
     let state_name_arms = machine.states.iter().map(|state| {
@@ -533,6 +539,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
         #[derive(Debug)]
         pub struct #dynamic_name #generics {
             epoch: u64,
+            scope_epochs: [u64; #scope_count],
             inner: ::core::option::Option<#any_state_name #generics>,
             last_state: #state_enum_name,
             completions: ::state_machines::__private::Vec<::state_machines::CompletionEvent>,
@@ -550,6 +557,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
             pub fn new(ctx: #ctx_param_ty) -> Self {
                 Self {
                     epoch: 0,
+                    scope_epochs: [0; #scope_count],
                     inner: ::core::option::Option::Some(#initial_state_constructor),
                     last_state: #state_enum_name::#initial_state,
                     completions: ::state_machines::__private::Vec::new(),
@@ -560,6 +568,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
             pub fn new_init_state(ctx: #ctx_param_ty, state: #state_enum_name) -> Self {
                 Self {
                     epoch: 0,
+                    scope_epochs: [0; #scope_count],
                     inner: ::core::option::Option::Some(match state {
                         #( #state_constructor_arms, )*
                     }),
@@ -608,6 +617,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
             /// Increments on committed external transitions, including re-entry.
             /// Internal transitions preserve the epoch; construction/restore start at zero.
             pub fn transition_epoch(&self) -> u64 { self.epoch }
+            #scope_methods
 
             /// Cancellation/unwinding dropped an owned in-flight transition.
             /// No rollback of resources or side effects is promised.
@@ -648,6 +658,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
                 type State = #state_enum_name;
                 fn state(&self) -> Self::State { self.current_state() }
                 fn epoch(&self) -> u64 { self.transition_epoch() }
+                fn scope_epoch(&self, scope: &str) -> Option<u64> { self.scope_epoch(scope) }
                 fn is_finished(&self) -> bool { self.is_finished() }
                 fn is_poisoned(&self) -> bool { self.is_poisoned() }
                 async fn dispatch(&mut self, event: Self::Event) -> Result<(), Self::Error> {
@@ -678,6 +689,7 @@ fn generate_conversions(machine: &StateMachine) -> Result<TokenStream2> {
     let state_enum_name = quote::format_ident!("{}State", machine_name);
 
     let generics = ctx_generics(machine);
+    let scope_count = super::scopes::names(machine).len();
 
     // Generate into_dynamic() methods for each state
     let into_dynamic_methods = machine.states.iter().map(|state| {
@@ -691,6 +703,7 @@ fn generate_conversions(machine: &StateMachine) -> Result<TokenStream2> {
                 pub fn into_dynamic(self) -> #dynamic_name #generics {
                     #dynamic_name {
                         epoch: 0,
+                        scope_epochs: [0; #scope_count],
                         inner: ::core::option::Option::Some(#any_state_name::#state(self)),
                         last_state: #state_enum_name::#state,
                         completions: ::state_machines::__private::Vec::new(),

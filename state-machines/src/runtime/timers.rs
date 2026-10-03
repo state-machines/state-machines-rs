@@ -1,4 +1,4 @@
-use super::{Envelope, Machine, Runner, Visit};
+use super::{Envelope, Machine, Runner, Visit, WorkScope};
 use alloc::vec::Vec;
 
 /// Executor-independent monotonic logical ticks. The host chooses the tick unit.
@@ -15,11 +15,16 @@ pub enum ScheduleError<E> {
     Poisoned(E),
     Backwards(E),
     Overflow(E),
+    InactiveScope(E),
 }
 impl<E> ScheduleError<E> {
     pub fn into_event(self) -> E {
         match self {
-            Self::Full(e) | Self::Poisoned(e) | Self::Backwards(e) | Self::Overflow(e) => e,
+            Self::Full(e)
+            | Self::Poisoned(e)
+            | Self::Backwards(e)
+            | Self::Overflow(e)
+            | Self::InactiveScope(e) => e,
         }
     }
 }
@@ -38,10 +43,22 @@ impl<M: Machine> Runner<M> {
         delay: u64,
         event: M::Event,
     ) -> Result<TimerId, ScheduleError<M::Event>> {
+        self.schedule_after_in(WorkScope::Leaf, clock, delay, event)
+    }
+    pub fn schedule_after_in(
+        &mut self,
+        scope: WorkScope,
+        clock: &impl Clock,
+        delay: u64,
+        event: M::Event,
+    ) -> Result<TimerId, ScheduleError<M::Event>> {
         self.reconcile_work();
         if self.machine().is_poisoned() {
             return Err(ScheduleError::Poisoned(event));
         }
+        let Some(visit) = Visit::capture(self.machine(), scope) else {
+            return Err(ScheduleError::InactiveScope(event));
+        };
         let now = clock.now();
         if self.last_time.is_some_and(|last| now < last) {
             return Err(ScheduleError::Backwards(event));
@@ -58,11 +75,7 @@ impl<M: Machine> Runner<M> {
         self.last_time = Some(now);
         self.next_timer = next;
         let id = TimerId(next);
-        self.timers.insert(
-            id,
-            Visit::capture(self.machine()).unwrap(),
-            Timeout { deadline, event },
-        );
+        self.timers.insert(id, visit, Timeout { deadline, event });
         Ok(id)
     }
 

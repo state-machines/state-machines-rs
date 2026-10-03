@@ -174,10 +174,9 @@ pub fn methods(
         let enabled = condition(machine, &edge.selection, &payload_ref);
         let history = super::history::condition(edge);
         let target = &edge.target;
-        let external = !edge.internal;
         choices.push(quote! {
             if #history && (#enabled) {
-                return self.#helper(#payload_arg) #await_.map(|machine| (#outcome::#target(machine), #external));
+                return self.#helper(#payload_arg) #await_.map(|machine| (#outcome::#target(machine), #index));
             }
         });
     }
@@ -195,7 +194,7 @@ pub fn methods(
         pub #async_ fn #name(self #param) -> Result<#outcome #generics, (Self, #error_ty)> {
             self.#select_name(#payload_arg) #await_.map(|(outcome, _)| outcome)
         }
-        #async_ fn #select_name(mut self #param) -> Result<(#outcome #generics, bool), (Self, #error_ty)> {
+        #async_ fn #select_name(mut self #param) -> Result<(#outcome #generics, usize), (Self, #error_ty)> {
             #( #event_guards )*
             #( #choices )*
             #no_match
