@@ -157,6 +157,8 @@
 
 use state_machines::state_machine;
 
+mod statechart;
+
 /// O2 generation system data
 #[derive(Default, Debug, Clone)]
 struct O2Data {
@@ -378,7 +380,7 @@ fn main() {
     println!("✓ Polymorphic transitions use SubstateOf<T> trait bounds");
     println!("✓ Transition to superstate resolves to first declared substate");
     println!("✓ State data accessors are type-specific (compile-time safe)");
-    println!("✓ Superstates don't have their own data (use context instead)");
+    println!("✓ Superstate data survives sibling transitions");
 
     println!("\n=== When to Use Superstates ===");
     println!("Use superstates when:");
@@ -400,4 +402,6 @@ fn main() {
     println!();
     println!("Similar to Rust trait bounds:");
     println!("  fn shutdown<S: SubstateOf<LifeSupport>>(system: System<S>)");
+
+    statechart::run_demo();
 }
