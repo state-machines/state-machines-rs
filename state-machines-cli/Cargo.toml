@@ -2,6 +2,7 @@
 name = "state-machines-cli"
 version = "0.1.3"
 edition = "2024"
+rust-version.workspace = true
 authors = ["Abdelkader Boudih <terminale@gmail.com>"]
 description = "CLI tool for state-machines visualization and introspection"
 license = "MIT"

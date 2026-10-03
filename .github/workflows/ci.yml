@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: jdx/mise-action@v4
       - name: Run tests
         run: cargo test --workspace --all-features
 
@@ -24,9 +24,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
+      - uses: jdx/mise-action@v4
+      - run: rustup component add rustfmt
       - name: Check formatting
         run: cargo fmt --all -- --check
 
@@ -35,9 +34,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
+      - uses: jdx/mise-action@v4
+      - run: rustup component add clippy
       - name: Run clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
@@ -46,7 +44,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: jdx/mise-action@v4
       - name: Build core (no_std)
         run: cargo build -p state-machines-core --no-default-features
       - name: Build macro (no_std)
@@ -62,6 +60,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: jdx/mise-action@v4
       - name: Build release
         run: cargo build --workspace --release

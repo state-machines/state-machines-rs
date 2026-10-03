@@ -2,6 +2,7 @@
 name = "feature_split"
 version = "0.0.1"
 edition = "2024"
+rust-version.workspace = true
 publish = false
 description = "Regression fixture: host and target link state-machines with different features"
 

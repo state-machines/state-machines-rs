@@ -65,6 +65,9 @@ While learning Rust, I chose to port something familiar and widely used—so I c
 
 ## Quick Start
 
+Requires Rust 1.99 or newer. Development and CI use Rust 1.99.0
+(`mise install` sets up the pinned toolchain).
+
 Add to your `Cargo.toml`:
 
 ```toml

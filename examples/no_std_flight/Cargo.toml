@@ -2,6 +2,7 @@
 name = "no_std_flight"
 version = "0.0.8"
 edition = "2021"
+rust-version.workspace = true
 publish = false
 
 [dependencies]
