@@ -6,4 +6,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
-state-machines = { path = "../../state-machines", features = ["dynamic"] }
+state-machines = { path = "../../state-machines", features = ["dynamic", "runtime", "serde", "std"] }
+pollster.workspace = true
+serde.workspace = true
+serde_json.workspace = true

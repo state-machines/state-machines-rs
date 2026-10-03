@@ -113,8 +113,10 @@
 
 use state_machines::{DynamicError, state_machine};
 
+mod regions;
+
 /// Command source identifier
-#[derive(Debug, Clone)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[allow(dead_code)]
 pub enum CommandSource {
     MissionControl,
@@ -123,7 +125,7 @@ pub enum CommandSource {
 }
 
 /// Command payload
-#[derive(Debug, Clone)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Command {
     #[allow(dead_code)]
     source: CommandSource,
@@ -131,21 +133,33 @@ pub struct Command {
     priority: u8,
 }
 
+/// Active command ownership is persisted; history entry starts empty instead of
+/// resurrecting a resource that was dropped when its scope exited.
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct QueuedCommand(Option<Command>);
+
 // Define spacecraft computer state machine with dynamic mode enabled
 state_machine! {
     name: SpacecraftComputer,
 
     dynamic: true,  // ← Enable dynamic dispatch
+    snapshot: true,
 
     initial: Standby,
 
     states: [
         Standby,
-        Active,
-        Processing,
-        Diagnostics,
+        superstate Operational {
+            state Active,
+            superstate Work {
+                state Processing(QueuedCommand),
+                state Diagnostics,
+            },
+        },
         SafeMode,
+        Retired,
     ],
+    final_states: [Retired],
 
     events {
         // Boot computer
@@ -156,7 +170,7 @@ state_machine! {
         // Execute command
         execute {
             payload: Command,
-            transition: { from: Active, to: Processing }
+            transition: { from: Active, to: Processing, data: own_command }
         }
 
         // Complete processing
@@ -176,13 +190,37 @@ state_machine! {
 
         // Enter safe mode
         safe_mode {
-            transition: { from: [Active, Processing, Diagnostics], to: SafeMode }
+            transition: { from: Operational, to: SafeMode }
         }
 
         // Shutdown
         shutdown {
             transition: { from: [Active, SafeMode], to: Standby }
         }
+        resume_deep {
+            transition: { from: SafeMode, to: Operational, history: deep }
+        }
+        resume_shallow {
+            transition: { from: SafeMode, to: Operational, history: shallow }
+        }
+        reset {
+            transition: { from: Operational, to: Operational, kind: external }
+        }
+        retire {
+            transition: { from: [Standby, Operational, SafeMode], to: Retired }
+        }
+    }
+}
+
+impl<C, S> SpacecraftComputer<C, S> {
+    fn own_command(&self, command: &mut Command) -> QueuedCommand {
+        QueuedCommand(Some(std::mem::replace(
+            command,
+            Command {
+                source: CommandSource::Autopilot,
+                priority: 0,
+            },
+        )))
     }
 }
 
@@ -338,4 +376,6 @@ fn main() {
     println!("✓ Invalid transitions: compile error (typestate) vs runtime error (dynamic)");
     println!("✓ Use hybrid pattern for best of both worlds");
     println!("✓ Decision based on whether event sequence is known at compile time");
+
+    pollster::block_on(regions::run_demo());
 }
