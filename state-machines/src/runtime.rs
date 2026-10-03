@@ -11,6 +11,10 @@ mod parallel;
 pub use parallel::{Parallel, ParallelError, ParallelEvent};
 mod region;
 pub use region::{Region, RegionError};
+#[cfg(feature = "serde")]
+mod snapshot;
+#[cfg(feature = "serde")]
+pub use snapshot::{ParallelSnapshot, SnapshotMachine};
 mod work;
 pub use work::WorkScope;
 mod lifecycle;

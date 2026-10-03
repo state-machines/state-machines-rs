@@ -12,6 +12,7 @@ pub struct Regions {
     name: Ident,
     regions: Vec<(Ident, Type)>,
     events: Vec<Event>,
+    snapshot: bool,
 }
 struct Event {
     name: Ident,
@@ -40,6 +41,7 @@ impl Parse for Regions {
         let mut name = None;
         let mut regions = Vec::new();
         let mut events = Vec::new();
+        let mut snapshot = false;
         let mut fields = HashSet::new();
         while !input.is_empty() {
             let key: Ident = input.parse()?;
@@ -54,6 +56,7 @@ impl Parse for Regions {
             }
             match key.to_string().as_str() {
                 "name" => name = Some(input.parse()?),
+                "snapshot" => snapshot = input.parse::<syn::LitBool>()?.value,
                 "regions" => regions = parse_named(input)?,
                 "events" => {
                     let content;
@@ -76,6 +79,7 @@ impl Parse for Regions {
             name,
             regions,
             events,
+            snapshot,
         };
         result.validate()?;
         Ok(result)
@@ -134,11 +138,22 @@ impl Regions {
             "take_join",
             "current_state",
             "schema",
+            "into_regions",
+            "into_snapshot",
+            "try_into_snapshot",
+            "from_snapshot",
+            "validate_snapshot",
         ]
         .into_iter()
         .map(String::from)
         .collect();
         for (name, _) in &self.regions {
+            if name.to_string().starts_with("__sm_") {
+                return Err(syn::Error::new(
+                    name.span(),
+                    "reserved internal region name",
+                ));
+            }
             if !names.insert(name.to_string()) {
                 return Err(syn::Error::new(name.span(), "duplicate region"));
             }
@@ -250,6 +265,88 @@ impl Regions {
         quote! { #config { #(#fields,)* } }
     }
 
+    fn split_regions(&self) -> TokenStream {
+        let mut value = quote! { self.inner };
+        let mut bindings = TokenStream::new();
+        for (index, (name, _)) in self.regions.iter().enumerate() {
+            if index + 1 == self.regions.len() {
+                bindings.extend(quote! { let #name = #value; });
+            } else {
+                let rest = format_ident!("__sm_regions_{}", index);
+                bindings.extend(quote! { let (#name, #rest) = #value.into_regions(); });
+                value = quote! { #rest };
+            }
+        }
+        bindings
+    }
+
+    fn snapshots(&self) -> TokenStream {
+        if !self.snapshot {
+            return TokenStream::new();
+        }
+        let name = &self.name;
+        let snapshot = format_ident!("{}Snapshot", name);
+        let machine = name.to_string();
+        let fields = self.regions.iter().map(|(name, ty)| {
+            quote! {
+                pub #name: <#ty as ::state_machines::runtime::SnapshotMachine>::Snapshot
+            }
+        });
+        let names: Vec<_> = self.regions.iter().map(|(name, _)| name).collect();
+        let captures = names.iter().map(|name| {
+            quote! {
+                #name: ::state_machines::runtime::SnapshotMachine::into_snapshot(#name)
+            }
+        });
+        let validates = self.regions.iter().map(|(name, ty)| quote! {
+            <#ty as ::state_machines::runtime::SnapshotMachine>::validate_snapshot(&snapshot.#name)?;
+        });
+        let restores = self.regions.iter().map(|(name, ty)| quote! {
+            <#ty as ::state_machines::runtime::SnapshotMachine>::from_validated_snapshot(snapshot.#name, capacity)
+        });
+        quote! {
+            ::state_machines::__sm_if_serde! {
+                #[derive(Debug, ::state_machines::__private::serde::Serialize, ::state_machines::__private::serde::Deserialize)]
+                #[serde(crate = "::state_machines::__private::serde", deny_unknown_fields)]
+                pub struct #snapshot {
+                    pub version: u32,
+                    pub machine: ::state_machines::__private::String,
+                    #(#fields,)*
+                }
+                impl #name {
+                    pub fn into_snapshot(self) -> #snapshot {
+                        ::state_machines::runtime::SnapshotMachine::into_snapshot(self)
+                    }
+                    pub fn try_into_snapshot(self) -> Result<#snapshot, Self> {
+                        ::state_machines::runtime::SnapshotMachine::try_into_snapshot(self)
+                    }
+                    pub fn validate_snapshot(snapshot: &#snapshot) -> Result<(), ::state_machines::SnapshotError> {
+                        <Self as ::state_machines::runtime::SnapshotMachine>::validate_snapshot(snapshot)
+                    }
+                    pub fn from_snapshot(snapshot: #snapshot, capacity: usize) -> Result<Self, (#snapshot, ::state_machines::SnapshotError)> {
+                        <Self as ::state_machines::runtime::SnapshotMachine>::from_snapshot(snapshot, capacity)
+                    }
+                }
+                impl ::state_machines::runtime::SnapshotMachine for #name {
+                    type Snapshot = #snapshot;
+                    fn validate_snapshot(snapshot: &Self::Snapshot) -> Result<(), ::state_machines::SnapshotError> {
+                        ::state_machines::SnapshotError::validate_header(snapshot.version, &snapshot.machine, #machine)?;
+                        #(#validates)*
+                        Ok(())
+                    }
+                    fn into_snapshot(self) -> Self::Snapshot {
+                        assert!(!self.is_poisoned(), "cannot snapshot poisoned regions");
+                        let (#(#names,)*) = self.into_regions();
+                        #snapshot { version: 1, machine: #machine.into(), #(#captures,)* }
+                    }
+                    fn from_validated_snapshot(snapshot: Self::Snapshot, capacity: usize) -> Self {
+                        Self::new(#(#restores,)* capacity)
+                    }
+                }
+            }
+        }
+    }
+
     pub fn expand(&self) -> TokenStream {
         let name = &self.name;
         let event_name = format_ident!("{}Event", name);
@@ -257,6 +354,13 @@ impl Regions {
         let error = format_ident!("{}Error", name);
         let inner = self.composition(0);
         let construct = self.construct(0);
+        let split = self.split_regions();
+        let snapshots = self.snapshots();
+        let region_types = self.regions.iter().map(|(_, ty)| ty);
+        let region_values = self
+            .regions
+            .iter()
+            .map(|(name, _)| quote! { #name.into_machine() });
         let parameters = self.regions.iter().map(|(name, ty)| quote! { #name: #ty });
         let config_fields = self.regions.iter().map(
             |(name, ty)| quote! { pub #name: <#ty as ::state_machines::runtime::Machine>::State },
@@ -319,6 +423,10 @@ impl Regions {
                 pub struct #name { inner: #inner }
                 impl #name {
                     pub fn new(#(#parameters,)* capacity: usize) -> Self { Self { inner: #construct } }
+                    pub fn into_regions(self) -> (#(#region_types,)*) {
+                        #split
+                        (#(#region_values,)*)
+                    }
                     #(#accessors)*
                     pub fn current_state(&self) -> #config {
                         let state = self.inner.current_state(); #current
@@ -371,6 +479,7 @@ impl Regions {
                     fn poll_regions(&mut self, cx: &mut ::core::task::Context<'_>) -> usize { self.poll_activities(cx) }
                     async fn drive_regions(&mut self, max_steps: usize) -> Result<usize, Self::Error> { self.drain(max_steps).await }
                 }
+                #snapshots
             }
         }
     }

@@ -75,7 +75,7 @@ pub fn generate(machine: &StateMachine) -> TokenStream {
             .map(|state| state.to_string()).collect::<Vec<_>>();
         quote! {
             if snapshot.#field.as_ref().is_some_and(|leaf| ![#( #leaves, )*].contains(&leaf.as_str())) {
-                return Err((snapshot, ::state_machines::SnapshotError::InvalidHistory { region: #region_str }));
+                return Err(::state_machines::SnapshotError::InvalidHistory { region: #region_str });
             }
         }
     });
@@ -96,11 +96,15 @@ pub fn generate(machine: &StateMachine) -> TokenStream {
     let checks = machine.state_storage.iter().map(|spec| {
         let field = &spec.field;
         let owner = spec.state_name.to_string();
-        let states = machine.hierarchy.expand_state(&spec.state_name, &machine.states)
-            .into_iter().map(|state| state.to_string()).collect::<Vec<_>>();
+        let states = machine
+            .hierarchy
+            .expand_state(&spec.state_name, &machine.states)
+            .into_iter()
+            .map(|state| state.to_string())
+            .collect::<Vec<_>>();
         quote! {
             if snapshot.#field.is_some() && ![#( #states, )*].contains(&snapshot.state.as_str()) {
-                return Err((snapshot, ::state_machines::SnapshotError::InactiveData { state: #owner }));
+                return Err(::state_machines::SnapshotError::InactiveData { state: #owner });
             }
         }
     });
@@ -155,29 +159,48 @@ pub fn generate(machine: &StateMachine) -> TokenStream {
                 /// Validate the envelope before restoring. On failure the
                 /// snapshot is returned intact, so callers can migrate it.
                 pub fn from_snapshot(snapshot: #snapshot_name #generics) -> Result<Self, (#snapshot_name #generics, ::state_machines::SnapshotError)> {
-                    if snapshot.version != 1 {
-                        let actual = snapshot.version;
-                        return Err((snapshot, ::state_machines::SnapshotError::UnsupportedVersion { expected: 1, actual }));
+                    if let Err(error) = Self::validate_snapshot(&snapshot) {
+                        return Err((snapshot, error));
                     }
-                    if snapshot.machine != #name_str {
-                        return Err((snapshot, ::state_machines::SnapshotError::WrongMachine));
-                    }
+                    Ok(Self::__sm_restore_snapshot(snapshot))
+                }
+
+                /// Borrowed validation lets compositions check all regions before
+                /// consuming any context/data. Uses the same checks as restoration.
+                pub fn validate_snapshot(snapshot: &#snapshot_name #generics) -> Result<(), ::state_machines::SnapshotError> {
+                    ::state_machines::SnapshotError::validate_header(snapshot.version, &snapshot.machine, #name_str)?;
                     if ![#( #state_names, )*].contains(&snapshot.state.as_str()) {
-                        return Err((snapshot, ::state_machines::SnapshotError::UnknownState));
+                        return Err(::state_machines::SnapshotError::UnknownState);
                     }
                     #( #checks )*
                     #( #history_checks )*
+                    Ok(())
+                }
+
+                fn __sm_restore_snapshot(snapshot: #snapshot_name #generics) -> Self {
                     let inner = match snapshot.state.as_str() {
                         #( #restore, )*
-                        _ => return Err((snapshot, ::state_machines::SnapshotError::UnknownState)),
+                        _ => unreachable!("validated snapshot state"),
                     };
-                    Ok(Self {
+                    Self {
                         epoch: 0,
                         scope_epochs: [0; #scope_count],
                         last_state: inner.state(),
                         inner: Some(inner),
                         completions: ::state_machines::__private::Vec::new(),
-                    })
+                    }
+                }
+            }
+            ::state_machines::__sm_if_runtime! {
+                impl #generics ::state_machines::runtime::SnapshotMachine for #dynamic #generics {
+                    type Snapshot = #snapshot_name #generics;
+                    fn validate_snapshot(snapshot: &Self::Snapshot) -> Result<(), ::state_machines::SnapshotError> {
+                        Self::validate_snapshot(snapshot)
+                    }
+                    fn into_snapshot(self) -> Self::Snapshot { self.into_snapshot() }
+                    fn from_validated_snapshot(snapshot: Self::Snapshot, _capacity: usize) -> Self {
+                        Self::__sm_restore_snapshot(snapshot)
+                    }
                 }
             }
         }

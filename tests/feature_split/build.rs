@@ -32,10 +32,14 @@ fn main() {
     assert_runtime(&DynamicProbe::new(()));
     state_machine! {
         name: RegionsProbe,
+        snapshot: true,
         regions: { first: DynamicProbe<()>, second: DynamicProbe<()> },
         events { scan { routes: { first: ProbeEvent::Scan, second: ProbeEvent::Scan } } }
     }
     let native = RegionsProbe::new(DynamicProbe::new(()), DynamicProbe::new(()), 4);
     assert_runtime(&native);
     assert_eq!(RegionsProbe::schema().regions.len(), 2);
+    let snapshot = native.into_snapshot();
+    let restored = RegionsProbe::from_snapshot(snapshot, 4).ok().unwrap();
+    assert_eq!(restored.current_state().first, ProbeState::Idle);
 }

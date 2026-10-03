@@ -1635,6 +1635,32 @@ clocks remain host-driven.
 
 ---
 
+### Unified region snapshots and history
+
+Enable `serde` and set `snapshot: true` on native region declarations and their
+child machines. Capture returns one versioned owned envelope:
+
+```ignore
+let snapshot = session.try_into_snapshot().ok().unwrap();
+let json = serde_json::to_string(&snapshot)?;
+let snapshot: SessionSnapshot = serde_json::from_str(&json)?;
+let restored = Session::from_snapshot(snapshot, 32).ok().unwrap();
+```
+
+Each named field contains that region's existing context, active data and
+shallow/deep history. No `Clone` is required. The common `runtime::SnapshotMachine`
+trait also snapshots recursively nested `Parallel` adapters. All headers, states,
+active-data ownership and histories are validated **before consuming any region**.
+A failed restore returns the entire original envelope intact for migration.
+Serde rejects unknown/missing region keys.
+
+Restore is inert: no startup hooks, automatic progression or synthetic join.
+Visit generations reset. Mailboxes, deferred/queued events, timers, activity
+futures, wakers and old capacity are **not** persisted. Capture closes old region
+channels and drops their ephemeral work; restore uses the supplied fresh mailbox
+capacity. Explicitly `start` restored region runtime work with the host's clock.
+History restores control state, not previously suspended resources.
+
 ## Contributing
 
 Contributions are welcome! This is a learning project, so:

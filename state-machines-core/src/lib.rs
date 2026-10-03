@@ -50,6 +50,22 @@ pub enum SnapshotError {
     InvalidHistory { region: &'static str },
 }
 
+impl SnapshotError {
+    /// Shared version/name validation for leaf and composed snapshot envelopes.
+    pub fn validate_header(version: u32, machine: &str, expected: &str) -> Result<(), Self> {
+        if version != 1 {
+            return Err(Self::UnsupportedVersion {
+                expected: 1,
+                actual: version,
+            });
+        }
+        if machine != expected {
+            return Err(Self::WrongMachine);
+        }
+        Ok(())
+    }
+}
+
 /// Represents an error that occurred while attempting a transition.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransitionError<S>
