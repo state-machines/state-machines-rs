@@ -1,5 +1,6 @@
 use super::{Clock, Machine};
 use alloc::collections::VecDeque;
+use core::fmt;
 
 /// Explicit region routing; forked payloads are owned separately, never cloned.
 #[derive(Debug)]
@@ -19,6 +20,32 @@ pub enum ParallelError<L, R> {
         left_committed: bool,
     },
     Poisoned,
+}
+impl<L, R> fmt::Display for ParallelError<L, R> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Left(_) => "left region failed",
+            Self::Right {
+                left_committed: true,
+                ..
+            } => "right region failed after the left region committed",
+            Self::Right { .. } => "right region failed",
+            Self::Poisoned => "a region is poisoned",
+        })
+    }
+}
+impl<L, R> core::error::Error for ParallelError<L, R>
+where
+    L: core::error::Error + 'static,
+    R: core::error::Error + 'static,
+{
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Left(error) => Some(error),
+            Self::Right { error, .. } => Some(error),
+            Self::Poisoned => None,
+        }
+    }
 }
 
 /// Two orthogonal regions with deterministic left-then-right fork dispatch.

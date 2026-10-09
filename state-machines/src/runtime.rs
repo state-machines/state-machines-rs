@@ -97,6 +97,15 @@ impl<E> QueueError<E> {
         }
     }
 }
+impl<E> fmt::Display for QueueError<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Full(_) => "mailbox is full",
+            Self::Closed(_) => "mailbox is closed",
+        })
+    }
+}
+impl<E: fmt::Debug> core::error::Error for QueueError<E> {}
 
 struct Envelope<E> {
     event: E,
@@ -203,6 +212,34 @@ pub enum RunError<E> {
     Poisoned,
     Setup(SetupError),
     AutomaticStepLimit { limit: usize },
+}
+// Machine errors are chained through `source()` rather than repeated here.
+impl<E> fmt::Display for RunError<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Dispatch(_) => f.write_str("event dispatch failed"),
+            Self::StepLimit { limit } => {
+                write!(f, "step limit of {limit} reached with events still queued")
+            }
+            Self::Poisoned => f.write_str("machine is poisoned"),
+            Self::Setup(_) => f.write_str("entry setup failed"),
+            Self::AutomaticStepLimit { limit } => {
+                write!(
+                    f,
+                    "automatic transitions did not settle within {limit} steps"
+                )
+            }
+        }
+    }
+}
+impl<E: core::error::Error + 'static> core::error::Error for RunError<E> {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Dispatch(error) => Some(error),
+            Self::Setup(error) => Some(error),
+            _ => None,
+        }
+    }
 }
 
 enum Scope<S> {

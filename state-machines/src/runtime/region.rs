@@ -1,5 +1,5 @@
 use super::{Clock, ClockError, Machine, QueueError, RunError, Runner};
-use core::task::Context;
+use core::{fmt, task::Context};
 
 #[derive(Debug)]
 pub enum RegionError<E, Error> {
@@ -7,6 +7,30 @@ pub enum RegionError<E, Error> {
     Run(RunError<Error>),
     Clock(ClockError),
     Nested(Error),
+}
+impl<E, Error> fmt::Display for RegionError<E, Error> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Queue(_) => "region mailbox rejected the event",
+            Self::Run(_) => "region runner failed",
+            Self::Clock(_) => "region clock rejected the tick",
+            Self::Nested(_) => "nested region failed",
+        })
+    }
+}
+impl<E, Error> core::error::Error for RegionError<E, Error>
+where
+    E: fmt::Debug + 'static,
+    Error: core::error::Error + 'static,
+{
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        Some(match self {
+            Self::Queue(error) => error,
+            Self::Run(error) => error,
+            Self::Clock(error) => error,
+            Self::Nested(error) => error,
+        })
+    }
 }
 
 /// A lifecycle-aware orthogonal region. All dispatch goes through the same

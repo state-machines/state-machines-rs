@@ -1073,10 +1073,12 @@ fn main() {
 
 ### Error Handling
 
-Dynamic mode provides `DynamicError<E = ()>` with five variants:
+Dynamic mode provides `DynamicError<E = ()>`:
 
 ```rust
 pub enum DynamicError<E = ()> {
+    StepLimit { limit: usize },
+    Poisoned { from: &'static str, event: &'static str },
     InvalidTransition { from: &'static str, event: &'static str },
     GuardFailed { guard: &'static str, event: &'static str },
     ActionFailed { action: &'static str, event: &'static str },
@@ -1087,6 +1089,12 @@ pub enum DynamicError<E = ()> {
 
 If your machine declares `error: AuthError`, dynamic dispatch uses `DynamicError<AuthError>`.
 Guard and callback failures leave the wrapper in its source state.
+
+Every public error type implements `Display` and `core::error::Error` (also in
+`no_std`), so `?` converts them into `anyhow::Error` or `Box<dyn Error>`.
+Callback errors only need `Debug` and are shown inline. Runtime errors such as
+`RunError`, `RegionError` and `ParallelError` expose the machine error through
+`source()`.
 
 ```rust,ignore
 let mut machine = DynamicTrafficLight::new(());

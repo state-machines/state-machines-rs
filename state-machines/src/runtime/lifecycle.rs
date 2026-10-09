@@ -1,4 +1,6 @@
 //! Declarative entry setup uses the existing scoped timer/activity registries.
+use core::fmt;
+
 use super::{Clock, InvokeFailure, Machine, Runner, ScheduleError, WorkScope, activities::Task};
 
 pub type ActivityFuture<E> = Task<E>;
@@ -45,11 +47,35 @@ pub enum SetupFailure {
     Schedule(ScheduleError<()>),
     Invoke(InvokeFailure),
 }
+impl fmt::Display for SetupFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Poisoned => f.write_str("machine is poisoned"),
+            Self::ClockRequired => f.write_str("no clock observed yet; call start or tick first"),
+            Self::Schedule(error) => fmt::Display::fmt(error, f),
+            Self::Invoke(failure) => fmt::Display::fmt(failure, f),
+        }
+    }
+}
 #[derive(Debug, PartialEq, Eq)]
 pub struct SetupError {
     pub scope: &'static str,
     pub reason: SetupFailure,
 }
+impl fmt::Display for SetupError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.scope.is_empty() {
+            write!(f, "entry setup failed: {}", self.reason)
+        } else {
+            write!(
+                f,
+                "entry setup for `{}` failed: {}",
+                self.scope, self.reason
+            )
+        }
+    }
+}
+impl core::error::Error for SetupError {}
 pub(super) struct ObservedClock(pub u64);
 impl Clock for ObservedClock {
     fn now(&self) -> u64 {

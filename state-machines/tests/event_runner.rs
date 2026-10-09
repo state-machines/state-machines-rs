@@ -127,10 +127,15 @@ fn rejected_event_does_not_lose_the_remaining_queue() {
     let mut runner = Runner::new(DynamicQueued::new(()), 2);
     runner.enqueue(QueuedEvent::Heartbeat).unwrap();
     runner.enqueue(QueuedEvent::Ready).unwrap();
-    assert_matches!(
-        pollster::block_on(runner.drain(2)),
-        Err(RunError::Dispatch(_))
-    );
+    let error = pollster::block_on(runner.drain(2)).unwrap_err();
+    assert_matches!(error, RunError::Dispatch(_));
+    // Runner errors chain to the machine error, so `?` into anyhow or
+    // Box<dyn Error> keeps the cause.
+    let error: Box<dyn std::error::Error + Send + Sync> = Box::new(error);
+    let cause = error
+        .source()
+        .expect("dispatch failures expose the machine error");
+    assert!(cause.to_string().contains("heartbeat"));
     assert_eq!(runner.pending(), 1);
     assert_eq!(pollster::block_on(runner.drain(2)), Ok(1));
 }

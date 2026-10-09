@@ -20,6 +20,17 @@ pub enum InvokeFailure {
     ZeroBudget,
     InactiveScope,
 }
+impl fmt::Display for InvokeFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Full => "mailbox is full",
+            Self::Poisoned => "machine is poisoned",
+            Self::Overflow => "activity id overflow",
+            Self::ZeroBudget => "child step budget is zero",
+            Self::InactiveScope => "scope is not active",
+        })
+    }
+}
 
 /// Rejected futures remain owned by the caller, without being polled.
 pub struct InvokeError<F> {
@@ -33,6 +44,12 @@ impl<F> fmt::Debug for InvokeError<F> {
             .finish_non_exhaustive()
     }
 }
+impl<F> fmt::Display for InvokeError<F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "activity rejected: {}", self.reason)
+    }
+}
+impl<F> core::error::Error for InvokeError<F> {}
 pub struct ChildInvokeError<C: Machine> {
     pub reason: InvokeFailure,
     pub child: Runner<C>,
@@ -44,6 +61,12 @@ impl<C: Machine> fmt::Debug for ChildInvokeError<C> {
             .finish_non_exhaustive()
     }
 }
+impl<C: Machine> fmt::Display for ChildInvokeError<C> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "child invocation rejected: {}", self.reason)
+    }
+}
+impl<C: Machine> core::error::Error for ChildInvokeError<C> {}
 
 cfg_select! {
     feature = "runtime-send" => {

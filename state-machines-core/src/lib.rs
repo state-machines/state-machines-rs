@@ -1,6 +1,6 @@
 #![no_std]
 
-use core::fmt::Debug;
+use core::fmt::{self, Debug};
 
 #[cfg(feature = "inspect")]
 pub mod schema;
@@ -66,6 +66,28 @@ impl SnapshotError {
     }
 }
 
+impl fmt::Display for SnapshotError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnsupportedVersion { expected, actual } => {
+                write!(
+                    f,
+                    "unsupported snapshot version {actual} (expected {expected})"
+                )
+            }
+            Self::WrongMachine => f.write_str("snapshot belongs to a different machine"),
+            Self::UnknownState => f.write_str("snapshot names an unknown state"),
+            Self::InactiveData { state } => {
+                write!(f, "snapshot carries data for inactive state `{state}`")
+            }
+            Self::InvalidHistory { region } => {
+                write!(f, "snapshot records invalid history for `{region}`")
+            }
+        }
+    }
+}
+impl core::error::Error for SnapshotError {}
+
 /// Represents an error that occurred while attempting a transition.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransitionError<S>
@@ -98,11 +120,28 @@ where
     }
 }
 
+impl<S: MachineState> fmt::Display for TransitionError<S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} for `{}` from {:?}", self.kind, self.event, self.from)
+    }
+}
+impl<S: MachineState> core::error::Error for TransitionError<S> {}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TransitionErrorKind {
     InvalidTransition,
     GuardFailed { guard: &'static str },
     ActionFailed { action: &'static str },
+}
+
+impl fmt::Display for TransitionErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidTransition => f.write_str("invalid transition"),
+            Self::GuardFailed { guard } => write!(f, "guard `{guard}` failed"),
+            Self::ActionFailed { action } => write!(f, "action `{action}` failed"),
+        }
+    }
 }
 
 /// Error returned when a guard or around callback fails in typestate mode.
@@ -134,6 +173,13 @@ impl GuardError {
     }
 }
 
+impl fmt::Display for GuardError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} for `{}`", self.kind, self.event)
+    }
+}
+impl core::error::Error for GuardError {}
+
 /// Error returned when a before/after callback returns a user-defined error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CallbackError<E> {
@@ -152,6 +198,19 @@ impl<E> CallbackError<E> {
     }
 }
 
+// User callback errors only need `Debug` (they may be `()` and need not
+// implement `Error`), so they are rendered inline rather than via `source()`.
+impl<E: Debug> fmt::Display for CallbackError<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "callback `{}` failed for `{}`: {:?}",
+            self.action, self.event, self.source
+        )
+    }
+}
+impl<E: Debug> core::error::Error for CallbackError<E> {}
+
 /// Error returned from typestate event methods.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EventError<E> {
@@ -168,6 +227,16 @@ impl<E> EventError<E> {
         Self::Callback(CallbackError::new(action, event, source))
     }
 }
+
+impl<E: Debug> fmt::Display for EventError<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Guard(error) => fmt::Display::fmt(error, f),
+            Self::Callback(error) => fmt::Display::fmt(error, f),
+        }
+    }
+}
+impl<E: Debug> core::error::Error for EventError<E> {}
 
 #[doc(hidden)]
 pub trait FallibleCallbackReturn<E> {
@@ -287,6 +356,49 @@ impl<E> DynamicError<E> {
         }
     }
 }
+
+impl<E: Debug> fmt::Display for DynamicError<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::StepLimit { limit } => {
+                write!(
+                    f,
+                    "automatic transitions did not settle within {limit} steps"
+                )
+            }
+            Self::Poisoned { from, event } => write!(
+                f,
+                "machine poisoned: `{event}` from `{from}` was cancelled or unwound"
+            ),
+            Self::InvalidTransition { from: "", event } => {
+                write!(f, "invalid transition for `{event}`")
+            }
+            Self::InvalidTransition { from, event } => {
+                write!(f, "invalid transition for `{event}` from `{from}`")
+            }
+            Self::GuardFailed { guard, event } => {
+                write!(f, "guard `{guard}` failed for `{event}`")
+            }
+            Self::ActionFailed { action, event } => {
+                write!(f, "action `{action}` failed for `{event}`")
+            }
+            Self::CallbackFailed {
+                action,
+                event,
+                source,
+            } => write!(f, "callback `{action}` failed for `{event}`: {source:?}"),
+            Self::WrongState {
+                expected,
+                actual,
+                operation,
+            } => write!(
+                f,
+                "`{operation}` requires state `{expected}`, but the machine is in `{actual}`"
+            ),
+        }
+    }
+}
+impl<E: Debug> core::error::Error for DynamicError<E> {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AroundStage {

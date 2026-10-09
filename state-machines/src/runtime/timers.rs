@@ -1,5 +1,6 @@
 use super::{Envelope, Machine, Runner, Visit, WorkScope};
 use alloc::vec::Vec;
+use core::fmt;
 
 /// Executor-independent monotonic logical ticks. The host chooses the tick unit.
 pub trait Clock {
@@ -37,6 +38,18 @@ impl<E> ScheduleError<E> {
         }
     }
 }
+impl<E> fmt::Display for ScheduleError<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Full(_) => "timer rejected: mailbox is full",
+            Self::Poisoned(_) => "timer rejected: machine is poisoned",
+            Self::Backwards(_) => "timer rejected: clock moved backwards",
+            Self::Overflow(_) => "timer rejected: deadline or timer id overflow",
+            Self::InactiveScope(_) => "timer rejected: scope is not active",
+        })
+    }
+}
+impl<E: fmt::Debug> core::error::Error for ScheduleError<E> {}
 
 pub(super) struct Timeout<E> {
     deadline: u64,
@@ -179,3 +192,9 @@ impl<M: Machine> Runner<M> {
 pub enum ClockError {
     Backwards,
 }
+impl fmt::Display for ClockError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("clock moved backwards")
+    }
+}
+impl core::error::Error for ClockError {}
