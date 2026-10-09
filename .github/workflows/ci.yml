@@ -8,6 +8,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Gate rustc warnings in every build/test step without RUSTFLAGS rebuilding deps
+  CARGO_BUILD_WARNINGS: deny
 
 jobs:
   test:

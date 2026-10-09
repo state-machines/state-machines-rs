@@ -8,7 +8,7 @@ description = "Regression fixture: host and target link state-machines with diff
 
 # Keep this non-release fixture out of release-please's workspace dependency graph.
 [workspace]
-resolver = "2"
+resolver = "3"
 
 [workspace.package]
 rust-version = "1.99"

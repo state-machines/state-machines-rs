@@ -8,7 +8,14 @@ members = [
 # release-please's cargo-workspace plugin bumps every member, including
 # publish=false packages. Keep runnable examples/fixtures in their own workspaces.
 exclude = ["examples", "tests/feature_split"]
-resolver = "2"
+resolver = "3"
 
 [workspace.package]
 rust-version = "1.99"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+# Crate docs show complete programs, including `fn main`
+needless_doctest_main = "allow"

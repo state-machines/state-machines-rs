@@ -18,3 +18,11 @@ path = "src/main.rs"
 state-machines-core = { version = "0.11.1", path = "../state-machines-core", features = ["std"] }
 clap = { version = "4", features = ["derive"] }
 serde_json = "1.0"
+
+# Not `workspace = true`: Cargo forbids mixing inherited and local entries, and
+# dead_code_pub_in_binary must stay off library crates (their unit-test
+# harnesses are binaries, so every `pub` item would look dead).
+[lints.rust]
+unsafe_code = "forbid"
+# Binary crate: unused `pub` items are dead code too
+dead_code_pub_in_binary = "warn"

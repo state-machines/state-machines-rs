@@ -21,3 +21,6 @@ serde_json = { version = "1.0", optional = true }
 default = []
 inspect = ["serde"]
 std = ["inspect", "serde_json"]
+
+[lints]
+workspace = true
