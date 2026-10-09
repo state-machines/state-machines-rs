@@ -6,8 +6,8 @@
 //! - The macro explicitly specifies `dynamic: true`
 
 use crate::codegen::utils::{
-    ctx_generics, ctx_ty, empty_storage_inits, event_pascal, machine_params, maybe_async,
-    maybe_await, to_snake_case, to_snake_case_ident, transition_error_ty,
+    async_lint_allows, ctx_generics, ctx_ty, empty_storage_inits, event_pascal, machine_params,
+    maybe_async, maybe_await, to_snake_case, to_snake_case_ident, transition_error_ty,
 };
 use crate::types::*;
 use proc_macro2::TokenStream as TokenStream2;
@@ -167,6 +167,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
     let initial_state = &machine.initial;
     let is_async = machine.async_mode;
     let maybe_async = maybe_async(is_async);
+    let async_allows = async_lint_allows(is_async);
     let maybe_await = maybe_await(is_async);
     let (dynamic_error_ty, dynamic_error_ctor) = match &machine.error {
         Some(error_ty) => (
@@ -399,16 +400,29 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
         fn is_poisoned(&self) -> bool { self.is_poisoned() }
         // Runtime-driven dispatch has no completion consumer; recording here
         // would grow the notification buffer for the runner's whole lifetime.
-        async fn dispatch(&mut self, event: Self::Event) -> Result<(), Self::Error> {
-            self.__sm_handle_one(event, false) #maybe_await?;
-            #settle_quietly
-            Ok(())
+        // Lazy `async move` blocks rather than `async fn`: sync machines have
+        // nothing to await, and clippy::unused_async_trait_impl would fire in
+        // every caller's crate.
+        fn dispatch(
+            &mut self,
+            event: Self::Event,
+        ) -> impl ::state_machines::runtime::RuntimeFuture<Output = Result<(), Self::Error>> {
+            async move {
+                self.__sm_handle_one(event, false) #maybe_await?;
+                #settle_quietly
+                Ok(())
+            }
         }
-        async fn dispatch_one(&mut self, event: Self::Event) -> Result<(), Self::Error> {
-            self.__sm_handle_one(event, false) #maybe_await
+        fn dispatch_one(
+            &mut self,
+            event: Self::Event,
+        ) -> impl ::state_machines::runtime::RuntimeFuture<Output = Result<(), Self::Error>> {
+            async move { self.__sm_handle_one(event, false) #maybe_await }
         }
-        async fn automatic_step(&mut self) -> Result<bool, Self::Error> {
-            self.__sm_automatic_step(false) #maybe_await
+        fn automatic_step(
+            &mut self,
+        ) -> impl ::state_machines::runtime::RuntimeFuture<Output = Result<bool, Self::Error>> {
+            async move { self.__sm_automatic_step(false) #maybe_await }
         }
         #automatic_enabled
     };
@@ -594,6 +608,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
             completions: ::state_machines::__private::Vec<::state_machines::CompletionEvent>,
         }
 
+        #async_allows
         impl #generics #dynamic_name #generics {
             #runtime_factories
             /// Construct and run the declared initial entry hooks.

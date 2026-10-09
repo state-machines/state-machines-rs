@@ -127,6 +127,19 @@ pub fn machine_params(machine: &StateMachine, state: impl ToTokens) -> TokenStre
 }
 
 /// `async` in async mode, nothing otherwise.
+/// Lint allowances for impl blocks holding generated `async fn`s.
+///
+/// Async machines expose async transitions so user guards and callbacks may
+/// await; when none do, the generated bodies have nothing to await and clippy's
+/// unused-async lints would fire in the caller's crate on code it cannot change.
+pub fn async_lint_allows(is_async: bool) -> TokenStream2 {
+    if is_async {
+        quote! { #[allow(clippy::unused_async, clippy::unused_async_trait_impl)] }
+    } else {
+        quote! {}
+    }
+}
+
 pub fn maybe_async(is_async: bool) -> TokenStream2 {
     if is_async {
         quote! { async }

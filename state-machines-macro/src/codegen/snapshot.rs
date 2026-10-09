@@ -124,6 +124,9 @@ pub fn generate(machine: &StateMachine) -> TokenStream {
             /// Versioned owned machine state, not a graph schema.
             #[derive(Debug, ::state_machines::__private::serde::Serialize, ::state_machines::__private::serde::Deserialize)]
             #[serde(crate = "::state_machines::__private::serde", deny_unknown_fields)]
+            // Data/history fields keep their established `__` names (migrations
+            // read and write them); serde renames them on the wire.
+            #[allow(clippy::pub_underscore_fields)]
             pub struct #snapshot_name #generics {
                 pub version: u32,
                 pub machine: ::state_machines::__private::String,

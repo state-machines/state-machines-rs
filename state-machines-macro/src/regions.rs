@@ -436,6 +436,8 @@ impl Regions {
                     pub fn take_join(&mut self) -> Option<#config> {
                         self.inner.take_join().map(|state| #join)
                     }
+                    // An event-less composition matches an empty enum: nothing to await.
+                    #[allow(clippy::unused_async, clippy::unused_async_trait_impl)]
                     pub async fn handle(&mut self, event: #event_name) -> Result<(), #error> {
                         match event { #(#handlers,)* }
                     }

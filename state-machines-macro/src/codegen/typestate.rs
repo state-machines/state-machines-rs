@@ -39,8 +39,8 @@
 //! ```
 
 use crate::codegen::utils::{
-    ctx_generics, ctx_ty, empty_storage_inits, machine_params, maybe_async, maybe_await,
-    to_snake_case, to_snake_case_ident, transition_error_ty,
+    async_lint_allows, ctx_generics, ctx_ty, empty_storage_inits, machine_params, maybe_async,
+    maybe_await, to_snake_case, to_snake_case_ident, transition_error_ty,
 };
 use crate::types::*;
 use proc_macro2::TokenStream as TokenStream2;
@@ -219,7 +219,9 @@ fn generate_state_impls(machine: &StateMachine) -> Result<Vec<TokenStream2>> {
         }
 
         let params = machine_params(machine, state);
+        let allows = async_lint_allows(machine.async_mode);
         let impl_block = quote! {
+            #allows
             impl #generics #machine_name #params {
                 #( #methods )*
             }
