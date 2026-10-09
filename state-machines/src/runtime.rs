@@ -327,6 +327,9 @@ impl<M: Machine> Runner<M> {
             && event.activity.is_none_or(|id| self.activities.contains(id))
     }
     fn recall(&mut self) {
+        if self.deferred.is_empty() {
+            return;
+        }
         let mut recalled = VecDeque::new();
         for _ in 0..self.deferred.len() {
             let (rule, event) = self.deferred.pop_front().unwrap();
@@ -339,8 +342,9 @@ impl<M: Machine> Runner<M> {
             }
         }
         let mut inbox = self.sink.inbox.borrow_mut();
-        recalled.append(&mut inbox.external);
-        inbox.external = recalled;
+        while let Some(event) = recalled.pop_back() {
+            inbox.external.push_front(event);
+        }
     }
     pub async fn drain(&mut self, max_steps: usize) -> Result<usize, RunError<M::Error>> {
         // Explicit driving (not construction/restore) settles the initial
