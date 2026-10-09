@@ -56,6 +56,25 @@ jobs:
           cargo clippy --workspace --all-targets --features state-machines/runtime,state-machines/serde,state-machines/async,state-machines/dynamic,state-machines/std -- -D warnings
           cargo clippy --manifest-path examples/Cargo.toml --workspace --all-targets --all-features -- -D warnings
           cargo clippy --manifest-path tests/feature_split/Cargo.toml --all-targets -- -D warnings
+      # Users who enable pedantic/nursery must not inherit warnings from macro
+      # output. Only diagnostics raised inside state_machine! expansions fail;
+      # the hand-written tests themselves are not held to pedantic.
+      - name: Generated code passes clippy pedantic and nursery
+        env:
+          CARGO_BUILD_WARNINGS: warn
+        run: |
+          set -euo pipefail
+          for features in --all-features "--features state-machines/runtime,state-machines/serde,state-machines/async,state-machines/dynamic,state-machines/std"; do
+            cargo clippy --workspace --tests $features --message-format=json -- -W clippy::pedantic -W clippy::nursery \
+              | jq -r 'select(.reason == "compiler-message")
+                  | select([.message.spans[] | recurse(.expansion.span? // empty) | .expansion.macro_decl_name? // empty]
+                           | any(. == "state_machine!"))
+                  | .message.rendered' > generated-lints.txt
+            if [ -s generated-lints.txt ]; then
+              cat generated-lints.txt
+              exit 1
+            fi
+          done
 
   no-std:
     name: no_std Build
