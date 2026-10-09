@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.30.1](https://github.com/state-machines/state-machines-rs/compare/state-machines-macro-v0.30.0...state-machines-macro-v0.30.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* **macro:** emit superstates in a stable order across builds ([8578bae](https://github.com/state-machines/state-machines-rs/commit/8578bae2cd00b935a27a67d97e6f3c3b6f8deb6a))
+* **runtime:** stop queueing completion notifications nobody can drain ([ceded88](https://github.com/state-machines/state-machines-rs/commit/ceded8839dd9b9757a55eb09cb806f91e241b805))
+
 ## [0.30.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-macro-v0.22.1...state-machines-macro-v0.30.0) (2026-10-03)
 
 

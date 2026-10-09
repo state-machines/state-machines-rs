@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.30.1](https://github.com/state-machines/state-machines-rs/compare/state-machines-v0.30.0...state-machines-v0.30.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* **runtime:** stop rebuilding the external queue on every recall ([9ad182c](https://github.com/state-machines/state-machines-rs/commit/9ad182c01479cd24baebb332a2b7d7f88fd8487f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * state-machines-core bumped from 0.11.0 to 0.11.1
+    * state-machines-macro bumped from 0.30.0 to 0.30.1
+
 ## [0.30.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-v0.21.1...state-machines-v0.30.0) (2026-10-03)
 
 
