@@ -93,7 +93,8 @@ legal. `is_finished()` identifies a root final;
 `completion_events()` reports `CompletionEvent::Machine` or
 `CompletionEvent::Superstate("Parent")` for a nested final's immediate parent.
 Dynamic `take_completion_events()` drains notifications from successful
-`handle()` calls only. A parent's `lifecycle: { Parent { complete: [notify] } }`
+`handle()`/`stabilize()` calls only; runtime-driven dispatch (`Runner`,
+`Parallel`, regions) does not queue them. A parent's `lifecycle: { Parent { complete: [notify] } }`
 hook runs after the ordinary transition callbacks. Completion does not
 implicitly mark every ancestor complete. Use parent completion triggers for
 automatic progression.

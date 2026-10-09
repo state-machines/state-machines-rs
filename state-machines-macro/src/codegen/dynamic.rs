@@ -269,14 +269,18 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
         pub #maybe_async fn handle(&mut self, event: #event_name) -> Result<(), #dynamic_error_ty>
     };
     let handle_one_sig = quote! {
-        #maybe_async fn __sm_handle_one(&mut self, event: #event_name) -> Result<(), #dynamic_error_ty>
+        #maybe_async fn __sm_handle_one(&mut self, event: #event_name, record: bool) -> Result<(), #dynamic_error_ty>
     };
     let automatic_methods = super::automatic::dynamic_methods(machine);
-    let settle = if machine.events.iter().any(|event| event.automatic) {
-        quote! { self.stabilize(64) #maybe_await?; }
-    } else {
-        quote! {}
+    let has_automatic = machine.events.iter().any(|event| event.automatic);
+    let settle = |record: bool| {
+        if has_automatic {
+            quote! { self.__sm_settle(64, #record) #maybe_await?; }
+        } else {
+            quote! {}
+        }
     };
+    let (settle, settle_quietly) = (settle(true), settle(false));
 
     let available_event_arms = machine.states.iter().map(|state| {
         let checks = super::branching::groups(machine, state)
@@ -371,7 +375,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
     } else {
         quote! { <C: ::core::marker::Send> }
     };
-    let automatic_enabled = if !machine.events.iter().any(|event| event.automatic) {
+    let automatic_enabled = if !has_automatic {
         // Inherit ready(false) without capturing &self or requiring Sync state data.
         quote! {}
     } else if machine.async_mode {
@@ -393,14 +397,18 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
         fn scope_epoch(&self, scope: &str) -> Option<u64> { self.scope_epoch(scope) }
         fn is_finished(&self) -> bool { self.is_finished() }
         fn is_poisoned(&self) -> bool { self.is_poisoned() }
+        // Runtime-driven dispatch has no completion consumer; recording here
+        // would grow the notification buffer for the runner's whole lifetime.
         async fn dispatch(&mut self, event: Self::Event) -> Result<(), Self::Error> {
-            self.handle(event) #maybe_await
+            self.__sm_handle_one(event, false) #maybe_await?;
+            #settle_quietly
+            Ok(())
         }
         async fn dispatch_one(&mut self, event: Self::Event) -> Result<(), Self::Error> {
-            self.__sm_handle_one(event) #maybe_await
+            self.__sm_handle_one(event, false) #maybe_await
         }
         async fn automatic_step(&mut self) -> Result<bool, Self::Error> {
-            self.__sm_automatic_step() #maybe_await
+            self.__sm_automatic_step(false) #maybe_await
         }
         #automatic_enabled
     };
@@ -626,7 +634,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
             /// - A guard callback fails
             /// - An action callback fails
             #handle_sig {
-                self.__sm_handle_one(event) #maybe_await?;
+                self.__sm_handle_one(event, true) #maybe_await?;
                 #settle
                 Ok(())
             }
@@ -648,7 +656,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
 
                 self.last_state = new_state.state();
                 self.inner = ::core::option::Option::Some(new_state);
-                self.__sm_record_completions(previous_epoch);
+                if record { self.__sm_record_completions(previous_epoch); }
                 Ok(())
             }
 

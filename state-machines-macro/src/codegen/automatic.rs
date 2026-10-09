@@ -59,7 +59,7 @@ pub fn dynamic_methods(machine: &StateMachine) -> TokenStream {
                                 let next = #any::#target(machine);
                                 self.last_state = next.state();
                                 self.inner = Some(next);
-                                self.__sm_record_completions(previous_epoch);
+                                if record { self.__sm_record_completions(previous_epoch); }
                                 return Ok(true);
                             }
                             Err((machine, error)) => {
@@ -104,7 +104,9 @@ pub fn dynamic_methods(machine: &StateMachine) -> TokenStream {
                 None => false,
             }
         }
-        #async_ fn __sm_automatic_step(&mut self) -> Result<bool, #error_ty> {
+        /// `record` queues completion notifications for `take_completion_events`;
+        /// runtime-driven steps pass false because nothing drains them there.
+        #async_ fn __sm_automatic_step(&mut self, record: bool) -> Result<bool, #error_ty> {
             let current = self.inner.take().ok_or(#error_ctor::Poisoned {
                 from: self.last_state.name(), event: "__automatic",
             })?;
@@ -113,6 +115,9 @@ pub fn dynamic_methods(machine: &StateMachine) -> TokenStream {
         /// Run enabled eventless transitions to stability, bounded by `max_steps`.
         /// Failure retains the last committed state; a limit is not poisoning.
         pub #async_ fn stabilize(&mut self, max_steps: usize) -> Result<usize, #error_ty> {
+            self.__sm_settle(max_steps, true) #await_
+        }
+        #async_ fn __sm_settle(&mut self, max_steps: usize, record: bool) -> Result<usize, #error_ty> {
             if self.is_poisoned() {
                 return Err(#error_ctor::Poisoned { from: self.last_state.name(), event: "__automatic" });
             }
@@ -123,7 +128,7 @@ pub fn dynamic_methods(machine: &StateMachine) -> TokenStream {
                         Err(#error_ctor::StepLimit { limit: max_steps })
                     } else { Ok(steps) };
                 }
-                if !(self.__sm_automatic_step() #await_?) { return Ok(steps); }
+                if !(self.__sm_automatic_step(record) #await_?) { return Ok(steps); }
                 steps += 1;
             }
         }
