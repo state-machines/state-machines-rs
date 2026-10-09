@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-macro-v0.30.1...state-machines-macro-v0.31.0) (2026-10-09)
+
+
+### Bug Fixes
+
+* **macro:** keep generated code clean under clippy pedantic and nursery ([3074392](https://github.com/state-machines/state-machines-rs/commit/3074392362c6043c194b116fedb3a7fe9824a536))
+
 ## [0.30.1](https://github.com/state-machines/state-machines-rs/compare/state-machines-macro-v0.30.0...state-machines-macro-v0.30.1) (2026-10-09)
 
 

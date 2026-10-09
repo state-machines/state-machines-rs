@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-core-v0.11.1...state-machines-core-v0.12.0) (2026-10-09)
+
+
+### Features
+
+* implement Display and Error for every public error type ([027cf53](https://github.com/state-machines/state-machines-rs/commit/027cf53a4c7f83d5a2cccd6a54d64ee00f5de801))
+
 ## [0.11.1](https://github.com/state-machines/state-machines-rs/compare/state-machines-core-v0.11.0...state-machines-core-v0.11.1) (2026-10-09)
 
 

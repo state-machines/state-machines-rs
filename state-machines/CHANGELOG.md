@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.31.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-v0.30.1...state-machines-v0.31.0) (2026-10-09)
+
+
+### Features
+
+* implement Display and Error for every public error type ([027cf53](https://github.com/state-machines/state-machines-rs/commit/027cf53a4c7f83d5a2cccd6a54d64ee00f5de801))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * state-machines-core bumped from 0.11.1 to 0.12.0
+    * state-machines-macro bumped from 0.30.1 to 0.31.0
+
 ## [0.30.1](https://github.com/state-machines/state-machines-rs/compare/state-machines-v0.30.0...state-machines-v0.30.1) (2026-10-09)
 
 
