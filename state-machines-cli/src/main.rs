@@ -17,41 +17,45 @@
 //! cat schema.json | state-machines render json
 //! ```
 
-use clap::{Parser, Subcommand};
 use state_machines_core::schema::{DiagnosticLevel, MachineSchema};
 use std::io::{self, Read};
+use usage_rs as usage;
 
-#[derive(Parser)]
-#[command(name = "state-machines")]
-#[command(about = "CLI tool for state-machines visualization and introspection")]
-#[command(version)]
+#[derive(usage::Cli)]
+#[usage(
+    bin = "state-machines",
+    version,
+    about = "CLI tool for state-machines visualization and introspection"
+)]
 struct Cli {
-    #[command(subcommand)]
+    #[usage(subcommand)]
     command: Commands,
 }
 
-#[derive(Subcommand)]
+#[derive(usage::Subcommands)]
 enum Commands {
     /// Render a state machine schema to various formats
-    Render {
-        /// Output format: mermaid, json
-        #[arg(value_name = "FORMAT")]
-        format: String,
-
-        /// Input JSON file (reads from stdin if not provided)
-        #[arg(short, long)]
-        input: Option<String>,
-    },
-
+    Render(RenderArgs),
     /// Validate a state machine schema
-    Validate {
-        /// Input JSON file (reads from stdin if not provided)
-        #[arg(short, long)]
-        input: Option<String>,
-    },
-
+    Validate(InputArgs),
     /// Show example schema
     Example,
+}
+
+#[derive(usage::Args)]
+struct RenderArgs {
+    /// Output format: mermaid, json
+    #[usage(arg, value_name = "FORMAT")]
+    format: String,
+    #[usage(flatten)]
+    source: InputArgs,
+}
+
+#[derive(usage::Args)]
+struct InputArgs {
+    /// Input JSON file (reads from stdin if not provided)
+    #[usage(short, long)]
+    input: Option<String>,
 }
 
 fn read_input(input: Option<String>) -> io::Result<String> {
@@ -69,8 +73,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Render { format, input } => {
-            let json = read_input(input)?;
+        Commands::Render(RenderArgs { format, source }) => {
+            let json = read_input(source.input)?;
             let schema: MachineSchema = serde_json::from_str(&json)?;
 
             match format.as_str() {
@@ -87,7 +91,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        Commands::Validate { input } => {
+        Commands::Validate(InputArgs { input }) => {
             let json = read_input(input)?;
             match serde_json::from_str::<MachineSchema>(&json) {
                 Ok(schema) => {
