@@ -7,7 +7,7 @@
 //! - Hierarchy: Superstate tracking and resolution
 //! - Storage specifications for state-associated data
 
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map::Entry};
 use syn::{Ident, Type};
 
 /// The main state machine definition parsed from the macro input.
@@ -350,9 +350,8 @@ pub struct StateStorageSpec {
 ///
 /// Superstates are composite states that contain multiple leaf states.
 /// They enable hierarchical state machines.
-#[derive(Clone)]
-#[allow(dead_code)]
 pub struct SuperstateInfo {
+    pub name: Ident,
     pub descendants: Vec<Ident>,
     pub initial: Ident,
 }
@@ -365,33 +364,44 @@ pub struct SuperstateInfo {
 /// - Initial child states for superstates
 #[derive(Default)]
 pub struct Hierarchy {
+    /// Registration order (nested before parent). Iterate this, never a
+    /// HashMap, so generated code and schemas are identical across builds.
     pub superstates: Vec<SuperstateInfo>,
-    pub lookup: HashMap<String, Vec<Ident>>,
+    index: HashMap<String, usize>,
     pub ancestors: HashMap<String, Vec<Ident>>,
-    pub initial_children: HashMap<String, Ident>,
 }
 
 impl Hierarchy {
+    pub fn superstate(&self, name: &str) -> Option<&SuperstateInfo> {
+        self.index.get(name).map(|&index| &self.superstates[index])
+    }
+
     /// Immediate parent of a leaf or composite, preserving unary hierarchy identity.
     pub fn parent(&self, name: &str) -> Option<&Ident> {
         if let Some(path) = self.ancestors.get(name) {
             return path.last();
         }
-        let leaf = self.lookup.get(name)?.first()?;
+        let leaf = self.superstate(name)?.descendants.first()?;
         let path = self.ancestors.get(&leaf.to_string())?;
         let index = path.iter().position(|scope| scope == name)?;
         index.checked_sub(1).map(|index| &path[index])
     }
 
     /// Register a superstate with its descendants and initial state.
+    /// A repeated name replaces the earlier registration in place.
     pub fn register_superstate(&mut self, name: Ident, descendants: Vec<Ident>, initial: Ident) {
-        let lookup_key = name.to_string();
-        self.lookup.insert(lookup_key.clone(), descendants.clone());
-        self.initial_children.insert(lookup_key, initial.clone());
-        self.superstates.push(SuperstateInfo {
+        let info = SuperstateInfo {
+            name,
             descendants,
             initial,
-        });
+        };
+        match self.index.entry(info.name.to_string()) {
+            Entry::Occupied(slot) => self.superstates[*slot.get()] = info,
+            Entry::Vacant(slot) => {
+                slot.insert(self.superstates.len());
+                self.superstates.push(info);
+            }
+        }
     }
 
     /// Register a leaf state with its ancestor chain.
@@ -405,36 +415,28 @@ impl Hierarchy {
     /// Expand a state identifier to its leaf states.
     ///
     /// If the identifier is a superstate, returns all its descendants.
-    /// If it's a leaf state, returns a single-element vector with that state.
-    /// If it's neither, returns an empty vector.
-    pub fn expand_state(&self, ident: &Ident, leaves: &[Ident]) -> Vec<Ident> {
-        if let Some(descendants) = self.lookup.get(&ident.to_string()) {
-            return descendants.clone();
+    /// If it's a leaf state, returns a single-element slice with that state.
+    /// If it's neither, returns an empty slice.
+    pub fn expand_state<'a>(&'a self, ident: &Ident, leaves: &'a [Ident]) -> &'a [Ident] {
+        if let Some(superstate) = self.superstate(&ident.to_string()) {
+            return &superstate.descendants;
         }
-        if leaves.iter().any(|leaf| leaf == ident) {
-            return vec![ident.clone()];
-        }
-        Vec::new()
+        leaves
+            .iter()
+            .position(|leaf| leaf == ident)
+            .map_or(&[], |index| &leaves[index..=index])
     }
 
     /// Check if an identifier refers to a superstate.
     pub fn is_superstate(&self, ident: &Ident) -> bool {
-        self.lookup.contains_key(&ident.to_string())
+        self.index.contains_key(&ident.to_string())
     }
 
-    /// Get the initial child state of a superstate.
-    ///
-    /// Returns the explicitly specified initial state if available,
-    /// otherwise returns the first descendant.
+    /// Get the initial child state of a superstate (explicit, or its first
+    /// descendant as resolved during parsing).
     pub fn initial_child(&self, ident: &Ident) -> Option<Ident> {
-        self.initial_children
-            .get(&ident.to_string())
-            .cloned()
-            .or_else(|| {
-                self.lookup
-                    .get(&ident.to_string())
-                    .and_then(|desc| desc.first().cloned())
-            })
+        self.superstate(&ident.to_string())
+            .map(|superstate| superstate.initial.clone())
     }
 
     /// Resolve a target identifier to a concrete leaf state.
@@ -449,12 +451,9 @@ impl Hierarchy {
         }
     }
 
-    /// Get all superstate names as identifiers.
-    pub fn all_superstates(&self) -> Vec<Ident> {
-        self.lookup
-            .keys()
-            .map(|k| syn::Ident::new(k, proc_macro2::Span::call_site()))
-            .collect()
+    /// All superstate names, in registration order.
+    pub fn all_superstates(&self) -> impl Iterator<Item = &Ident> {
+        self.superstates.iter().map(|superstate| &superstate.name)
     }
 }
 

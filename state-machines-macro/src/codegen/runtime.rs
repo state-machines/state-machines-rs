@@ -31,7 +31,7 @@ pub fn generate(machine: &StateMachine) -> (TokenStream, TokenStream, TokenStrea
             let arms = machine
                 .hierarchy
                 .expand_state(&declaration.state, &machine.states)
-                .into_iter()
+                .iter()
                 .map(|state| {
                     quote! { #any::#state(machine) => #call }
                 });

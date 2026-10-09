@@ -57,21 +57,16 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
 
     let states = string_vec(&machine.states);
 
-    // Generate superstate schemas from the hierarchy lookup table
+    // Generate superstate schemas in declaration-derived order
     let superstate_schemas: Vec<TokenStream2> = machine
         .hierarchy
-        .lookup
+        .superstates
         .iter()
-        .map(|(name, descendants)| {
-            let parent = optional_string(machine.hierarchy.parent(name));
-            let initial_str = machine
-                .hierarchy
-                .initial_children
-                .get(name)
-                .or(descendants.first())
-                .map(|i| i.to_string())
-                .unwrap_or_default();
-            let descendants = string_vec(descendants);
+        .map(|superstate| {
+            let name = superstate.name.to_string();
+            let parent = optional_string(machine.hierarchy.parent(&name));
+            let initial_str = superstate.initial.to_string();
+            let descendants = string_vec(&superstate.descendants);
 
             quote! {
                 ::state_machines::SuperstateSchema {

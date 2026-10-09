@@ -9,7 +9,7 @@ pub fn names(machine: &StateMachine) -> Vec<String> {
         .states
         .iter()
         .map(ToString::to_string)
-        .chain(machine.hierarchy.lookup.keys().cloned())
+        .chain(machine.hierarchy.all_superstates().map(ToString::to_string))
         .collect();
     names.sort();
     names.dedup();

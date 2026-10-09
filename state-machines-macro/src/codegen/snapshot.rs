@@ -71,7 +71,7 @@ pub fn generate(machine: &StateMachine) -> TokenStream {
     let history_checks = super::history::regions(machine).into_iter().map(|region| {
         let field = super::history::field(region);
         let region_str = region.to_string();
-        let leaves = machine.hierarchy.expand_state(region, &machine.states).into_iter()
+        let leaves = machine.hierarchy.expand_state(region, &machine.states).iter()
             .map(|state| state.to_string()).collect::<Vec<_>>();
         quote! {
             if snapshot.#field.as_ref().is_some_and(|leaf| ![#( #leaves, )*].contains(&leaf.as_str())) {
@@ -99,7 +99,7 @@ pub fn generate(machine: &StateMachine) -> TokenStream {
         let states = machine
             .hierarchy
             .expand_state(&spec.state_name, &machine.states)
-            .into_iter()
+            .iter()
             .map(|state| state.to_string())
             .collect::<Vec<_>>();
         quote! {

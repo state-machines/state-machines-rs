@@ -59,12 +59,9 @@ pub fn choices(
             stored: vec![None],
         }),
     )];
+    let members = machine.hierarchy.expand_state(region, &machine.states);
     for (index, leaf) in machine.states.iter().enumerate() {
-        if !machine
-            .hierarchy
-            .expand_state(region, &machine.states)
-            .contains(leaf)
-        {
+        if !members.contains(leaf) {
             continue;
         }
         let target = if mode == HistoryMode::Deep {

@@ -82,13 +82,11 @@ pub fn generate_typestate_machine(machine: &StateMachine) -> Result<TokenStream2
 /// pub struct Flight;  // superstate
 /// ```
 fn generate_state_markers(machine: &StateMachine) -> Result<TokenStream2> {
-    let mut all_states = machine.states.clone();
-
-    // Add superstates to the list
-    all_states.extend(machine.hierarchy.all_superstates());
-
-    let markers: Vec<_> = all_states
+    // Leaf states followed by superstates
+    let markers: Vec<_> = machine
+        .states
         .iter()
+        .chain(machine.hierarchy.all_superstates())
         .map(|state| {
             quote! {
                 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -944,11 +942,11 @@ fn generate_state_specific_accessors(machine: &StateMachine) -> Result<Vec<Token
         let impl_states = if machine.hierarchy.is_superstate(state_name) {
             machine.hierarchy.expand_state(state_name, &machine.states)
         } else {
-            vec![state_name.clone()]
+            std::slice::from_ref(state_name)
         };
 
         for impl_state in impl_states {
-            let params = machine_params(machine, &impl_state);
+            let params = machine_params(machine, impl_state);
             let impl_block = quote! {
                 impl #generics #machine_name #params {
                     /// Supply owned active-state data without Default or Clone.

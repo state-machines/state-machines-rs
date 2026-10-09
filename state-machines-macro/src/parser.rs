@@ -851,7 +851,7 @@ impl StateMachine {
 
                     for actual_source in expanded_sources {
                         if let Some(scope) = &event.completion
-                            && !crate::codegen::finality::completed(self, &actual_source)
+                            && !crate::codegen::finality::completed(self, actual_source)
                                 .contains(&scope)
                         {
                             continue;
@@ -873,7 +873,7 @@ impl StateMachine {
                                         cb.matches(
                                             &self.hierarchy,
                                             &self.states,
-                                            &actual_source,
+                                            actual_source,
                                             &resolved_target,
                                             &event.name,
                                         )
@@ -894,7 +894,7 @@ impl StateMachine {
                                 .splice(0..0, matching_globals(&self.callbacks.on_error));
 
                             self.transition_graph.add_edge(
-                                &actual_source,
+                                actual_source,
                                 TransitionEdge {
                                     scope: source.clone(),
                                     kind: transition.kind,
