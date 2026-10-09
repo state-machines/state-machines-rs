@@ -270,6 +270,9 @@ impl<M: Machine> Runner<M> {
     pub fn machine(&self) -> &M {
         self.machine.as_ref().expect("runner owns its machine")
     }
+    fn machine_mut(&mut self) -> &mut M {
+        self.machine.as_mut().expect("runner owns its machine")
+    }
     pub fn sink(&self) -> EventSink<M::Event> {
         self.sink.clone()
     }
@@ -307,12 +310,15 @@ impl<M: Machine> Runner<M> {
         });
     }
     fn reconcile_work(&mut self) {
-        let machine = self.machine.as_ref().unwrap();
+        let machine = self.machine.as_ref().expect("runner owns its machine");
         let released = self.timers.reconcile(machine) + self.activities.reconcile(machine);
         self.release(released);
     }
     fn release(&self, count: usize) {
-        self.sink.inbox.borrow_mut().pending -= count;
+        let mut inbox = self.sink.inbox.borrow_mut();
+        // Releasing more than was reserved is a bookkeeping bug; wrapping would
+        // silently disable backpressure, so fail loudly in release builds too.
+        inbox.pending = inbox.pending.strict_sub(count);
     }
     fn apply_cancellation(&self, result: Option<bool>) -> bool {
         if let Some(pending) = result {
@@ -332,7 +338,10 @@ impl<M: Machine> Runner<M> {
         }
         let mut recalled = VecDeque::new();
         for _ in 0..self.deferred.len() {
-            let (rule, event) = self.deferred.pop_front().unwrap();
+            let (rule, event) = self
+                .deferred
+                .pop_front()
+                .expect("one pop per deferred entry");
             if !self.live_delivery(&event) {
                 self.release(1);
             } else if self.rules[rule].scope.active(self.machine()) {
@@ -374,7 +383,7 @@ impl<M: Machine> Runner<M> {
                     .internal
                     .pop_front()
                     .or_else(|| inbox.external.pop_front())
-                    .unwrap()
+                    .expect("runnable inbox holds an event")
             };
             if !self.live_delivery(&event) {
                 self.release(1);
@@ -395,12 +404,7 @@ impl<M: Machine> Runner<M> {
                 if let Some(id) = event.activity {
                     self.activities.retire(id);
                 }
-                let result = self
-                    .machine
-                    .as_mut()
-                    .unwrap()
-                    .dispatch_one(event.event)
-                    .await;
+                let result = self.machine_mut().dispatch_one(event.event).await;
                 // A failed automatic microstep may follow a committed external edge.
                 self.reconcile_work();
                 self.recall();
@@ -427,7 +431,7 @@ impl<M: Machine> Runner<M> {
                     Ok(steps)
                 };
             }
-            let result = self.machine.as_mut().unwrap().automatic_step().await;
+            let result = self.machine_mut().automatic_step().await;
             self.reconcile_work();
             self.recall();
             let changed = result.map_err(RunError::Dispatch)?;
@@ -440,7 +444,7 @@ impl<M: Machine> Runner<M> {
     }
     /// Extracting the machine closes the mailbox and discards runner-only queues.
     pub fn into_machine(mut self) -> M {
-        self.machine.take().unwrap()
+        self.machine.take().expect("runner owns its machine")
     }
 }
 impl<M: Machine> Drop for Runner<M> {

@@ -30,10 +30,7 @@ impl<M: Machine> Region<M> {
         self.runner.into_machine()
     }
     fn machine_mut(&mut self) -> &mut M {
-        self.runner
-            .machine
-            .as_mut()
-            .expect("region owns its machine")
+        self.runner.machine_mut()
     }
 }
 impl<M: Machine> Machine for Region<M> {

@@ -138,9 +138,9 @@ mod validation;
 #[proc_macro]
 pub fn state_machine(input: TokenStream) -> TokenStream {
     let tokens: Vec<_> = input.clone().into_iter().collect();
-    if tokens.windows(2).any(|pair| {
-        matches!(&pair[0], proc_macro::TokenTree::Ident(name) if name.to_string() == "regions")
-            && matches!(&pair[1], proc_macro::TokenTree::Punct(punct) if punct.as_char() == ':')
+    if tokens.array_windows().any(|[name, punct]| {
+        matches!(name, proc_macro::TokenTree::Ident(name) if name.to_string() == "regions")
+            && matches!(punct, proc_macro::TokenTree::Punct(punct) if punct.as_char() == ':')
     }) {
         let machine = syn::parse_macro_input!(input as regions::Regions);
         return machine.expand().into();

@@ -67,19 +67,16 @@ impl<I: Copy + Eq, S: Copy + Eq, W> Registry<I, S, W> {
         let index = self.entries.iter().position(|entry| entry.id == id)?;
         Some(self.entries.remove(index).pending.is_some())
     }
+    /// Delivered output retires its lease; the entry may already be gone if its
+    /// visit ended, so absence is expected and not reported.
     pub fn retire(&mut self, id: I) {
-        let _ = self.cancel(id);
+        self.cancel(id);
     }
     /// Drop work whose visit ended, returning the number of unqueued reservations.
     pub fn reconcile<M: Machine<State = S>>(&mut self, machine: &M) -> usize {
-        let mut released = 0;
-        self.entries.retain(|entry| {
-            let live = entry.visit.active(machine);
-            if !live && entry.pending.is_some() {
-                released += 1;
-            }
-            live
-        });
-        released
+        self.entries
+            .extract_if(.., |entry| !entry.visit.active(machine))
+            .filter(|entry| entry.pending.is_some())
+            .count()
     }
 }

@@ -23,9 +23,12 @@ pub fn commit(machine: &StateMachine, source: &Ident, edge: &TransitionEdge) -> 
     let names = names(machine);
     let path = machine.active_path(source);
     let prefix = machine.retained_prefix(source, &edge.target, edge);
-    let exited = path[prefix..]
-        .iter()
-        .map(|scope| names.iter().position(|name| scope == name).unwrap());
+    let exited = path[prefix..].iter().map(|scope| {
+        names
+            .iter()
+            .position(|name| scope == name)
+            .expect("active paths only contain declared scopes")
+    });
     quote! { self.__sm_commit(&[#(#exited),*]); }
 }
 

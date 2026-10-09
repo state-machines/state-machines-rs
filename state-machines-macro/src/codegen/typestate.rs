@@ -608,12 +608,12 @@ pub(super) fn generate_transition_method(
             .state_storage
             .iter()
             .find(|spec| &spec.state_name == target_state)
-            .unwrap();
+            .expect("validated data edges target a state with storage");
         let index = machine
             .state_storage
             .iter()
             .position(|item| item.field == spec.field)
-            .unwrap();
+            .expect("spec comes from state_storage");
         let field = &spec.field;
         storage_transfers[index] = quote! { #field: Some(__sm_entry_data) };
     }

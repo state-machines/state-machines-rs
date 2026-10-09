@@ -96,7 +96,7 @@ impl StateMachine {
                 source_path
                     .iter()
                     .position(|state| state == &edge.scope)
-                    .unwrap(),
+                    .expect("an external edge's scope is on its source path"),
             )
         } else {
             common

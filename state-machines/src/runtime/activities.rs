@@ -45,10 +45,14 @@ impl<C: Machine> fmt::Debug for ChildInvokeError<C> {
     }
 }
 
-#[cfg(not(feature = "runtime-send"))]
-pub(super) type Task<E> = Pin<Box<dyn Future<Output = E> + 'static>>;
-#[cfg(feature = "runtime-send")]
-pub(super) type Task<E> = Pin<Box<dyn Future<Output = E> + Send + 'static>>;
+cfg_select! {
+    feature = "runtime-send" => {
+        pub(super) type Task<E> = Pin<Box<dyn Future<Output = E> + Send + 'static>>;
+    }
+    _ => {
+        pub(super) type Task<E> = Pin<Box<dyn Future<Output = E> + 'static>>;
+    }
+}
 
 impl<M: Machine> Runner<M> {
     pub(super) fn reserve_activity(
@@ -64,9 +68,11 @@ impl<M: Machine> Runner<M> {
             .next_activity
             .checked_add(1)
             .ok_or(InvokeFailure::Overflow)?;
-        if !self.sink.inbox.borrow_mut().reserve() {
-            return Err(InvokeFailure::Full);
-        }
+        self.sink
+            .inbox
+            .borrow_mut()
+            .reserve()
+            .ok_or(InvokeFailure::Full)?;
         self.next_activity = next;
         Ok((ActivityId(next), visit))
     }

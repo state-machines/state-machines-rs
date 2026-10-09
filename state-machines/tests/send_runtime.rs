@@ -5,6 +5,7 @@ use state_machines::{
     state_machine,
 };
 use std::{
+    assert_matches,
     future::pending,
     sync::{
         Arc,
@@ -143,10 +144,7 @@ fn capacity_and_close_return_the_original_owned_event() {
     };
     assert_eq!(owned.0.as_ref(), "full");
     drop(runner);
-    assert!(matches!(
-        sink.enqueue(event("closed")),
-        Err(QueueError::Closed(_))
-    ));
+    assert_matches!(sink.enqueue(event("closed")), Err(QueueError::Closed(_)));
 }
 
 #[test]
@@ -249,14 +247,15 @@ fn send_activity_completion_and_named_scope_deadline_use_the_shared_driver() {
 
 #[test]
 fn event_destructors_can_reenter_the_closed_sink_without_holding_its_lock() {
+    #[derive(Debug)]
     struct Reentrant(Option<EventSink<Reentrant>>, Arc<AtomicUsize>);
     impl Drop for Reentrant {
         fn drop(&mut self) {
             if let Some(sink) = self.0.take() {
-                assert!(matches!(
+                assert_matches!(
                     sink.enqueue(Reentrant(None, self.1.clone())),
                     Err(QueueError::Closed(_))
-                ));
+                );
             }
             self.1.fetch_add(1, Ordering::SeqCst);
         }
@@ -321,19 +320,19 @@ fn replacing_waiters_drops_the_previous_waker_outside_the_mailbox_lock() {
         }));
         {
             let mut wait = std::pin::pin!(runner.wait_for_work());
-            assert!(matches!(
+            assert_matches!(
                 wait.as_mut().poll(&mut Context::from_waker(&waker)),
                 Poll::Pending,
-            ));
+            );
         }
         drop(waker);
         assert_eq!(drops.load(Ordering::SeqCst), 0);
         {
             let mut wait = std::pin::pin!(runner.wait_for_work());
-            assert!(matches!(
+            assert_matches!(
                 wait.as_mut().poll(&mut Context::from_waker(Waker::noop())),
                 Poll::Pending,
-            ));
+            );
         }
         assert_eq!(drops.load(Ordering::SeqCst), 1);
         completed.send(()).unwrap();

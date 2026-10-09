@@ -111,7 +111,7 @@ pub fn record_exit(machine: &StateMachine, source: &Ident, edge: &TransitionEdge
         .states
         .iter()
         .position(|state| state == source)
-        .unwrap();
+        .expect("edge sources are declared leaf states");
     let updates = regions(machine)
         .into_iter()
         .filter(|region| {

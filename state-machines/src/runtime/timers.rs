@@ -93,9 +93,11 @@ impl<M: Machine> Runner<M> {
         let Some(next) = self.next_timer.checked_add(1) else {
             return Err(ScheduleError::Overflow(()));
         };
-        if !self.sink.inbox.borrow_mut().reserve() {
-            return Err(ScheduleError::Full(()));
-        }
+        self.sink
+            .inbox
+            .borrow_mut()
+            .reserve()
+            .ok_or(ScheduleError::Full(()))?;
         self.last_time = Some(now);
         self.next_timer = next;
         let id = TimerId(next);
@@ -135,7 +137,8 @@ impl<M: Machine> Runner<M> {
             .collect();
         due.sort_by_key(|index| {
             let entry = &self.timers.entries[*index];
-            (entry.pending.as_ref().unwrap().deadline, entry.id.0)
+            let timer = entry.pending.as_ref().expect("due timers are pending");
+            (timer.deadline, entry.id.0)
         });
         let count = due.len();
         let waker = {
@@ -143,7 +146,7 @@ impl<M: Machine> Runner<M> {
             for index in due {
                 let entry = &mut self.timers.entries[index];
                 inbox.external.push_back(Envelope {
-                    event: entry.pending.take().unwrap().event,
+                    event: entry.pending.take().expect("due timers are pending").event,
                     timer: Some(entry.id),
                     activity: None,
                 });

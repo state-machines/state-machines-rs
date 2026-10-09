@@ -1,16 +1,41 @@
 //! Short-lived mailbox access. No user callback, poll, or await runs under a guard.
-#[cfg(not(feature = "runtime-send"))]
-use alloc::rc::Rc;
-#[cfg(not(feature = "runtime-send"))]
-use core::cell::{Ref, RefCell, RefMut};
-#[cfg(feature = "runtime-send")]
-use std::sync::{Arc, Mutex, MutexGuard};
+
+cfg_select! {
+    feature = "runtime-send" => {
+        use std::sync::{Arc, Mutex, MutexGuard};
+        type Inner<T> = Arc<Mutex<T>>;
+        type Ref<'a, T> = MutexGuard<'a, T>;
+        type RefMut<'a, T> = MutexGuard<'a, T>;
+
+        fn wrap<T>(value: T) -> Inner<T> {
+            Arc::new(Mutex::new(value))
+        }
+        fn shared<T>(inner: &Inner<T>) -> Ref<'_, T> {
+            inner.lock().unwrap_or_else(|error| error.into_inner())
+        }
+        fn exclusive<T>(inner: &Inner<T>) -> RefMut<'_, T> {
+            shared(inner)
+        }
+    }
+    _ => {
+        use alloc::rc::Rc;
+        use core::cell::{Ref, RefCell, RefMut};
+        type Inner<T> = Rc<RefCell<T>>;
+
+        fn wrap<T>(value: T) -> Inner<T> {
+            Rc::new(RefCell::new(value))
+        }
+        fn shared<T>(inner: &Inner<T>) -> Ref<'_, T> {
+            inner.borrow()
+        }
+        fn exclusive<T>(inner: &Inner<T>) -> RefMut<'_, T> {
+            inner.borrow_mut()
+        }
+    }
+}
 
 pub(super) struct Shared<T> {
-    #[cfg(not(feature = "runtime-send"))]
-    inner: Rc<RefCell<T>>,
-    #[cfg(feature = "runtime-send")]
-    inner: Arc<Mutex<T>>,
+    inner: Inner<T>,
 }
 impl<T> Clone for Shared<T> {
     fn clone(&self) -> Self {
@@ -21,27 +46,12 @@ impl<T> Clone for Shared<T> {
 }
 impl<T> Shared<T> {
     pub fn new(value: T) -> Self {
-        Self {
-            #[cfg(not(feature = "runtime-send"))]
-            inner: Rc::new(RefCell::new(value)),
-            #[cfg(feature = "runtime-send")]
-            inner: Arc::new(Mutex::new(value)),
-        }
+        Self { inner: wrap(value) }
     }
-    #[cfg(not(feature = "runtime-send"))]
     pub fn borrow(&self) -> Ref<'_, T> {
-        self.inner.borrow()
+        shared(&self.inner)
     }
-    #[cfg(not(feature = "runtime-send"))]
     pub fn borrow_mut(&self) -> RefMut<'_, T> {
-        self.inner.borrow_mut()
-    }
-    #[cfg(feature = "runtime-send")]
-    pub fn borrow(&self) -> MutexGuard<'_, T> {
-        self.inner.lock().unwrap_or_else(|error| error.into_inner())
-    }
-    #[cfg(feature = "runtime-send")]
-    pub fn borrow_mut(&self) -> MutexGuard<'_, T> {
-        self.borrow()
+        exclusive(&self.inner)
     }
 }
