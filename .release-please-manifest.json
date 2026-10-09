@@ -1,6 +1,6 @@
 {
-  "state-machines": "0.30.0",
-  "state-machines-core": "0.11.0",
-  "state-machines-macro": "0.30.0",
-  "state-machines-cli": "0.1.4"
+  "state-machines": "0.30.1",
+  "state-machines-core": "0.11.1",
+  "state-machines-macro": "0.30.1",
+  "state-machines-cli": "0.1.5"
 }

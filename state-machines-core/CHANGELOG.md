@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.1](https://github.com/state-machines/state-machines-rs/compare/state-machines-core-v0.11.0...state-machines-core-v0.11.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* **inspect:** render Mermaid edges and validate without per-edge copies ([5094c5e](https://github.com/state-machines/state-machines-rs/commit/5094c5e126b73126296dcf802df5fcd79393be89))
+
 ## [0.11.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-core-v0.10.0...state-machines-core-v0.11.0) (2026-10-03)
 
 

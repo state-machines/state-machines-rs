@@ -1,6 +1,6 @@
 [package]
 name = "state-machines-macro"
-version = "0.30.0"
+version = "0.30.1"
 edition = "2024"
 rust-version.workspace = true
 authors = ["Abdelkader Boudih <terminale@gmail.com>"]
