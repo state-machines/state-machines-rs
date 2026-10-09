@@ -183,6 +183,17 @@ pub struct SchemaDiagnostic {
 }
 
 impl MachineSchema {
+    /// Leaf states covered by a superstate or leaf name; empty when unknown.
+    fn leaves(&self, name: &String) -> &[String] {
+        if let Some(superstate) = self.superstates.iter().find(|s| &s.name == name) {
+            return &superstate.descendants;
+        }
+        self.states
+            .iter()
+            .position(|state| state == name)
+            .map_or(&[], |index| &self.states[index..=index])
+    }
+
     fn completed_scopes<'a>(&'a self, leaf: &'a String) -> Vec<&'a String> {
         let mut scopes = Vec::new();
         let mut child = leaf;
@@ -330,13 +341,6 @@ impl MachineSchema {
                 }
             }
         }
-        let expand = |name: &String| -> Vec<&String> {
-            if let Some(superstate) = self.superstates.iter().find(|s| &s.name == name) {
-                superstate.descendants.iter().collect()
-            } else {
-                self.states.iter().filter(|s| *s == name).collect()
-            }
-        };
         let mut events = BTreeSet::new();
         let mut edges = Vec::new();
         for event in &self.events {
@@ -390,13 +394,14 @@ impl MachineSchema {
                             format!("invalid transition kind `{kind}`"),
                         );
                     }
+                    let target_leaves = self.leaves(&transition.target);
                     if kind == "local"
                         && transition.sources.iter().any(|source| {
                             !self.superstates.iter().any(|s| {
                                 &s.name == source
                                     && s.descendants
                                         .iter()
-                                        .any(|leaf| expand(&transition.target).contains(&leaf))
+                                        .any(|leaf| target_leaves.contains(leaf))
                             })
                         })
                     {
@@ -449,7 +454,7 @@ impl MachineSchema {
                             format!("ambiguous hierarchical scope `{source}`"),
                         );
                     }
-                    let leaves = expand(source);
+                    let leaves = self.leaves(source);
                     if leaves.is_empty() {
                         report(DiagnosticLevel::Error, format!("unknown source `{source}`"));
                     }
@@ -475,7 +480,7 @@ impl MachineSchema {
                             );
                         }
                         if transition.history.is_some() {
-                            for history_target in expand(&transition.target) {
+                            for history_target in self.leaves(&transition.target) {
                                 edges.push((leaf, history_target));
                             }
                         } else {
@@ -557,22 +562,24 @@ impl MachineSchema {
         for event in &self.events {
             for transition in &event.transitions {
                 for source in &transition.sources {
-                    let label = if transition.guards.is_empty() {
-                        event.name.clone()
-                    } else {
-                        alloc::format!("{} [{}]", event.name, transition.guards.join(", "))
-                    };
                     let target = if transition.internal {
                         source
                     } else {
                         &transition.target
                     };
-                    let label = if transition.internal {
-                        format!("{label} (internal)")
-                    } else {
-                        label
-                    };
-                    writeln!(out, "    {source} --> {target} : {label}").unwrap();
+                    // Written in place: no per-edge label strings.
+                    write!(out, "    {source} --> {target} : {}", event.name).unwrap();
+                    if let Some((first, rest)) = transition.guards.split_first() {
+                        write!(out, " [{first}").unwrap();
+                        for guard in rest {
+                            write!(out, ", {guard}").unwrap();
+                        }
+                        out.push(']');
+                    }
+                    if transition.internal {
+                        out.push_str(" (internal)");
+                    }
+                    out.push('\n');
                 }
             }
         }
