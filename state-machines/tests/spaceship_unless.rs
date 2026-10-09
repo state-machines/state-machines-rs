@@ -1,11 +1,15 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use state_machines::state_machine;
 
 static AIRLOCK_OPEN: AtomicBool = AtomicBool::new(false);
+// Both tests flip AIRLOCK_OPEN; serialize them so one can't change the
+// guard's input between the other's store and cycle().
+static AIRLOCK_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 state_machine! {
     name: AirlockController,
@@ -36,6 +40,7 @@ impl<C, S> AirlockController<C, S> {
 
 #[test]
 fn unless_blocks_when_true() {
+    let _guard = AIRLOCK_TEST_LOCK.lock().unwrap();
     AIRLOCK_OPEN.store(true, Ordering::SeqCst);
     let _a = AirlockController::new(());
     let err = _a.cycle().expect_err("unless should block when true");
@@ -46,6 +51,7 @@ fn unless_blocks_when_true() {
 
 #[test]
 fn unless_allows_when_false() {
+    let _guard = AIRLOCK_TEST_LOCK.lock().unwrap();
     AIRLOCK_OPEN.store(false, Ordering::SeqCst);
     let _a = AirlockController::new(());
     let _a = _a.cycle().expect("unless false allows cycling");
