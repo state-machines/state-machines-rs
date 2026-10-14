@@ -20,7 +20,7 @@ state-machines-macro = { version = "0.32.0", path = "../state-machines-macro" }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 
 [dev-dependencies]
-pollster = "0.4"
+pollster = "1"
 serde_json = "1"
 criterion = { version = "0.8", features = ["async_tokio"] }
 tokio = { version = "1", features = ["rt-multi-thread", "time"] }
