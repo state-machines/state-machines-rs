@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.32.1](https://github.com/state-machines/state-machines-rs/compare/state-machines-macro-v0.32.0...state-machines-macro-v0.32.1) (2026-10-14)
+
+
+### Bug Fixes
+
+* **deps:** build state-machines-macro on syn 3 ([cf0f1bd](https://github.com/state-machines/state-machines-rs/commit/cf0f1bd5f3e42350dc89917eeaa70bab55298d90))
+* **macro:** build each active path once, without re-deduplicating scopes ([9f8300a](https://github.com/state-machines/state-machines-rs/commit/9f8300a33f476e6d3ec6690fc6dcb5390f016bbc))
+
 ## [0.32.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-macro-v0.31.0...state-machines-macro-v0.32.0) (2026-10-14)
 
 

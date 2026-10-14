@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.32.1](https://github.com/state-machines/state-machines-rs/compare/state-machines-v0.32.0...state-machines-v0.32.1) (2026-10-14)
+
+
+### Bug Fixes
+
+* **deps:** build state-machines-macro on syn 3 ([cf0f1bd](https://github.com/state-machines/state-machines-rs/commit/cf0f1bd5f3e42350dc89917eeaa70bab55298d90))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * state-machines-core bumped from 0.13.0 to 0.13.1
+    * state-machines-macro bumped from 0.32.0 to 0.32.1
+
 ## [0.32.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-v0.31.0...state-machines-v0.32.0) (2026-10-14)
 
 
