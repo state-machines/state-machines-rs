@@ -1388,7 +1388,7 @@ Guards, callbacks, and around callbacks in typestate mode add **literally zero r
 
 Run benchmarks yourself:
 ```bash
-cargo bench --bench typestate_transitions
+cargo bench --features async --bench typestate_transitions
 ```
 
 ---

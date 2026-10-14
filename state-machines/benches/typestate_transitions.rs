@@ -2,7 +2,7 @@
 #![allow(non_snake_case)]
 #![allow(clippy::enum_variant_names)]
 
-use criterion::{Criterion, criterion_group, criterion_main};
+use benchit::{Bench, Group};
 use state_machines::{
     core::{AroundOutcome, AroundStage},
     state_machine,
@@ -28,8 +28,8 @@ state_machine! {
     }
 }
 
-fn benchmark_simple_transition(c: &mut Criterion) {
-    c.bench_function("simple_transition", |b| {
+fn benchmark_simple_transition(g: &mut Group<'_>) {
+    g.bench("simple_transition", |b| {
         b.iter(|| {
             let light = SimpleLight::new(());
             let light = black_box(light.toggle_on().unwrap());
@@ -64,8 +64,8 @@ impl<C, S> GuardedDoor<C, S> {
     }
 }
 
-fn benchmark_guarded_transition(c: &mut Criterion) {
-    c.bench_function("guarded_transition", |b| {
+fn benchmark_guarded_transition(g: &mut Group<'_>) {
+    g.bench("guarded_transition", |b| {
         b.iter(|| {
             let door = GuardedDoor::new(());
             let door = black_box(door.open().unwrap());
@@ -105,8 +105,8 @@ impl<C, S> CallbackEngine<C, S> {
     }
 }
 
-fn benchmark_callback_transition(c: &mut Criterion) {
-    c.bench_function("callback_transition", |b| {
+fn benchmark_callback_transition(g: &mut Group<'_>) {
+    g.bench("callback_transition", |b| {
         b.iter(|| {
             let engine = CallbackEngine::new(());
             let engine = black_box(engine.start().unwrap());
@@ -151,8 +151,8 @@ impl<C, S> FullFeatured<C, S> {
     }
 }
 
-fn benchmark_full_featured_transition(c: &mut Criterion) {
-    c.bench_function("full_featured_transition", |b| {
+fn benchmark_full_featured_transition(g: &mut Group<'_>) {
+    g.bench("full_featured_transition", |b| {
         b.iter(|| {
             let machine = FullFeatured::new(());
             let machine = black_box(machine.activate().unwrap());
@@ -195,8 +195,8 @@ state_machine! {
     }
 }
 
-fn benchmark_hierarchical_transition(c: &mut Criterion) {
-    c.bench_function("hierarchical_transition", |b| {
+fn benchmark_hierarchical_transition(g: &mut Group<'_>) {
+    g.bench("hierarchical_transition", |b| {
         b.iter(|| {
             let machine = HierarchicalMachine::new(());
             let machine = black_box(machine.enter_active().unwrap());
@@ -207,8 +207,8 @@ fn benchmark_hierarchical_transition(c: &mut Criterion) {
     });
 }
 
-fn benchmark_hierarchical_polymorphic(c: &mut Criterion) {
-    c.bench_function("hierarchical_polymorphic", |b| {
+fn benchmark_hierarchical_polymorphic(g: &mut Group<'_>) {
+    g.bench("hierarchical_polymorphic", |b| {
         b.iter(|| {
             let machine = HierarchicalMachine::new(());
             let machine = black_box(machine.enter_active().unwrap());
@@ -223,8 +223,8 @@ fn benchmark_hierarchical_polymorphic(c: &mut Criterion) {
 // State Data Access: Test accessor overhead
 // ============================================================================
 
-fn benchmark_state_data_access(c: &mut Criterion) {
-    c.bench_function("state_data_access", |b| {
+fn benchmark_state_data_access(g: &mut Group<'_>) {
+    g.bench("state_data_access", |b| {
         let machine = HierarchicalMachine::new(());
         let machine = machine.enter_active().unwrap();
 
@@ -235,8 +235,8 @@ fn benchmark_state_data_access(c: &mut Criterion) {
     });
 }
 
-fn benchmark_state_data_mutation(c: &mut Criterion) {
-    c.bench_function("state_data_mutation", |b| {
+fn benchmark_state_data_mutation(g: &mut Group<'_>) {
+    g.bench("state_data_mutation", |b| {
         b.iter(|| {
             let machine = HierarchicalMachine::new(());
             let mut machine = machine.enter_active().unwrap();
@@ -277,8 +277,8 @@ impl<C, S> AroundTransaction<C, S> {
     }
 }
 
-fn benchmark_around_transition(c: &mut Criterion) {
-    c.bench_function("around_transition", |b| {
+fn benchmark_around_transition(g: &mut Group<'_>) {
+    g.bench("around_transition", |b| {
         b.iter(|| {
             let transaction = AroundTransaction::new(());
             let transaction = black_box(transaction.begin().unwrap());
@@ -327,8 +327,8 @@ impl<C, S> MultiAround<C, S> {
     }
 }
 
-fn benchmark_multi_around_transition(c: &mut Criterion) {
-    c.bench_function("multi_around_transition", |b| {
+fn benchmark_multi_around_transition(g: &mut Group<'_>) {
+    g.bench("multi_around_transition", |b| {
         b.iter(|| {
             let machine = MultiAround::new(());
             let machine = black_box(machine.advance().unwrap());
@@ -380,8 +380,8 @@ impl<C, S> FullStack<C, S> {
     }
 }
 
-fn benchmark_full_stack_transition(c: &mut Criterion) {
-    c.bench_function("full_stack_transition", |b| {
+fn benchmark_full_stack_transition(g: &mut Group<'_>) {
+    g.bench("full_stack_transition", |b| {
         b.iter(|| {
             let machine = FullStack::new(());
             let machine = black_box(machine.activate().unwrap());
@@ -392,7 +392,7 @@ fn benchmark_full_stack_transition(c: &mut Criterion) {
 }
 
 // ============================================================================
-// Async transitions: illustrate Criterion's async executor support
+// Async transitions: awaited guards on a tokio runtime
 // ============================================================================
 
 state_machine! {
@@ -421,36 +421,49 @@ impl<C, S> AsyncValve<C, S> {
     }
 }
 
-fn benchmark_async_transition(c: &mut Criterion) {
+fn benchmark_async_transition(g: &mut Group<'_>) {
     let runtime = Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("create tokio runtime");
-    let handle = runtime.handle().clone();
 
-    c.bench_function("async_transition", move |b| {
-        b.to_async(handle.clone()).iter(|| async {
-            let valve = AsyncValve::new(());
-            let valve = valve.engage().await.unwrap();
-            let valve = valve.equalize().await.unwrap();
-            valve.reset().await.unwrap()
+    g.bench("async_transition", move |b| {
+        b.iter(|| {
+            runtime.block_on(async {
+                let valve = AsyncValve::new(());
+                let valve = valve.engage().await.unwrap();
+                let valve = valve.equalize().await.unwrap();
+                valve.reset().await.unwrap()
+            })
         });
     });
 }
 
-criterion_group!(
-    benches,
-    benchmark_simple_transition,
-    benchmark_guarded_transition,
-    benchmark_callback_transition,
-    benchmark_full_featured_transition,
-    benchmark_hierarchical_transition,
-    benchmark_hierarchical_polymorphic,
-    benchmark_state_data_access,
-    benchmark_state_data_mutation,
-    benchmark_around_transition,
-    benchmark_multi_around_transition,
-    benchmark_full_stack_transition,
-    benchmark_async_transition,
-);
-criterion_main!(benches);
+fn main() {
+    let mut bench = Bench::from_args();
+
+    // Same shape as the baseline (construct, then two transitions), so the
+    // ratio column is the overhead each feature adds.
+    let mut flat = bench.group("flat");
+    benchmark_simple_transition(&mut flat);
+    benchmark_guarded_transition(&mut flat);
+    benchmark_callback_transition(&mut flat);
+    benchmark_full_featured_transition(&mut flat);
+    benchmark_around_transition(&mut flat);
+    benchmark_full_stack_transition(&mut flat);
+    flat.finish();
+
+    // Unlike operations: timings only, no ratio.
+    let mut typestate = bench.group("typestate");
+    typestate.no_reference();
+    benchmark_hierarchical_transition(&mut typestate);
+    benchmark_hierarchical_polymorphic(&mut typestate);
+    benchmark_state_data_access(&mut typestate);
+    benchmark_state_data_mutation(&mut typestate);
+    benchmark_multi_around_transition(&mut typestate);
+    typestate.finish();
+
+    let mut r#async = bench.group("async");
+    benchmark_async_transition(&mut r#async);
+    r#async.finish();
+}
