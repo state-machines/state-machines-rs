@@ -57,3 +57,12 @@ fn legacy_semantics_and_dynamic_dispatch_remain_consistent() {
     machine.handle(CompositeEvent::Reset).unwrap();
     assert_eq!(machine.running_data().unwrap().0, 0);
 }
+
+#[test]
+fn dynamic_machine_trait_carries_the_declared_error_type() {
+    fn assert_error<
+        M: state_machines::DynamicMachine<Error = state_machines::DynamicError<&'static str>>,
+    >() {
+    }
+    assert_error::<DynamicComposite>();
+}

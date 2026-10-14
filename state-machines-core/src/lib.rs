@@ -255,6 +255,34 @@ impl<E> FallibleCallbackReturn<E> for Result<(), E> {
     }
 }
 
+/// Synchronous, generic access to a dynamic machine.
+///
+/// `state_machine!` implements this for every `dynamic: true` machine that is
+/// not `async: true`, forwarding to the generated `current_state()` and
+/// `handle()` methods. Code that must drive a machine inside a synchronous
+/// step, such as a behavior-tree leaf, can then accept any such machine.
+/// Async machines dispatch through `runtime::Machine` instead.
+pub trait DynamicMachine {
+    /// The generated `<Name>State` enum.
+    type State: Copy + Eq;
+    /// The generated `<Name>Event` enum.
+    type Event;
+    /// The generated machine's [`DynamicError`] type.
+    type Error;
+
+    /// The current state, as `current_state()` reports it.
+    fn state(&self) -> Self::State;
+
+    /// Dispatches one event, as `handle()` does: guards and callbacks run,
+    /// and automatic transitions settle, before this returns.
+    ///
+    /// # Errors
+    ///
+    /// Returns the machine's error when the event is not valid in the current
+    /// state or a guard or callback rejects it.
+    fn handle(&mut self, event: Self::Event) -> Result<(), Self::Error>;
+}
+
 /// Error returned when dynamic dispatch fails.
 ///
 /// This error type is used by the dynamic mode wrapper when runtime

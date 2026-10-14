@@ -242,3 +242,24 @@ fn test_concrete_context_dynamic_conversion() {
     let typed = dynamic.into_grounded();
     assert!(typed.is_ok(), "Should extract Grounded state");
 }
+
+#[test]
+fn test_dynamic_machine_trait_reports_guard_rejection() {
+    use state_machines::DynamicMachine;
+
+    fn launch<M: DynamicMachine<Event = SpacecraftEvent>>(machine: &mut M) -> Result<(), M::Error> {
+        machine.handle(SpacecraftEvent::Launch)
+    }
+
+    let mut grounded = Spacecraft::new(SpacecraftSensors::new().with_fuel(30)).into_dynamic();
+    let err = launch(&mut grounded).unwrap_err();
+    assert_eq!(
+        err,
+        state_machines::DynamicError::guard_failed("has_fuel", "launch")
+    );
+    assert_eq!(DynamicMachine::state(&grounded), SpacecraftState::Grounded);
+
+    let mut fueled = Spacecraft::new(SpacecraftSensors::new().with_fuel(75)).into_dynamic();
+    launch(&mut fueled).unwrap();
+    assert_eq!(DynamicMachine::state(&fueled), SpacecraftState::Flying);
+}
