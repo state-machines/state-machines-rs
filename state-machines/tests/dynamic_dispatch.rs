@@ -498,3 +498,29 @@ fn test_is_available_event_async() {
         );
     });
 }
+
+/// Fires one event through the sync trait, as generic callers such as a
+/// behavior-tree leaf do, and reports the resulting state.
+fn fire_generic<M>(machine: &mut M, event: M::Event) -> M::State
+where
+    M: state_machines::DynamicMachine,
+    M::Error: core::fmt::Debug,
+{
+    machine.handle(event).unwrap();
+    machine.state()
+}
+
+#[test]
+fn test_dynamic_machine_trait_forwards_to_generated_methods() {
+    let mut light = DynamicTrafficLight::new(());
+
+    assert_eq!(
+        state_machines::DynamicMachine::state(&light),
+        TrafficLightState::Red
+    );
+    assert_eq!(
+        fire_generic(&mut light, TrafficLightEvent::Next),
+        TrafficLightState::Green
+    );
+    assert_eq!(light.current_state(), TrafficLightState::Green);
+}

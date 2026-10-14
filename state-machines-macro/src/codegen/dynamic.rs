@@ -427,6 +427,24 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
         #automatic_enabled
     };
 
+    // Sync machines only: an async `handle()` cannot satisfy a sync trait.
+    let dynamic_machine_impl = if is_async {
+        quote! {}
+    } else {
+        quote! {
+            impl #generics ::state_machines::DynamicMachine for #dynamic_name #generics {
+                type State = #state_enum_name;
+                type Event = #event_name;
+                type Error = #dynamic_error_ty;
+                fn state(&self) -> Self::State { self.current_state() }
+                fn handle(&mut self, event: Self::Event) -> ::core::result::Result<(), Self::Error> {
+                    // Path call resolves to the inherent `handle`, not this one.
+                    #dynamic_name::handle(self, event)
+                }
+            }
+        }
+    };
+
     let state_variants = machine.states.iter().map(|state| {
         if state == initial_state {
             quote! { #[default] #state }
@@ -716,6 +734,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
         }
 
         #default_impl
+        #dynamic_machine_impl
         #require_runtime
 
         ::state_machines::__sm_if_runtime! {

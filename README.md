@@ -55,7 +55,8 @@ While learning Rust, I chose to port something familiar and widely used—so I c
 
 **Hierarchical States** – Superstates with polymorphic transitions via SubstateOf trait, and superstate data that lives for the whole region
 
-**Dynamic Dispatch** – Runtime event dispatch for event-driven systems (opt-in via feature flag or explicit config)
+**Dynamic Dispatch** – Runtime event dispatch for event-driven systems (opt-in via feature flag or explicit config). Sync dynamic machines implement `DynamicMachine`, so generic code
+(for example a behavior-tree leaf) can read `state()` and call `handle()` on any of them.
 
 **State Data Accessors** – Access and mutate per-state data in dynamic mode
 
