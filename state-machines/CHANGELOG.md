@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.32.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-v0.31.0...state-machines-v0.32.0) (2026-10-14)
+
+
+### Features
+
+* DynamicMachine trait for generic sync dispatch ([#22](https://github.com/state-machines/state-machines-rs/issues/22)) ([bbb4980](https://github.com/state-machines/state-machines-rs/commit/bbb498037132399649a2c9c4711228cfc8297ded))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * state-machines-core bumped from 0.12.0 to 0.13.0
+    * state-machines-macro bumped from 0.31.0 to 0.32.0
+
 ## [0.31.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-v0.30.1...state-machines-v0.31.0) (2026-10-09)
 
 
