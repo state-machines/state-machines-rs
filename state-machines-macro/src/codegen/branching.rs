@@ -26,12 +26,7 @@ pub fn groups<'a>(machine: &'a StateMachine, state: &Ident) -> Vec<Vec<&'a Trans
     for group in &mut groups {
         let event = machine.event(&group[0].event);
         if event.hierarchical {
-            let path = machine
-                .hierarchy
-                .ancestors
-                .get(&state.to_string())
-                .cloned()
-                .unwrap_or_default();
+            let path = machine.hierarchy.ancestors_of(state);
             group.sort_by_key(|edge| {
                 std::cmp::Reverse(if &edge.scope == state {
                     path.len() + 1

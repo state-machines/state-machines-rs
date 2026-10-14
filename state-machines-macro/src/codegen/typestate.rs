@@ -305,15 +305,11 @@ fn generate_constructor(machine: &StateMachine, _state: &Ident) -> Result<TokenS
 fn generate_start(machine: &StateMachine, state: &Ident) -> TokenStream2 {
     let async_ = maybe_async(machine.async_mode);
     let await_ = maybe_await(machine.async_mode);
-    let mut path = machine
+    let hooks = machine
         .hierarchy
-        .ancestors
-        .get(&state.to_string())
-        .cloned()
-        .unwrap_or_default();
-    path.push(state.clone());
-    let hooks = path
+        .ancestors_of(state)
         .iter()
+        .chain([state])
         .flat_map(|scope| machine.lifecycle_for(scope))
         .flat_map(|hooks| &hooks.enter);
     let error = transition_error_ty(machine);
@@ -742,8 +738,7 @@ pub(super) fn generate_transition_method(
     let enter_calls = enter_hooks
         .iter()
         .map(|cb| callback_step(&after, cb, false));
-    let mut completed = super::finality::completed(machine, target_state);
-    completed.dedup();
+    let completed = super::finality::completed(machine, target_state);
     let complete_calls = completed
         .iter()
         .filter(|_| !edge.internal)
@@ -991,15 +986,12 @@ fn generate_state_specific_accessors(machine: &StateMachine) -> Result<Vec<Token
 fn generate_substate_impls(machine: &StateMachine) -> Result<Vec<TokenStream2>> {
     let mut impls = Vec::new();
 
-    // For each leaf state, check if it has ancestors (is in a superstate)
+    // One SubstateOf impl per enclosing superstate; root leaves get none
     for leaf in &machine.states {
-        if let Some(ancestors) = machine.hierarchy.ancestors.get(&leaf.to_string()) {
-            // Generate SubstateOf impl for each ancestor
-            for ancestor in ancestors {
-                impls.push(quote! {
-                    impl ::state_machines::SubstateOf<#ancestor> for #leaf {}
-                });
-            }
+        for ancestor in machine.hierarchy.ancestors_of(leaf) {
+            impls.push(quote! {
+                impl ::state_machines::SubstateOf<#ancestor> for #leaf {}
+            });
         }
     }
 

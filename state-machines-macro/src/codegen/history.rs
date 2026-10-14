@@ -28,8 +28,8 @@ pub fn fields(machine: &StateMachine) -> Vec<Ident> {
 }
 
 fn shallow_target(machine: &StateMachine, region: &Ident, leaf: &Ident) -> Ident {
-    if let Some(path) = machine.hierarchy.ancestors.get(&leaf.to_string())
-        && let Some(index) = path.iter().position(|ancestor| ancestor == region)
+    let path = machine.hierarchy.ancestors_of(leaf);
+    if let Some(index) = path.iter().position(|ancestor| ancestor == region)
         && let Some(child) = path.get(index + 1)
     {
         return machine

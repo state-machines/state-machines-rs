@@ -69,38 +69,12 @@ impl StateMachine {
     }
 
     pub fn active_path(&self, leaf: &Ident) -> Vec<Ident> {
-        let mut path = self
-            .hierarchy
-            .ancestors
-            .get(&leaf.to_string())
-            .cloned()
-            .unwrap_or_default();
-        path.push(leaf.clone());
-        path
-    }
-
-    pub fn retained_prefix(&self, source: &Ident, target: &Ident, edge: &TransitionEdge) -> usize {
-        let source_path = self.active_path(source);
-        if edge.internal {
-            return source_path.len();
-        }
-        let target_path = self.active_path(target);
-        let common = source_path
+        self.hierarchy
+            .ancestors_of(leaf)
             .iter()
-            .zip(&target_path)
-            .take_while(|(a, b)| a == b)
-            .count()
-            .min(source_path.len() - 1);
-        if edge.kind == Some(TransitionKind::External) {
-            common.min(
-                source_path
-                    .iter()
-                    .position(|state| state == &edge.scope)
-                    .expect("an external edge's scope is on its source path"),
-            )
-        } else {
-            common
-        }
+            .chain([leaf])
+            .cloned()
+            .collect()
     }
 
     /// The shared ancestor prefix is not exited or re-entered. External
@@ -116,7 +90,7 @@ impl StateMachine {
         }
         let source_path = self.active_path(source);
         let target_path = self.active_path(target);
-        let common = self.retained_prefix(source, target, edge);
+        let common = edge.retained_prefix(&source_path, &target_path);
         let exit = source_path[common..]
             .iter()
             .rev()
@@ -140,9 +114,7 @@ impl StateMachine {
         if edge.kind != Some(TransitionKind::External) {
             return false;
         }
-        let Some(path) = self.hierarchy.ancestors.get(&source.to_string()) else {
-            return false;
-        };
+        let path = self.hierarchy.ancestors_of(source);
         match (
             path.iter().position(|s| s == &edge.scope),
             path.iter().position(|s| s == owner),
@@ -239,6 +211,32 @@ pub struct TransitionEdge {
     pub fallback: bool,
     pub history: Option<HistoryChoice>,
     pub origin: usize,
+}
+
+impl TransitionEdge {
+    /// Leading scopes of `source_path` this edge keeps active; both paths
+    /// come from `StateMachine::active_path`.
+    pub fn retained_prefix(&self, source_path: &[Ident], target_path: &[Ident]) -> usize {
+        if self.internal {
+            return source_path.len();
+        }
+        let common = source_path
+            .iter()
+            .zip(target_path)
+            .take_while(|(a, b)| a == b)
+            .count()
+            .min(source_path.len() - 1);
+        if self.kind == Some(TransitionKind::External) {
+            common.min(
+                source_path
+                    .iter()
+                    .position(|state| state == &self.scope)
+                    .expect("an external edge's scope is on its source path"),
+            )
+        } else {
+            common
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -368,12 +366,19 @@ pub struct Hierarchy {
     /// HashMap, so generated code and schemas are identical across builds.
     pub superstates: Vec<SuperstateInfo>,
     index: HashMap<String, usize>,
-    pub ancestors: HashMap<String, Vec<Ident>>,
+    ancestors: HashMap<String, Vec<Ident>>,
 }
 
 impl Hierarchy {
     pub fn superstate(&self, name: &str) -> Option<&SuperstateInfo> {
         self.index.get(name).map(|&index| &self.superstates[index])
+    }
+
+    /// Superstates enclosing `leaf`, outermost first; empty at the root.
+    pub fn ancestors_of(&self, leaf: &Ident) -> &[Ident] {
+        self.ancestors
+            .get(&leaf.to_string())
+            .map_or(&[], Vec::as_slice)
     }
 
     /// Immediate parent of a leaf or composite, preserving unary hierarchy identity.
@@ -382,7 +387,7 @@ impl Hierarchy {
             return path.last();
         }
         let leaf = self.superstate(name)?.descendants.first()?;
-        let path = self.ancestors.get(&leaf.to_string())?;
+        let path = self.ancestors_of(leaf);
         let index = path.iter().position(|scope| scope == name)?;
         index.checked_sub(1).map(|index| &path[index])
     }

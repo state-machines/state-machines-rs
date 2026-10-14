@@ -22,7 +22,7 @@ pub fn commit(machine: &StateMachine, source: &Ident, edge: &TransitionEdge) -> 
     }
     let names = names(machine);
     let path = machine.active_path(source);
-    let prefix = machine.retained_prefix(source, &edge.target, edge);
+    let prefix = edge.retained_prefix(&path, &machine.active_path(&edge.target));
     let exited = path[prefix..].iter().map(|scope| {
         names
             .iter()

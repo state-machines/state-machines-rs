@@ -29,8 +29,7 @@ pub fn completed<'a>(machine: &'a StateMachine, leaf: &'a Ident) -> Vec<&'a Iden
 }
 
 pub fn state_methods(machine: &StateMachine, state: &Ident) -> TokenStream {
-    let mut scopes = completed(machine, state);
-    scopes.dedup();
+    let scopes = completed(machine, state);
     let finished = scopes.last().is_some_and(|scope| {
         machine.final_states.contains(scope) && parent(machine, scope).is_none()
     });
