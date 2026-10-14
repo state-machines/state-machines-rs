@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.1](https://github.com/state-machines/state-machines-rs/compare/state-machines-core-v0.13.0...state-machines-core-v0.13.1) (2026-10-14)
+
+
+### Bug Fixes
+
+* **deps:** build state-machines-macro on syn 3 ([cf0f1bd](https://github.com/state-machines/state-machines-rs/commit/cf0f1bd5f3e42350dc89917eeaa70bab55298d90))
+
 ## [0.13.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-core-v0.12.0...state-machines-core-v0.13.0) (2026-10-14)
 
 
