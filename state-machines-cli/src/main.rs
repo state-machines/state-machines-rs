@@ -18,6 +18,7 @@
 //! ```
 
 use state_machines_core::schema::{DiagnosticLevel, MachineSchema};
+use state_machines_core::serde_json;
 use std::io::{self, Read};
 use usage_rs as usage;
 
@@ -59,13 +60,12 @@ struct InputArgs {
 }
 
 fn read_input(input: Option<String>) -> io::Result<String> {
-    match input {
-        Some(path) => std::fs::read_to_string(path),
-        None => {
-            let mut buffer = String::new();
-            io::stdin().read_to_string(&mut buffer)?;
-            Ok(buffer)
-        }
+    if let Some(path) = input {
+        std::fs::read_to_string(path)
+    } else {
+        let mut buffer = String::new();
+        io::stdin().read_to_string(&mut buffer)?;
+        Ok(buffer)
     }
 }
 
@@ -85,7 +85,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("{}", schema.to_json_pretty());
                 }
                 other => {
-                    eprintln!("Unknown format: {}. Supported: mermaid, json", other);
+                    eprintln!("Unknown format: {other}. Supported: mermaid, json");
                     std::process::exit(1);
                 }
             }
@@ -113,7 +113,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 Err(e) => {
-                    eprintln!("✗ Invalid schema: {}", e);
+                    eprintln!("✗ Invalid schema: {e}");
                     std::process::exit(1);
                 }
             }

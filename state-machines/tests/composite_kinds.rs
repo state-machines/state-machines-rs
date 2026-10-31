@@ -23,7 +23,7 @@ impl<S> Composite<S> {
     fn exit(&self) {
         self.ctx.0.borrow_mut().push("exit");
     }
-    fn reject(&self) -> Result<(), &'static str> {
+    const fn reject(&self) -> Result<(), &'static str> {
         Err("after")
     }
 }

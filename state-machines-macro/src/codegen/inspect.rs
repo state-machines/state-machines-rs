@@ -4,16 +4,18 @@
 //! provide their schema as JSON or Mermaid diagrams at runtime.
 
 use crate::codegen::utils::machine_params;
-use crate::types::*;
+use crate::types::{HistoryMode, Hooks, StateMachine, Transition, TransitionKind};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::Result;
 
 fn optional_string(value: Option<impl ToString>) -> TokenStream2 {
-    value.map_or(quote! { None }, |value| {
-        let value = value.to_string();
-        quote! { Some(::state_machines::__private::String::from(#value)) }
-    })
+    value.map_or_else(
+        || quote! { None },
+        |value| {
+            let value = value.to_string();
+            quote! { Some(::state_machines::__private::String::from(#value)) }
+        },
+    )
 }
 
 /// A `vec![String::from(..), ..]` literal over `items`' display forms.
@@ -44,21 +46,9 @@ fn hook_schema_fields(hooks: &Hooks) -> TokenStream2 {
     }
 }
 
-/// Generate the `Inspectable` trait implementation.
-///
-/// The output is wrapped in `::state_machines::__sm_if_inspect!`, so it only
-/// compiles when the `state-machines` crate the caller links has its `inspect`
-/// feature on. A `#[cfg(feature = "inspect")]` here would test the calling
-/// crate's features instead, and `cfg!` in the macro would test the host build.
-pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2> {
-    let machine_name = &machine.name;
-    let machine_name_str = machine_name.to_string();
-    let initial_str = machine.initial.to_string();
-
-    let states = string_vec(&machine.states);
-
-    // Generate superstate schemas in declaration-derived order
-    let superstate_schemas: Vec<TokenStream2> = machine
+/// The `SuperstateSchema` literals, in declaration-derived order.
+fn superstate_schemas(machine: &StateMachine) -> Vec<TokenStream2> {
+    machine
         .hierarchy
         .superstates
         .iter()
@@ -77,60 +67,63 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
                 }
             }
         })
-        .collect();
+        .collect()
+}
 
-    // Generate event schemas
-    let event_schemas: Vec<TokenStream2> = machine
+/// The `TransitionSchema` literal for one declared transition.
+fn transition_schema(trans: &Transition) -> TokenStream2 {
+    let sources = string_vec(&trans.sources);
+    let target_str = trans.target.to_string();
+    let trans_hooks = hook_schema_fields(&trans.hooks);
+    let internal = trans.internal;
+    let fallback = trans.fallback;
+    let history = match trans.history {
+        Some(HistoryMode::Shallow) => {
+            quote! { Some(::state_machines::__private::String::from("shallow")) }
+        }
+        Some(HistoryMode::Deep) => {
+            quote! { Some(::state_machines::__private::String::from("deep")) }
+        }
+        None => quote! { None },
+    };
+    let data = optional_string(trans.data.as_ref());
+    let kind = match trans.kind {
+        Some(TransitionKind::Internal) => quote! { Some("internal".into()) },
+        Some(TransitionKind::Local) => quote! { Some("local".into()) },
+        Some(TransitionKind::External) => quote! { Some("external".into()) },
+        None => quote! { None },
+    };
+
+    quote! {
+        ::state_machines::TransitionSchema {
+            kind: #kind,
+            data: #data,
+            sources: #sources,
+            target: ::state_machines::__private::String::from(#target_str),
+            internal: #internal,
+            fallback: #fallback,
+            history: #history,
+            #trans_hooks
+        }
+    }
+}
+
+/// The `EventSchema` literals, one per declared event.
+fn event_schemas(machine: &StateMachine) -> Vec<TokenStream2> {
+    machine
         .events
         .iter()
         .map(|event| {
             let event_name = event.name.to_string();
             let event_hooks = hook_schema_fields(&event.hooks);
-
-            // Generate transition schemas for this event
-            let transition_schemas: Vec<TokenStream2> = event
-                .transitions
-                .iter()
-                .map(|trans| {
-                    let sources = string_vec(&trans.sources);
-                    let target_str = trans.target.to_string();
-                    let trans_hooks = hook_schema_fields(&trans.hooks);
-                    let internal = trans.internal;
-                    let fallback = trans.fallback;
-                    let history = match trans.history {
-                        Some(HistoryMode::Shallow) => quote! { Some(::state_machines::__private::String::from("shallow")) },
-                        Some(HistoryMode::Deep) => quote! { Some(::state_machines::__private::String::from("deep")) },
-                        None => quote! { None },
-                    };
-                    let data = optional_string(trans.data.as_ref());
-                    let kind = match trans.kind {
-                        Some(TransitionKind::Internal) => quote! { Some("internal".into()) },
-                        Some(TransitionKind::Local) => quote! { Some("local".into()) },
-                        Some(TransitionKind::External) => quote! { Some("external".into()) },
-                        None => quote! { None },
-                    };
-
-                    quote! {
-                        ::state_machines::TransitionSchema {
-                            kind: #kind,
-                            data: #data,
-                            sources: #sources,
-                            target: ::state_machines::__private::String::from(#target_str),
-                            internal: #internal,
-                            fallback: #fallback,
-                            history: #history,
-                            #trans_hooks
-                        }
-                    }
-                })
-                .collect();
-
-            let payload_expr = if let Some(payload) = &event.payload {
-                let payload_str = quote!(#payload).to_string();
-                quote! { ::core::option::Option::Some(::state_machines::__private::String::from(#payload_str)) }
-            } else {
-                quote! { ::core::option::Option::None }
-            };
+            let transition_schemas = event.transitions.iter().map(transition_schema);
+            let payload_expr = event.payload.as_ref().map_or_else(
+                || quote! { ::core::option::Option::None },
+                |payload| {
+                    let payload_str = quote!(#payload).to_string();
+                    quote! { ::core::option::Option::Some(::state_machines::__private::String::from(#payload_str)) }
+                },
+            );
             let branching = event.branching;
             let hierarchical = event.hierarchical;
             let automatic = event.automatic;
@@ -151,45 +144,78 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
                 }
             }
         })
-        .collect();
+        .collect()
+}
 
-    let async_mode = machine.async_mode;
-    let lifecycle = machine.lifecycle.iter().map(|hooks| {
-        let state = hooks.state.to_string();
-        let enter = string_vec(&hooks.enter);
-        let exit = string_vec(&hooks.exit);
-        let complete = string_vec(&hooks.complete);
-        quote! {
-            ::state_machines::StateLifecycleSchema {
-                state: ::state_machines::__private::String::from(#state),
-                enter: #enter,
-                exit: #exit,
-                complete: #complete,
+/// The `StateLifecycleSchema` literals for every `lifecycle:` entry.
+fn lifecycle_schemas(machine: &StateMachine) -> Vec<TokenStream2> {
+    machine
+        .lifecycle
+        .iter()
+        .map(|hooks| {
+            let state = hooks.state.to_string();
+            let enter = string_vec(&hooks.enter);
+            let exit = string_vec(&hooks.exit);
+            let complete = string_vec(&hooks.complete);
+            quote! {
+                ::state_machines::StateLifecycleSchema {
+                    state: ::state_machines::__private::String::from(#state),
+                    enter: #enter,
+                    exit: #exit,
+                    complete: #complete,
+                }
             }
-        }
-    });
+        })
+        .collect()
+}
+
+/// The `RuntimeLifecycleSchema` literals for every `runtime:` rule.
+fn runtime_schemas(machine: &StateMachine) -> Vec<TokenStream2> {
+    machine
+        .runtime_lifecycle
+        .iter()
+        .map(|rule| {
+            let state = rule.state.to_string();
+            let invoke = string_vec(&rule.invoke);
+            let defer = string_vec(&rule.defer);
+            let after = rule.after.iter().map(|timer| {
+                let delay = timer.delay;
+                let event = timer.event.to_string();
+                quote! { ::state_machines::DeadlineSchema { delay: #delay, event: #event.into() } }
+            });
+            quote! { ::state_machines::RuntimeLifecycleSchema {
+                state: #state.into(), invoke: #invoke, defer: #defer,
+                after: ::state_machines::__private::vec![#(#after),*],
+            } }
+        })
+        .collect()
+}
+
+/// Generate the `Inspectable` trait implementation.
+///
+/// The output is wrapped in `::state_machines::__sm_if_inspect!`, so it only
+/// compiles when the `state-machines` crate the caller links has its `inspect`
+/// feature on. A `#[cfg(feature = "inspect")]` here would test the calling
+/// crate's features instead, and `cfg!` in the macro would test the host build.
+pub fn generate_inspectable_impl(machine: &StateMachine) -> TokenStream2 {
+    let machine_name = &machine.name;
+    let machine_name_str = machine_name.to_string();
+    let initial_str = machine.initial.to_string();
+
+    let states = string_vec(&machine.states);
+    let superstate_schemas = superstate_schemas(machine);
+    let event_schemas = event_schemas(machine);
+    let async_mode = machine.async_mode;
+    let lifecycle = lifecycle_schemas(machine);
     let final_states = string_vec(&machine.final_states);
-    let runtime = machine.runtime_lifecycle.iter().map(|rule| {
-        let state = rule.state.to_string();
-        let invoke = string_vec(&rule.invoke);
-        let defer = string_vec(&rule.defer);
-        let after = rule.after.iter().map(|timer| {
-            let delay = timer.delay;
-            let event = timer.event.to_string();
-            quote! { ::state_machines::DeadlineSchema { delay: #delay, event: #event.into() } }
-        });
-        quote! { ::state_machines::RuntimeLifecycleSchema {
-            state: #state.into(), invoke: #invoke, defer: #defer,
-            after: ::state_machines::__private::vec![#(#after),*],
-        } }
-    });
+    let runtime = runtime_schemas(machine);
 
     // Generate a schema() function that's callable on the machine type.
     // We generate an impl block for all generic parameters that provides schema().
     // This allows calling Airlock::schema() regardless of the type parameters.
     let params = machine_params(machine, quote! { S });
 
-    Ok(quote! {
+    quote! {
         ::state_machines::__sm_if_inspect! {
             impl #params #machine_name #params {
                 /// Returns the schema describing this state machine.
@@ -224,5 +250,5 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> Result<TokenStream2>
                 }
             }
         }
-    })
+    }
 }

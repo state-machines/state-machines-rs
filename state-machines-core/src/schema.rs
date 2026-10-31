@@ -6,12 +6,18 @@
 
 extern crate alloc;
 
+use core::fmt::Write;
+
 use alloc::string::String;
 use alloc::vec::Vec;
 use alloc::{collections::BTreeSet, format};
 use serde::{Deserialize, Serialize};
 
-fn is_false(b: &bool) -> bool {
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde `skip_serializing_if` hands over a reference"
+)]
+const fn is_false(b: &bool) -> bool {
     !*b
 }
 
@@ -30,6 +36,17 @@ fn validate_scopes<'a>(
             );
         }
     }
+}
+
+/// Per-event bookkeeping while validating its transitions in declaration order.
+#[derive(Default)]
+struct EventCoverage<'a> {
+    /// Leaves already covered by an earlier transition.
+    sources: BTreeSet<&'a String>,
+    /// Hierarchical scopes already declared by an earlier source.
+    declared_scopes: BTreeSet<&'a String>,
+    /// Leaves whose fallback has already been declared.
+    fallbacks: BTreeSet<&'a String>,
 }
 
 /// Serializable representation of a state machine.
@@ -233,37 +250,56 @@ impl MachineSchema {
     ///
     /// Dead ends and unreachable states are warnings: both can be intentional.
     /// Guard-dependent reachability cannot be decided from a schema.
+    #[must_use]
     pub fn validate(&self) -> Vec<SchemaDiagnostic> {
         let mut diagnostics = Vec::new();
         let mut report = |level, message| {
             diagnostics.push(SchemaDiagnostic { level, message });
         };
         if !self.regions.is_empty() {
-            let names: BTreeSet<_> = self.regions.iter().map(|region| &region.name).collect();
-            if self.regions.len() < 2 || names.len() != self.regions.len() {
-                report(
-                    DiagnosticLevel::Error,
-                    "invalid or duplicate orthogonal regions".into(),
-                );
-            }
-            if !self.states.is_empty() || !self.events.is_empty() {
-                report(
-                    DiagnosticLevel::Error,
-                    "orthogonal schema cannot also declare exclusive states/events".into(),
-                );
-            }
-            let mut events = BTreeSet::new();
-            for event in &self.region_events {
-                if !events.insert(&event.name) || event.regions.is_empty() {
-                    report(
-                        DiagnosticLevel::Error,
-                        "invalid or duplicate region event".into(),
-                    );
-                }
-                validate_scopes(event.regions.iter(), &names, "routed region", &mut report);
-            }
+            self.validate_regions(&mut report);
             return diagnostics;
         }
+        let names = self.validate_states(&mut report);
+        self.validate_runtime_rules(&names, &mut report);
+        let edges = self.validate_events(&mut report);
+        self.validate_final_states(&names, &mut report);
+        self.lint_reachability(&edges, &mut report);
+        diagnostics
+    }
+
+    /// Orthogonal schemas only carry regions and routed region events.
+    fn validate_regions(&self, report: &mut impl FnMut(DiagnosticLevel, String)) {
+        let names: BTreeSet<_> = self.regions.iter().map(|region| &region.name).collect();
+        if self.regions.len() < 2 || names.len() != self.regions.len() {
+            report(
+                DiagnosticLevel::Error,
+                "invalid or duplicate orthogonal regions".into(),
+            );
+        }
+        if !self.states.is_empty() || !self.events.is_empty() {
+            report(
+                DiagnosticLevel::Error,
+                "orthogonal schema cannot also declare exclusive states/events".into(),
+            );
+        }
+        let mut events = BTreeSet::new();
+        for event in &self.region_events {
+            if !events.insert(&event.name) || event.regions.is_empty() {
+                report(
+                    DiagnosticLevel::Error,
+                    "invalid or duplicate region event".into(),
+                );
+            }
+            validate_scopes(event.regions.iter(), &names, "routed region", report);
+        }
+    }
+
+    /// Leaf and superstate declarations; returns every declared state name.
+    fn validate_states(
+        &self,
+        report: &mut impl FnMut(DiagnosticLevel, String),
+    ) -> BTreeSet<&String> {
         let mut names = BTreeSet::new();
         for state in &self.states {
             if !names.insert(state) {
@@ -312,17 +348,26 @@ impl MachineSchema {
                 }
             }
         }
+        names
+    }
+
+    /// Runtime/lifecycle scopes must name declared states; deferrals name external events.
+    fn validate_runtime_rules(
+        &self,
+        names: &BTreeSet<&String>,
+        report: &mut impl FnMut(DiagnosticLevel, String),
+    ) {
         validate_scopes(
             self.runtime.iter().map(|rule| &rule.state),
-            &names,
+            names,
             "runtime scope",
-            &mut report,
+            report,
         );
         validate_scopes(
             self.lifecycle.iter().map(|hooks| &hooks.state),
-            &names,
+            names,
             "lifecycle",
-            &mut report,
+            report,
         );
         let external_events: BTreeSet<_> = self
             .events
@@ -341,6 +386,13 @@ impl MachineSchema {
                 }
             }
         }
+    }
+
+    /// Event-level checks and determinism; returns the leaf-to-leaf edges.
+    fn validate_events(
+        &self,
+        report: &mut impl FnMut(DiagnosticLevel, String),
+    ) -> Vec<(&String, &String)> {
         let mut events = BTreeSet::new();
         let mut edges = Vec::new();
         for event in &self.events {
@@ -381,117 +433,155 @@ impl MachineSchema {
                     format!("event `{}` has no transitions", event.name),
                 );
             }
-            let mut sources = BTreeSet::new();
-            let mut declared_scopes = BTreeSet::new();
-            let mut fallbacks = BTreeSet::new();
+            let mut coverage = EventCoverage::default();
             for transition in &event.transitions {
-                if let Some(kind) = &transition.kind {
-                    if !["internal", "local", "external"].contains(&kind.as_str())
-                        || (kind == "internal") != transition.internal
-                    {
-                        report(
-                            DiagnosticLevel::Error,
-                            format!("invalid transition kind `{kind}`"),
-                        );
-                    }
-                    let target_leaves = self.leaves(&transition.target);
-                    if kind == "local"
-                        && transition.sources.iter().any(|source| {
-                            !self.superstates.iter().any(|s| {
-                                &s.name == source
-                                    && s.descendants
-                                        .iter()
-                                        .any(|leaf| target_leaves.contains(leaf))
-                            })
-                        })
-                    {
-                        report(
-                            DiagnosticLevel::Error,
-                            "local transition leaves its source superstate".into(),
-                        );
-                    }
-                }
-                if let Some(mode) = &transition.history
-                    && (transition.internal
-                        || !["shallow", "deep"].contains(&mode.as_str())
-                        || !self.superstates.iter().any(|s| s.name == transition.target))
+                let target = self.validate_transition_target(event, transition, report);
+                self.validate_transition_sources(
+                    event,
+                    transition,
+                    target,
+                    &mut coverage,
+                    &mut edges,
+                    report,
+                );
+            }
+        }
+        edges
+    }
+
+    /// Kind, history, branch shape and target of one transition; returns the
+    /// leaf entered by an external edge (a superstate resolves to its initial child).
+    fn validate_transition_target<'a>(
+        &'a self,
+        event: &'a EventSchema,
+        transition: &'a TransitionSchema,
+        report: &mut impl FnMut(DiagnosticLevel, String),
+    ) -> &'a String {
+        if let Some(kind) = &transition.kind {
+            if !["internal", "local", "external"].contains(&kind.as_str())
+                || (kind == "internal") != transition.internal
+            {
+                report(
+                    DiagnosticLevel::Error,
+                    format!("invalid transition kind `{kind}`"),
+                );
+            }
+            let target_leaves = self.leaves(&transition.target);
+            if kind == "local"
+                && transition.sources.iter().any(|source| {
+                    !self.superstates.iter().any(|s| {
+                        &s.name == source
+                            && s.descendants
+                                .iter()
+                                .any(|leaf| target_leaves.contains(leaf))
+                    })
+                })
+            {
+                report(
+                    DiagnosticLevel::Error,
+                    "local transition leaves its source superstate".into(),
+                );
+            }
+        }
+        if let Some(mode) = &transition.history
+            && (transition.internal
+                || !["shallow", "deep"].contains(&mode.as_str())
+                || !self.superstates.iter().any(|s| s.name == transition.target))
+        {
+            report(
+                DiagnosticLevel::Error,
+                format!("invalid history target `{}`", transition.target),
+            );
+        }
+        let guarded = !transition.guards.is_empty() || !transition.unless.is_empty();
+        if (transition.fallback && (!event.branching || guarded))
+            || (event.branching && !transition.fallback && !guarded)
+        {
+            report(
+                DiagnosticLevel::Error,
+                format!("invalid branch candidate for `{}`", event.name),
+            );
+        }
+        let target = self
+            .superstates
+            .iter()
+            .find(|s| s.name == transition.target)
+            .map_or(&transition.target, |s| &s.initial);
+        if !transition.internal && !self.states.contains(target) {
+            report(
+                DiagnosticLevel::Error,
+                format!("unknown target `{}`", transition.target),
+            );
+        }
+        if transition.sources.is_empty() {
+            report(
+                DiagnosticLevel::Error,
+                format!("event `{}` has an empty source set", event.name),
+            );
+        }
+        target
+    }
+
+    /// Source coverage and ambiguity of one transition; records its edges.
+    fn validate_transition_sources<'a>(
+        &'a self,
+        event: &'a EventSchema,
+        transition: &'a TransitionSchema,
+        target: &'a String,
+        coverage: &mut EventCoverage<'a>,
+        edges: &mut Vec<(&'a String, &'a String)>,
+        report: &mut impl FnMut(DiagnosticLevel, String),
+    ) {
+        for source in &transition.sources {
+            if event.hierarchical && !coverage.declared_scopes.insert(source) {
+                report(
+                    DiagnosticLevel::Error,
+                    format!("ambiguous hierarchical scope `{source}`"),
+                );
+            }
+            let leaves = self.leaves(source);
+            if leaves.is_empty() {
+                report(DiagnosticLevel::Error, format!("unknown source `{source}`"));
+            }
+            for leaf in leaves {
+                if let Some(scope) = &event.completion
+                    && !self.completed_scopes(leaf).contains(&scope)
                 {
+                    continue;
+                }
+                if coverage.fallbacks.contains(leaf) {
                     report(
                         DiagnosticLevel::Error,
-                        format!("invalid history target `{}`", transition.target),
+                        format!("fallback must be last for `{}` from `{leaf}`", event.name),
                     );
                 }
-                let guarded = !transition.guards.is_empty() || !transition.unless.is_empty();
-                if (transition.fallback && (!event.branching || guarded))
-                    || (event.branching && !transition.fallback && !guarded)
-                {
+                if transition.fallback {
+                    coverage.fallbacks.insert(leaf);
+                }
+                if !coverage.sources.insert(leaf) && !event.branching && !event.hierarchical {
                     report(
                         DiagnosticLevel::Error,
-                        format!("invalid branch candidate for `{}`", event.name),
+                        format!("ambiguous event `{}` from `{leaf}`", event.name),
                     );
                 }
-                let target = self
-                    .superstates
-                    .iter()
-                    .find(|s| s.name == transition.target)
-                    .map_or(&transition.target, |s| &s.initial);
-                if !transition.internal && !self.states.contains(target) {
-                    report(
-                        DiagnosticLevel::Error,
-                        format!("unknown target `{}`", transition.target),
-                    );
-                }
-                if transition.sources.is_empty() {
-                    report(
-                        DiagnosticLevel::Error,
-                        format!("event `{}` has an empty source set", event.name),
-                    );
-                }
-                for source in &transition.sources {
-                    if event.hierarchical && !declared_scopes.insert(source) {
-                        report(
-                            DiagnosticLevel::Error,
-                            format!("ambiguous hierarchical scope `{source}`"),
-                        );
+                if transition.history.is_some() {
+                    for history_target in self.leaves(&transition.target) {
+                        edges.push((leaf, history_target));
                     }
-                    let leaves = self.leaves(source);
-                    if leaves.is_empty() {
-                        report(DiagnosticLevel::Error, format!("unknown source `{source}`"));
-                    }
-                    for leaf in leaves {
-                        if let Some(scope) = &event.completion
-                            && !self.completed_scopes(leaf).contains(&scope)
-                        {
-                            continue;
-                        }
-                        if fallbacks.contains(leaf) {
-                            report(
-                                DiagnosticLevel::Error,
-                                format!("fallback must be last for `{}` from `{leaf}`", event.name),
-                            );
-                        }
-                        if transition.fallback {
-                            fallbacks.insert(leaf);
-                        }
-                        if !sources.insert(leaf) && !event.branching && !event.hierarchical {
-                            report(
-                                DiagnosticLevel::Error,
-                                format!("ambiguous event `{}` from `{leaf}`", event.name),
-                            );
-                        }
-                        if transition.history.is_some() {
-                            for history_target in self.leaves(&transition.target) {
-                                edges.push((leaf, history_target));
-                            }
-                        } else {
-                            edges.push((leaf, if transition.internal { leaf } else { target }));
-                        }
-                    }
+                } else {
+                    edges.push((leaf, if transition.internal { leaf } else { target }));
                 }
             }
         }
-        validate_scopes(self.final_states.iter(), &names, "final state", &mut report);
-        let finals: BTreeSet<_> = self.final_states.iter().collect();
+    }
+
+    /// Final states must be declared and must not have outgoing transitions.
+    fn validate_final_states(
+        &self,
+        names: &BTreeSet<&String>,
+        report: &mut impl FnMut(DiagnosticLevel, String),
+    ) {
+        validate_scopes(self.final_states.iter(), names, "final state", report);
         for state in &self.final_states {
             if self.events.iter().any(|event| {
                 event
@@ -505,10 +595,19 @@ impl MachineSchema {
                 );
             }
         }
+    }
+
+    /// Unreachable and dead-end leaves over the structural edge set.
+    fn lint_reachability(
+        &self,
+        edges: &[(&String, &String)],
+        report: &mut impl FnMut(DiagnosticLevel, String),
+    ) {
+        let finals: BTreeSet<_> = self.final_states.iter().collect();
         let mut reachable = BTreeSet::from([&self.initial]);
         loop {
             let before = reachable.len();
-            for &(source, target) in &edges {
+            for &(source, target) in edges {
                 if reachable.contains(source) {
                     reachable.insert(target);
                 }
@@ -531,81 +630,31 @@ impl MachineSchema {
                 );
             }
         }
-        diagnostics
     }
 
     /// Render the state machine as a Mermaid state diagram.
+    #[must_use]
     pub fn to_mermaid(&self) -> String {
-        use alloc::fmt::Write;
-        let mut out = String::new();
+        alloc::string::ToString::to_string(&self.mermaid())
+    }
 
-        writeln!(out, "stateDiagram-v2").unwrap();
-        if !self.regions.is_empty() {
-            for (index, region) in self.regions.iter().enumerate() {
-                if index > 0 {
-                    writeln!(out, "    --").unwrap();
-                }
-                writeln!(out, "    state {} {{", region.name).unwrap();
-                writeln!(out, "        [*] --> {}", region.machine).unwrap();
-                writeln!(out, "    }}").unwrap();
-            }
-            return out;
-        }
-
-        // Initial state
-        writeln!(out, "    [*] --> {}", self.initial).unwrap();
-        for state in &self.final_states {
-            writeln!(out, "    {state} --> [*]").unwrap();
-        }
-
-        // Collect transitions
-        for event in &self.events {
-            for transition in &event.transitions {
-                for source in &transition.sources {
-                    let target = if transition.internal {
-                        source
-                    } else {
-                        &transition.target
-                    };
-                    // Written in place: no per-edge label strings.
-                    write!(out, "    {source} --> {target} : {}", event.name).unwrap();
-                    if let Some((first, rest)) = transition.guards.split_first() {
-                        write!(out, " [{first}").unwrap();
-                        for guard in rest {
-                            write!(out, ", {guard}").unwrap();
-                        }
-                        out.push(']');
-                    }
-                    if transition.internal {
-                        out.push_str(" (internal)");
-                    }
-                    out.push('\n');
-                }
-            }
-        }
-
-        // Render superstates if present
-        for superstate in &self.superstates {
-            writeln!(out).unwrap();
-            writeln!(out, "    state {} {{", superstate.name).unwrap();
-            writeln!(out, "        [*] --> {}", superstate.initial).unwrap();
-            for descendant in &superstate.descendants {
-                writeln!(out, "        {}", descendant).unwrap();
-            }
-            writeln!(out, "    }}").unwrap();
-        }
-
-        out
+    /// The Mermaid diagram as a [`Display`][core::fmt::Display] value, so a
+    /// caller can write it straight into its own formatter.
+    #[must_use]
+    pub const fn mermaid(&self) -> Mermaid<'_> {
+        Mermaid(self)
     }
 
     /// Render the state machine as JSON.
     #[cfg(feature = "std")]
+    #[must_use]
     pub fn to_json(&self) -> String {
         serde_json::to_string(self).unwrap_or_else(|_| String::from("{}"))
     }
 
     /// Render the state machine as pretty-printed JSON.
     #[cfg(feature = "std")]
+    #[must_use]
     pub fn to_json_pretty(&self) -> String {
         serde_json::to_string_pretty(self).unwrap_or_else(|_| String::from("{}"))
     }
@@ -613,3 +662,67 @@ impl MachineSchema {
 
 #[cfg(all(test, feature = "std"))]
 mod tests;
+
+/// A [`MachineSchema`] rendered as a Mermaid state diagram, from
+/// [`MachineSchema::mermaid`].
+#[derive(Debug, Clone, Copy)]
+pub struct Mermaid<'a>(&'a MachineSchema);
+
+impl core::fmt::Display for Mermaid<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let schema = self.0;
+        writeln!(f, "stateDiagram-v2")?;
+        if !schema.regions.is_empty() {
+            for (index, region) in schema.regions.iter().enumerate() {
+                if index > 0 {
+                    writeln!(f, "    --")?;
+                }
+                writeln!(f, "    state {} {{", region.name)?;
+                writeln!(f, "        [*] --> {}", region.machine)?;
+                writeln!(f, "    }}")?;
+            }
+            return Ok(());
+        }
+
+        writeln!(f, "    [*] --> {}", schema.initial)?;
+        for state in &schema.final_states {
+            writeln!(f, "    {state} --> [*]")?;
+        }
+
+        for event in &schema.events {
+            for transition in &event.transitions {
+                for source in &transition.sources {
+                    let target = if transition.internal {
+                        source
+                    } else {
+                        &transition.target
+                    };
+                    write!(f, "    {source} --> {target} : {}", event.name)?;
+                    if let Some((first, rest)) = transition.guards.split_first() {
+                        write!(f, " [{first}")?;
+                        for guard in rest {
+                            write!(f, ", {guard}")?;
+                        }
+                        f.write_char(']')?;
+                    }
+                    if transition.internal {
+                        f.write_str(" (internal)")?;
+                    }
+                    f.write_char('\n')?;
+                }
+            }
+        }
+
+        for superstate in &schema.superstates {
+            writeln!(f)?;
+            writeln!(f, "    state {} {{", superstate.name)?;
+            writeln!(f, "        [*] --> {}", superstate.initial)?;
+            for descendant in &superstate.descendants {
+                writeln!(f, "        {descendant}")?;
+            }
+            writeln!(f, "    }}")?;
+        }
+
+        Ok(())
+    }
+}

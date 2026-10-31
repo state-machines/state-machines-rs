@@ -37,6 +37,16 @@ state_machine! {
 
 pub async fn run_demo() {
     println!("\n=== Native regions, owned snapshots and independent history ===");
+    let console = boot_and_suspend_primary().await;
+    let mut console = roundtrip_owned_snapshot(console);
+    resume_with_history(&mut console).await;
+    reset_and_retire(console).await;
+    println!("Deep/shallow history, partial fork progress, reset and one-shot join preserved.");
+}
+
+/// Boot both regions, hand each its own command, then park primary in `SafeMode`
+/// while backup keeps processing.
+async fn boot_and_suspend_primary() -> MissionConsole {
     let mut console = MissionConsole::new(
         DynamicSpacecraftComputer::new(()),
         DynamicSpacecraftComputer::new(()),
@@ -77,7 +87,12 @@ pub async fn run_demo() {
         console.current_state().backup,
         SpacecraftComputerState::Processing
     );
+    console
+}
 
+/// Serialize the whole console, fail a migration, repair the returned envelope
+/// and restore from it without rebuilding either region.
+fn roundtrip_owned_snapshot(console: MissionConsole) -> MissionConsole {
     let json = serde_json::to_string_pretty(&console.into_snapshot()).unwrap();
     println!("One named envelope:\n{json}");
     let mut snapshot: MissionConsoleSnapshot = serde_json::from_str(&json).unwrap();
@@ -108,7 +123,12 @@ pub async fn run_demo() {
             .priority,
         9
     );
+    console
+}
 
+/// Deep history restores `Diagnostics`; a partial fork commits the left region
+/// only; shallow history restores `Work`'s initial child with an empty command.
+async fn resume_with_history(console: &mut MissionConsole) {
     console
         .handle(MissionConsoleEvent::ResumeDeep)
         .await
@@ -163,8 +183,11 @@ pub async fn run_demo() {
         "history restores control, not the earlier owned command"
     );
     console.handle(MissionConsoleEvent::Complete).await.unwrap();
+}
 
-    // Same composition, reset in place: qualified scope generations advance.
+/// Reset advances scope generations in place; retire yields exactly one join,
+/// and restoring a finished snapshot does not synthesize another.
+async fn reset_and_retire(mut console: MissionConsole) {
     let visit = console.scope_epoch("primary/Operational").unwrap();
     console.handle(MissionConsoleEvent::Reset).await.unwrap();
     assert_matches!(console.scope_epoch("primary/Operational"), Some(epoch) if epoch != visit);
@@ -186,5 +209,4 @@ pub async fn run_demo() {
         restored.take_join().is_none(),
         "restore does not synthesize a join"
     );
-    println!("Deep/shallow history, partial fork progress, reset and one-shot join preserved.");
 }

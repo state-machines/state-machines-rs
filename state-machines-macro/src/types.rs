@@ -2,7 +2,7 @@
 //!
 //! This module contains all the core data structures used to represent
 //! state machines during macro expansion, including:
-//! - StateMachine: The root struct representing the entire machine
+//! - `StateMachine`: The root struct representing the entire machine
 //! - Event and Transition: Event definitions and their transitions
 //! - Hierarchy: Superstate tracking and resolution
 //! - Storage specifications for state-associated data
@@ -159,30 +159,31 @@ impl GlobalCallback {
         target: &Ident,
         event: &Ident,
     ) -> bool {
-        let state_matches = |filter: &Option<Vec<Ident>>, state: &Ident| match filter {
-            None => true,
-            Some(entries) => entries.iter().any(|entry| {
-                hierarchy
-                    .expand_state(entry, leaves)
-                    .iter()
-                    .any(|leaf| leaf == state)
-            }),
+        let state_matches = |filter: &Option<Vec<Ident>>, state: &Ident| {
+            filter.as_ref().is_none_or(|entries| {
+                entries.iter().any(|entry| {
+                    hierarchy
+                        .expand_state(entry, leaves)
+                        .iter()
+                        .any(|leaf| leaf == state)
+                })
+            })
         };
-        let event_matches = match &self.on {
-            None => true,
-            Some(events) => events.iter().any(|e| e == event),
-        };
+        let event_matches = self
+            .on
+            .as_ref()
+            .is_none_or(|events| events.iter().any(|e| e == event));
         state_matches(&self.from, source) && state_matches(&self.to, target) && event_matches
     }
 }
 
 /// Graph of all possible transitions between states.
 ///
-/// Maps each state to a list of (target_state, event, transition) tuples.
+/// Maps each state to a list of (`target_state`, event, transition) tuples.
 /// Used for typestate validation and code generation.
 #[derive(Default)]
 pub struct TransitionGraph {
-    /// Maps source state -> Vec<(target, event_name, transition)>
+    /// Maps source state -> Vec<(target, `event_name`, transition)>
     pub edges: HashMap<String, Vec<TransitionEdge>>,
 }
 
@@ -320,10 +321,10 @@ pub struct Hooks {
 impl Hooks {
     /// These hooks followed by `inner`'s, list by list, so event-level
     /// entries run before transition-level ones.
-    pub fn merged(&self, inner: &Hooks) -> Hooks {
+    pub fn merged(&self, inner: &Self) -> Self {
         let concat =
             |outer: &[Ident], inner: &[Ident]| outer.iter().chain(inner).cloned().collect();
-        Hooks {
+        Self {
             guards: concat(&self.guards, &inner.guards),
             unless: concat(&self.unless, &inner.unless),
             before: concat(&self.before, &inner.before),
@@ -363,7 +364,7 @@ pub struct SuperstateInfo {
 #[derive(Default)]
 pub struct Hierarchy {
     /// Registration order (nested before parent). Iterate this, never a
-    /// HashMap, so generated code and schemas are identical across builds.
+    /// `HashMap`, so generated code and schemas are identical across builds.
     pub superstates: Vec<SuperstateInfo>,
     index: HashMap<String, usize>,
     ancestors: HashMap<String, Vec<Ident>>,

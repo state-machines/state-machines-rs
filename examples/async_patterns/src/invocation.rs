@@ -7,7 +7,7 @@ use state_machines::{
 use std::{
     assert_matches,
     cell::{Cell, RefCell},
-    future::Future,
+    future::{Future, ready},
     rc::Rc,
 };
 
@@ -84,8 +84,8 @@ impl<S> ScoutMission<S> {
             }
         }
     }
-    async fn take_report(&self, delivery: &mut Delivery) -> Report {
-        delivery.0.take().expect("move report into the final state")
+    fn take_report(&self, delivery: &mut Delivery) -> impl Future<Output = Report> {
+        ready(delivery.0.take().expect("move report into the final state"))
     }
 }
 

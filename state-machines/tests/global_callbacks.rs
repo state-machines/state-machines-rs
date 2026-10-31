@@ -1,6 +1,3 @@
-#![allow(non_camel_case_types)]
-#![allow(non_snake_case)]
-
 use std::sync::Mutex;
 
 use state_machines::core::{AroundOutcome, AroundStage};
@@ -17,7 +14,7 @@ fn take_log() -> Vec<&'static str> {
     std::mem::take(&mut *LOG.lock().unwrap())
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BurnPlan {
     delta_v: u32,
 }

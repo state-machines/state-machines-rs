@@ -24,7 +24,7 @@ state_machine! {
     }
 }
 impl<C, S> Queued<C, S> {
-    fn own(&self, request: &mut Request) -> Data {
+    const fn own(&self, request: &mut Request) -> Data {
         Data(request.0.take().unwrap())
     }
     fn internal(&self, _ctx: &C) -> bool {

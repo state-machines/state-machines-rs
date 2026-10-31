@@ -16,7 +16,6 @@ path = "src/main.rs"
 
 [dependencies]
 state-machines-core = { version = "0.13.1", path = "../state-machines-core", features = ["std"] }
-serde_json = "1"
 usage-rs = "7"
 
 # Not `workspace = true`: Cargo forbids mixing inherited and local entries, and
@@ -26,3 +25,13 @@ usage-rs = "7"
 unsafe_code = "forbid"
 # Binary crate: unused `pub` items are dead code too
 dead_code_pub_in_binary = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+# Lints this codebase opts out of, with the reason:
+# - the local runtime and the methods generated for it are !Send by design; `runtime-send` is the Send flavour
+future_not_send = "allow"
+# - the macro invokes every callback as `self.hook()`, so a callback that needs nothing from the machine still takes `&self`
+unused_self = "allow"

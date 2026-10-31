@@ -14,7 +14,7 @@ struct SpacecraftSensors {
 }
 
 impl SpacecraftSensors {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             altitude_km: 0,
             fuel_level: 100,
@@ -22,12 +22,12 @@ impl SpacecraftSensors {
         }
     }
 
-    fn with_altitude(mut self, altitude: u32) -> Self {
+    const fn with_altitude(mut self, altitude: u32) -> Self {
         self.altitude_km = altitude;
         self
     }
 
-    fn with_fuel(mut self, fuel: u8) -> Self {
+    const fn with_fuel(mut self, fuel: u8) -> Self {
         self.fuel_level = fuel;
         self
     }
@@ -63,22 +63,22 @@ state_machine! {
 impl<S> Spacecraft<S> {
     /// Guard: Check if we have enough fuel
     ///
-    /// Can directly access ctx.fuel_level because context is concrete
-    fn has_fuel(&self, ctx: &SpacecraftSensors) -> bool {
+    /// Can directly access `ctx.fuel_level` because context is concrete
+    const fn has_fuel(&self, ctx: &SpacecraftSensors) -> bool {
         ctx.fuel_level >= 50 // Need at least 50% fuel
     }
 
     /// Guard: Check if temperature is safe
     ///
-    /// Can directly access ctx.temperature_c because context is concrete
-    fn safe_temperature(&self, ctx: &SpacecraftSensors) -> bool {
+    /// Can directly access `ctx.temperature_c` because context is concrete
+    const fn safe_temperature(&self, ctx: &SpacecraftSensors) -> bool {
         ctx.temperature_c >= -50 && ctx.temperature_c <= 100
     }
 
     /// Guard: Check if altitude is sufficient for orbit
     ///
-    /// Can directly access ctx.altitude_km because context is concrete
-    fn sufficient_altitude(&self, ctx: &SpacecraftSensors) -> bool {
+    /// Can directly access `ctx.altitude_km` because context is concrete
+    const fn sufficient_altitude(&self, ctx: &SpacecraftSensors) -> bool {
         ctx.altitude_km >= 400 // Need at least 400km for orbit
     }
 }

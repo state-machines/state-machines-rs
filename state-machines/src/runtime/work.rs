@@ -47,7 +47,7 @@ pub(super) struct Registry<I, S, W> {
     pub entries: Vec<Entry<I, S, W>>,
 }
 impl<I: Copy + Eq, S: Copy + Eq, W> Registry<I, S, W> {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             entries: Vec::new(),
         }

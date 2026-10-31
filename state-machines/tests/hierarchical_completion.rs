@@ -20,7 +20,7 @@ state_machine! {
     }
 }
 impl<S> DeepCompletion<S> {
-    fn approved(&self, ctx: &Context) -> bool {
+    const fn approved(&self, ctx: &Context) -> bool {
         ctx.approved
     }
     fn inner(&self) {
@@ -60,7 +60,10 @@ fn final_composite_propagates_to_ancestor_and_guard_can_delay_exit() {
     assert!(machine.is_finished());
     assert_eq!(machine.take_completion_events(), [CompletionEvent::Machine]);
     #[cfg(feature = "inspect")]
-    assert!(DeepCompletion::<Working>::schema().validate().is_empty());
+    assert_eq!(
+        DeepCompletion::<Working>::schema().validate(),
+        [] as [state_machines::SchemaDiagnostic; 0]
+    );
 }
 
 mod root {
@@ -97,6 +100,9 @@ mod root {
             "conversion is inert"
         );
         #[cfg(feature = "inspect")]
-        assert!(TerminalTree::<(), Busy>::schema().validate().is_empty());
+        assert_eq!(
+            TerminalTree::<(), Busy>::schema().validate(),
+            [] as [state_machines::SchemaDiagnostic; 0]
+        );
     }
 }

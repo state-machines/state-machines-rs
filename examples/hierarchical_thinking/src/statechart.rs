@@ -48,10 +48,10 @@ state_machine! {
     }
 }
 impl<S> Checkout<S> {
-    fn child_enabled(&self, ctx: &Audit) -> bool {
+    const fn child_enabled(&self, ctx: &Audit) -> bool {
         ctx.allow_child
     }
-    fn release_enabled(&self, ctx: &Audit) -> bool {
+    const fn release_enabled(&self, ctx: &Audit) -> bool {
         ctx.release
     }
     fn entered(&self) {

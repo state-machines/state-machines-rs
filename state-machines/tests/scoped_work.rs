@@ -43,13 +43,13 @@ state_machine! {
     }
 }
 impl<S> Scoped<S> {
-    fn auto(&self, ctx: &Policy) -> bool {
+    const fn auto(&self, ctx: &Policy) -> bool {
         ctx.auto.get()
     }
-    fn local(&self, ctx: &Policy) -> bool {
+    const fn local(&self, ctx: &Policy) -> bool {
         ctx.local.get()
     }
-    fn reject(&self) -> Result<(), &'static str> {
+    const fn reject(&self) -> Result<(), &'static str> {
         if self.ctx.fail.get() {
             Err("failed")
         } else {

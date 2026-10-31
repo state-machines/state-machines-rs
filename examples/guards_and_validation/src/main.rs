@@ -15,7 +15,7 @@
 //!
 //! ## Ruby Comparison
 //!
-//! Ruby's state_machines uses similar guard syntax:
+//! Ruby's `state_machines` uses similar guard syntax:
 //!
 //! ```ruby
 //! state_machine :door do
@@ -146,17 +146,17 @@ impl SpacecraftTelemetry {
         Self::default()
     }
 
-    fn with_altitude(mut self, km: u32) -> Self {
+    const fn with_altitude(mut self, km: u32) -> Self {
         self.altitude_km = km;
         self
     }
 
-    fn with_engines(mut self, active: bool) -> Self {
+    const fn with_engines(mut self, active: bool) -> Self {
         self.engines_active = active;
         self
     }
 
-    fn with_override(mut self, enabled: bool) -> Self {
+    const fn with_override(mut self, enabled: bool) -> Self {
         self.emergency_override = enabled;
         self
     }
@@ -238,7 +238,14 @@ impl<S> CargoBay<S> {
 fn main() {
     println!("=== Cargo Bay Safety System Demo ===\n");
 
-    // Scenario 1: Unsafe conditions (on ground, engines off)
+    scenario_ground_then_orbit();
+    scenario_engines_then_override();
+    scenario_nominal();
+    print_takeaways();
+}
+
+/// Scenario 1 blocks opening on the ground; scenario 2 retries from orbit.
+fn scenario_ground_then_orbit() {
     println!("--- Scenario 1: Attempting to open on ground ---");
     let telemetry = SpacecraftTelemetry::new()
         .with_altitude(0) // On ground!
@@ -256,7 +263,7 @@ fn main() {
 
             // Check the error kind
             if let TransitionErrorKind::GuardFailed { guard } = err.kind {
-                println!("  Error type: Guard '{}' returned false", guard);
+                println!("  Error type: Guard '{guard}' returned false");
             }
 
             // IMPORTANT: We still have the machine in Closed state!
@@ -285,8 +292,11 @@ fn main() {
             }
         }
     }
+}
 
-    // Scenario 3: Engines firing (unsafe even in orbit)
+/// Scenario 3 blocks opening while engines fire; scenario 4 bypasses it with
+/// the emergency override guard.
+fn scenario_engines_then_override() {
     println!("--- Scenario 3: Engines active (in orbit) ---");
     let telemetry = SpacecraftTelemetry::new()
         .with_altitude(200)
@@ -322,8 +332,10 @@ fn main() {
             }
         }
     }
+}
 
-    // Scenario 5: All conditions nominal
+/// Scenario 5: every guard passes.
+fn scenario_nominal() {
     println!("--- Scenario 5: Nominal operations ---");
     let telemetry = SpacecraftTelemetry::new()
         .with_altitude(250)
@@ -345,7 +357,9 @@ fn main() {
             println!("✗ Unexpected failure: {}", err.guard);
         }
     }
+}
 
+fn print_takeaways() {
     println!("=== Key Takeaways ===");
     println!("✓ Guards prevent unsafe transitions at runtime");
     println!("✓ Failed guards return (machine, error) - no data loss");

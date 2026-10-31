@@ -44,16 +44,16 @@ impl<M: Machine> Region<M> {
             runner: Runner::new(machine, capacity),
         }
     }
-    pub fn runner(&self) -> &Runner<M> {
+    pub const fn runner(&self) -> &Runner<M> {
         &self.runner
     }
-    pub fn runner_mut(&mut self) -> &mut Runner<M> {
+    pub const fn runner_mut(&mut self) -> &mut Runner<M> {
         &mut self.runner
     }
     pub fn into_machine(self) -> M {
         self.runner.into_machine()
     }
-    fn machine_mut(&mut self) -> &mut M {
+    const fn machine_mut(&mut self) -> &mut M {
         self.runner.machine_mut()
     }
 }

@@ -1,7 +1,5 @@
-#![allow(non_camel_case_types)]
-#![allow(non_snake_case)]
-#![allow(private_interfaces)]
-
+#[cfg(feature = "async")]
+use std::future::{Future, ready};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 #[cfg(feature = "async")]
@@ -9,7 +7,7 @@ use pollster::block_on;
 use state_machines::state_machine;
 
 #[derive(Clone, Debug)]
-struct BurnRequest {
+pub struct BurnRequest {
     power: u8,
 }
 
@@ -62,7 +60,7 @@ fn sync_payload_event_runs_guards_and_callbacks() {
     let request = BurnRequest { power: 6 };
 
     let err = controller
-        .fire(request.clone())
+        .fire(request)
         .expect_err("guard should prevent overpowered burn");
     let (controller, guard_err) = err;
     assert_eq!(guard_err.guard, "fuel_ready");
@@ -84,7 +82,7 @@ fn sync_payload_event_runs_guards_and_callbacks() {
 
 #[cfg(feature = "async")]
 #[derive(Clone, Debug)]
-struct Cargo {
+pub struct Cargo {
     weight: u8,
 }
 
@@ -118,16 +116,18 @@ state_machine! {
 
 #[cfg(feature = "async")]
 impl<C, S> CargoBayController<C, S> {
-    async fn route_clear(&self, _ctx: &C, cargo: &Cargo) -> bool {
-        ROUTE_CLEAR.load(Ordering::SeqCst) && cargo.weight <= 4
+    fn route_clear(&self, _ctx: &C, cargo: &Cargo) -> impl Future<Output = bool> {
+        ready(ROUTE_CLEAR.load(Ordering::SeqCst) && cargo.weight <= 4)
     }
 
-    async fn log_departure(&self, _cargo: &Cargo) {
+    fn log_departure(&self, _cargo: &Cargo) -> impl Future<Output = ()> {
         ASYNC_BEFORE_CALLED.store(true, Ordering::SeqCst);
+        ready(())
     }
 
-    async fn log_arrival(&self, _cargo: &Cargo) {
+    fn log_arrival(&self, _cargo: &Cargo) -> impl Future<Output = ()> {
         ASYNC_AFTER_CALLED.store(true, Ordering::SeqCst);
+        ready(())
     }
 }
 

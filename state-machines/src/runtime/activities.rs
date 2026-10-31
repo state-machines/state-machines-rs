@@ -112,12 +112,29 @@ impl<M: Machine> Runner<M> {
     /// Invoke an owned future for the current leaf visit. It reserves one mailbox slot.
     /// Map success/failure to parent events inside the future; completion is raised once.
     /// Cancellation drops the future, it does not abort detached executor tasks.
+    ///
+    /// # Errors
+    ///
+    /// The future is handed back unpolled inside [`InvokeError`] with the reason:
+    /// [`InvokeFailure::Poisoned`] when the machine is poisoned,
+    /// [`InvokeFailure::InactiveScope`] when the leaf visit cannot be captured,
+    /// [`InvokeFailure::Overflow`] when the activity id counter would wrap, or
+    /// [`InvokeFailure::Full`] when no mailbox slot is free for the completion.
     pub fn invoke_future<F>(&mut self, future: F) -> Result<ActivityId, InvokeError<F>>
     where
         F: RuntimeFuture<Output = M::Event> + 'static,
     {
         self.invoke_future_in(WorkScope::Leaf, future)
     }
+    /// Like [`invoke_future`](Self::invoke_future), bound to `scope` instead of the leaf.
+    ///
+    /// # Errors
+    ///
+    /// The future is handed back unpolled inside [`InvokeError`] with the reason:
+    /// [`InvokeFailure::Poisoned`] when the machine is poisoned,
+    /// [`InvokeFailure::InactiveScope`] when `scope` is not currently active,
+    /// [`InvokeFailure::Overflow`] when the activity id counter would wrap, or
+    /// [`InvokeFailure::Full`] when no mailbox slot is free for the completion.
     pub fn invoke_future_in<F>(
         &mut self,
         scope: WorkScope,
@@ -177,6 +194,11 @@ impl<M: Machine> Runner<M> {
 
     /// Wait until queued input or an activity completion is available. Does not dispatch.
     /// The host remains responsible for clock driving (cancel this wait before `tick`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RunError::Poisoned`] as soon as the machine is observed poisoned
+    /// while waiting; nothing else can fail here.
     pub async fn wait_for_work(&mut self) -> Result<(), RunError<M::Error>> {
         poll_fn(|cx| {
             if self.machine().is_poisoned() {
@@ -207,6 +229,15 @@ impl<M: Machine> Runner<M> {
     /// Invoke a reusable child runner, returning its event channel.
     /// Child dispatch failures map to one parent error event with the owned child.
     /// Step-budget exhaustion yields cooperatively and resumes on the next poll.
+    ///
+    /// # Errors
+    ///
+    /// The child runner is handed back inside [`ChildInvokeError`] with the reason:
+    /// [`InvokeFailure::ZeroBudget`] when `max_steps` is `0`,
+    /// [`InvokeFailure::Poisoned`] when this machine is poisoned,
+    /// [`InvokeFailure::InactiveScope`] when the leaf visit cannot be captured,
+    /// [`InvokeFailure::Overflow`] when the activity id counter would wrap, or
+    /// [`InvokeFailure::Full`] when no mailbox slot is free for the completion.
     // Preserve the entire child without allocating another box on backpressure.
     #[allow(clippy::result_large_err)]
     pub fn invoke_child<C, Done, Failed>(
@@ -228,6 +259,16 @@ impl<M: Machine> Runner<M> {
         self.invoke_child_in(WorkScope::Leaf, child, max_steps, done, failed)
     }
 
+    /// Like [`invoke_child`](Self::invoke_child), bound to `scope` instead of the leaf.
+    ///
+    /// # Errors
+    ///
+    /// The child runner is handed back inside [`ChildInvokeError`] with the reason:
+    /// [`InvokeFailure::ZeroBudget`] when `max_steps` is `0`,
+    /// [`InvokeFailure::Poisoned`] when this machine is poisoned,
+    /// [`InvokeFailure::InactiveScope`] when `scope` is not currently active,
+    /// [`InvokeFailure::Overflow`] when the activity id counter would wrap, or
+    /// [`InvokeFailure::Full`] when no mailbox slot is free for the completion.
     #[allow(clippy::result_large_err)]
     pub fn invoke_child_in<C, Done, Failed>(
         &mut self,
@@ -273,6 +314,15 @@ impl<M: Machine> Runner<M> {
 
 /// Drive an owned child cooperatively, recovering it on completion or failure.
 /// Shared by explicit invocation and declarative activity factories.
+///
+/// # Errors
+///
+/// The child machine is always returned alongside the error:
+/// [`RunError::StepLimit`] with limit `0` when `max_steps` is `0`, otherwise
+/// whatever the child's [`drain`](Runner::drain) or
+/// [`wait_for_work`](Runner::wait_for_work) reported ([`RunError::Poisoned`],
+/// [`RunError::Setup`], [`RunError::Dispatch`], or [`RunError::AutomaticStepLimit`]).
+/// A `StepLimit` raised by `drain` itself is not an error: the child yields and resumes.
 pub async fn run_child<C: Machine>(
     mut child: Runner<C>,
     max_steps: usize,

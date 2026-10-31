@@ -2,190 +2,163 @@
 //!
 //! This module handles converting the macro input tokens into our
 //! internal data structures. It includes parsers for:
-//! - The main StateMachine structure (via syn::Parse trait)
+//! - The main `StateMachine` structure (via `syn::Parse` trait)
 //! - States section (including nested superstates)
 //! - Events and transitions
 //! - Helper utilities for parsing lists and sets
 
-use crate::types::*;
+use crate::types::{
+    Deadline, Event, GlobalCallback, GlobalCallbacks, Hierarchy, HistoryMode, Hooks, ParsedStates,
+    RuntimeLifecycle, StateLifecycle, StateMachine, StateStorageSpec, SuperstateParseResult,
+    Transition, TransitionEdge, TransitionGraph, TransitionKind,
+};
 use proc_macro2::Span;
 use quote::format_ident;
 use std::collections::HashSet;
 use syn::{
-    Ident, Result, Token, braced, bracketed, parenthesized,
+    Ident, Result, Token, Type, braced, bracketed, parenthesized,
     parse::{Parse, ParseBuffer, ParseStream},
 };
 
-/// Implementation of syn::Parse for StateMachine.
-///
-/// This allows us to use `syn::parse_macro_input!(input as StateMachine)`
-/// to parse the entire macro input in one go.
-impl Parse for StateMachine {
-    fn parse(input: ParseStream<'_>) -> Result<Self> {
-        // Initialize all fields with defaults or None
-        let mut name = None;
-        let mut initial = None;
-        let mut context = None;
-        let mut error = None;
-        let mut states = None;
-        let mut events = None;
-        let mut callbacks = GlobalCallbacks::default();
-        let mut lifecycle = Vec::new();
-        let mut runtime_lifecycle = Vec::new();
-        let mut final_states = Vec::new();
-        let mut snapshot = false;
-        let mut async_mode = false;
-        let mut dynamic_mode = false;
-        let mut state_storage = Vec::new();
-        let mut hierarchy = Hierarchy::default();
+/// The top-level fields of a `state_machine!` invocation, collected one
+/// `key: value` pair at a time and assembled once the input is exhausted.
+#[derive(Default)]
+struct MachineFields {
+    name: Option<Ident>,
+    initial: Option<Ident>,
+    context: Option<Type>,
+    error: Option<Type>,
+    states: Option<Vec<Ident>>,
+    events: Option<Vec<Event>>,
+    callbacks: GlobalCallbacks,
+    lifecycle: Vec<StateLifecycle>,
+    runtime_lifecycle: Vec<RuntimeLifecycle>,
+    final_states: Vec<Ident>,
+    snapshot: bool,
+    async_mode: bool,
+    dynamic_mode: bool,
+    state_storage: Vec<StateStorageSpec>,
+    hierarchy: Hierarchy,
+}
 
-        // Parse each key-value pair in the macro input
-        while !input.is_empty() {
-            // Handle the special case of `async` keyword
-            if input.peek(Token![async]) {
-                let _: Token![async] = input.parse()?;
+impl MachineFields {
+    /// Parse the value of one top-level `key` (already consumed) into place.
+    fn parse_field(&mut self, key: &Ident, input: ParseStream<'_>) -> Result<()> {
+        match key.to_string().as_str() {
+            "runtime" => {
+                input.parse::<Token![:]>()?;
+                let block;
+                braced!(block in input);
+                self.runtime_lifecycle = parse_runtime_lifecycle(&block)?;
+            }
+            "dynamic" => {
                 input.parse::<Token![:]>()?;
                 let value: syn::LitBool = input.parse()?;
-                async_mode = value.value();
-            } else {
-                let key: Ident = input.parse()?;
-                let key_str = key.to_string();
-
-                match key_str.as_str() {
-                    "runtime" => {
-                        input.parse::<Token![:]>()?;
-                        let content;
-                        braced!(content in input);
-                        runtime_lifecycle = parse_runtime_lifecycle(&content)?;
-                    }
-                    "dynamic" => {
-                        input.parse::<Token![:]>()?;
-                        let value: syn::LitBool = input.parse()?;
-                        dynamic_mode = value.value();
-                    }
-                    "snapshot" => {
-                        input.parse::<Token![:]>()?;
-                        snapshot = input.parse::<syn::LitBool>()?.value;
-                    }
-                    "name" => {
-                        input.parse::<Token![:]>()?;
-                        name = Some(input.parse()?);
-                    }
-                    "initial" => {
-                        input.parse::<Token![:]>()?;
-                        initial = Some(input.parse()?);
-                    }
-                    "final_states" => {
-                        input.parse::<Token![:]>()?;
-                        final_states = parse_ident_list_value(input)?;
-                    }
-                    "context" => {
-                        input.parse::<Token![:]>()?;
-                        context = Some(input.parse()?);
-                    }
-                    "error" => {
-                        input.parse::<Token![:]>()?;
-                        error = Some(input.parse()?);
-                    }
-                    "states" => {
-                        input.parse::<Token![:]>()?;
-                        let content;
-                        bracketed!(content in input);
-                        let parsed_states = parse_states_section(&content)?;
-                        states = Some(parsed_states.leaves);
-                        hierarchy = parsed_states.hierarchy;
-                        state_storage = parsed_states.storage;
-                    }
-                    "events" => {
-                        // Optional colon for backwards compatibility
-                        if input.peek(Token![:]) {
-                            input.parse::<Token![:]>()?;
-                        }
-                        let content;
-                        braced!(content in input);
-                        events = Some(parse_events(&content)?);
-                    }
-                    "callbacks" => {
-                        // Optional colon, mirroring `events`
-                        if input.peek(Token![:]) {
-                            input.parse::<Token![:]>()?;
-                        }
-                        let content;
-                        braced!(content in input);
-                        callbacks = parse_global_callbacks(&content)?;
-                    }
-                    "lifecycle" => {
-                        input.parse::<Token![:]>()?;
-                        let content;
-                        braced!(content in input);
-                        while !content.is_empty() {
-                            let state = content.parse()?;
-                            let block;
-                            braced!(block in content);
-                            let mut hooks = StateLifecycle {
-                                state,
-                                enter: Vec::new(),
-                                exit: Vec::new(),
-                                complete: Vec::new(),
-                            };
-                            while !block.is_empty() {
-                                let key: Ident = block.parse()?;
-                                block.parse::<Token![:]>()?;
-                                match key.to_string().as_str() {
-                                    "enter" => hooks.enter = parse_ident_list_value(&block)?,
-                                    "exit" => hooks.exit = parse_ident_list_value(&block)?,
-                                    "complete" => hooks.complete = parse_ident_list_value(&block)?,
-                                    _ => return Err(unexpected_key(&key)),
-                                }
-                                skip_optional_comma(&block)?;
-                            }
-                            lifecycle.push(hooks);
-                            skip_optional_comma(&content)?;
-                        }
-                    }
-                    // Fields from the Ruby-era design that were never
-                    // implemented. Error loudly instead of silently
-                    // swallowing configuration the user expects to work.
-                    "state" => {
-                        return Err(syn::Error::new(
-                            key.span(),
-                            "`state` is not supported: states are types, not an enum; remove this field",
-                        ));
-                    }
-                    "action" => {
-                        return Err(syn::Error::new(
-                            key.span(),
-                            "`action` is not supported: use `callbacks: { before_transition [...] }` for machine-wide hooks",
-                        ));
-                    }
-                    _ => {
-                        return Err(unexpected_key(&key));
-                    }
-                }
+                self.dynamic_mode = value.value();
             }
-
-            skip_optional_comma(input)?;
+            "snapshot" => {
+                input.parse::<Token![:]>()?;
+                self.snapshot = input.parse::<syn::LitBool>()?.value;
+            }
+            "name" => {
+                input.parse::<Token![:]>()?;
+                self.name = Some(input.parse()?);
+            }
+            "initial" => {
+                input.parse::<Token![:]>()?;
+                self.initial = Some(input.parse()?);
+            }
+            "final_states" => {
+                input.parse::<Token![:]>()?;
+                self.final_states = parse_ident_list_value(input)?;
+            }
+            "context" => {
+                input.parse::<Token![:]>()?;
+                self.context = Some(input.parse()?);
+            }
+            "error" => {
+                input.parse::<Token![:]>()?;
+                self.error = Some(input.parse()?);
+            }
+            "states" => {
+                input.parse::<Token![:]>()?;
+                let list;
+                bracketed!(list in input);
+                let parsed_states = parse_states_section(&list)?;
+                self.states = Some(parsed_states.leaves);
+                self.hierarchy = parsed_states.hierarchy;
+                self.state_storage = parsed_states.storage;
+            }
+            "events" => {
+                // Optional colon for backwards compatibility
+                if input.peek(Token![:]) {
+                    input.parse::<Token![:]>()?;
+                }
+                let block;
+                braced!(block in input);
+                self.events = Some(parse_events(&block)?);
+            }
+            "callbacks" => {
+                // Optional colon, mirroring `events`
+                if input.peek(Token![:]) {
+                    input.parse::<Token![:]>()?;
+                }
+                let block;
+                braced!(block in input);
+                self.callbacks = parse_global_callbacks(&block)?;
+            }
+            "lifecycle" => {
+                input.parse::<Token![:]>()?;
+                let block;
+                braced!(block in input);
+                self.lifecycle.extend(parse_lifecycle(&block)?);
+            }
+            // Fields from the Ruby-era design that were never
+            // implemented. Error loudly instead of silently
+            // swallowing configuration the user expects to work.
+            "state" => {
+                return Err(syn::Error::new(
+                    key.span(),
+                    "`state` is not supported: states are types, not an enum; remove this field",
+                ));
+            }
+            "action" => {
+                return Err(syn::Error::new(
+                    key.span(),
+                    "`action` is not supported: use `callbacks: { before_transition [...] }` for machine-wide hooks",
+                ));
+            }
+            _ => {
+                return Err(unexpected_key(key));
+            }
         }
+        Ok(())
+    }
 
-        // Build the StateMachine, returning errors for missing required fields
-        let mut machine = Self {
-            name: name.ok_or_else(|| syn::Error::new(Span::call_site(), "missing `name` field"))?,
-            initial: initial
+    /// Build the `StateMachine`, returning errors for missing required fields.
+    fn finish(self) -> Result<StateMachine> {
+        let mut machine = StateMachine {
+            name: self
+                .name
+                .ok_or_else(|| syn::Error::new(Span::call_site(), "missing `name` field"))?,
+            initial: self
+                .initial
                 .ok_or_else(|| syn::Error::new(Span::call_site(), "missing `initial` field"))?,
-            context,
-            error,
-            states: states
+            context: self.context,
+            error: self.error,
+            states: self
+                .states
                 .ok_or_else(|| syn::Error::new(Span::call_site(), "missing `states` field"))?,
-            state_storage,
-            hierarchy,
-            events: events.unwrap_or_default(),
-            callbacks,
-            lifecycle,
-            runtime_lifecycle,
-            final_states,
-            snapshot,
-            async_mode,
-            dynamic_mode,
+            state_storage: self.state_storage,
+            hierarchy: self.hierarchy,
+            events: self.events.unwrap_or_default(),
+            callbacks: self.callbacks,
+            lifecycle: self.lifecycle,
+            runtime_lifecycle: self.runtime_lifecycle,
+            final_states: self.final_states,
+            snapshot: self.snapshot,
+            async_mode: self.async_mode,
+            dynamic_mode: self.dynamic_mode,
             transition_graph: TransitionGraph::default(),
         };
 
@@ -194,6 +167,64 @@ impl Parse for StateMachine {
 
         Ok(machine)
     }
+}
+
+/// Implementation of `syn::Parse` for `StateMachine`.
+///
+/// This allows us to use `syn::parse_macro_input!(input as StateMachine)`
+/// to parse the entire macro input in one go.
+impl Parse for StateMachine {
+    fn parse(input: ParseStream<'_>) -> Result<Self> {
+        let mut fields = MachineFields::default();
+
+        // Parse each key-value pair in the macro input
+        while !input.is_empty() {
+            // Handle the special case of `async` keyword
+            if input.peek(Token![async]) {
+                let _: Token![async] = input.parse()?;
+                input.parse::<Token![:]>()?;
+                let value: syn::LitBool = input.parse()?;
+                fields.async_mode = value.value();
+            } else {
+                let key: Ident = input.parse()?;
+                fields.parse_field(&key, input)?;
+            }
+
+            skip_optional_comma(input)?;
+        }
+
+        fields.finish()
+    }
+}
+
+/// Parse the `lifecycle: { State { enter: [...], exit: [...], complete: [...] } ... }` block.
+fn parse_lifecycle(input: ParseStream<'_>) -> Result<Vec<StateLifecycle>> {
+    let mut lifecycle = Vec::new();
+    while !input.is_empty() {
+        let state = input.parse()?;
+        let block;
+        braced!(block in input);
+        let mut hooks = StateLifecycle {
+            state,
+            enter: Vec::new(),
+            exit: Vec::new(),
+            complete: Vec::new(),
+        };
+        while !block.is_empty() {
+            let key: Ident = block.parse()?;
+            block.parse::<Token![:]>()?;
+            match key.to_string().as_str() {
+                "enter" => hooks.enter = parse_ident_list_value(&block)?,
+                "exit" => hooks.exit = parse_ident_list_value(&block)?,
+                "complete" => hooks.complete = parse_ident_list_value(&block)?,
+                _ => return Err(unexpected_key(&key)),
+            }
+            skip_optional_comma(&block)?;
+        }
+        lifecycle.push(hooks);
+        skip_optional_comma(input)?;
+    }
+    Ok(lifecycle)
 }
 
 fn parse_runtime_lifecycle(input: ParseStream<'_>) -> Result<Vec<RuntimeLifecycle>> {
@@ -225,7 +256,7 @@ fn parse_runtime_lifecycle(input: ParseStream<'_>) -> Result<Vec<RuntimeLifecycl
                             deadline.parse::<Token![:]>()?;
                             match key.to_string().as_str() {
                                 "delay" => {
-                                    delay = Some(deadline.parse::<syn::LitInt>()?.base10_parse()?)
+                                    delay = Some(deadline.parse::<syn::LitInt>()?.base10_parse()?);
                                 }
                                 "event" => event = Some(deadline.parse()?),
                                 _ => return Err(unexpected_key(&key)),
@@ -745,17 +776,14 @@ fn skip_optional_comma(input: &ParseBuffer<'_>) -> Result<()> {
 
 /// Build the standard "unexpected key" error anchored at the key's span.
 fn unexpected_key(key: &Ident) -> syn::Error {
-    syn::Error::new(key.span(), format!("unexpected key `{}`", key))
+    syn::Error::new(key.span(), format!("unexpected key `{key}`"))
 }
 
 /// Like [`unexpected_key`], naming the enclosing block and the accepted keys.
 fn unexpected_key_in(key: &Ident, block: &str, expected: &str) -> syn::Error {
     syn::Error::new(
         key.span(),
-        format!(
-            "unexpected key `{}` in {} (expected {})",
-            key, block, expected
-        ),
+        format!("unexpected key `{key}` in {block} (expected {expected})"),
     )
 }
 
@@ -785,8 +813,8 @@ pub fn parse_ident_list(input: &ParseBuffer<'_>) -> Result<Vec<Ident>> {
 /// Parse a state set (either a single identifier or a bracketed list).
 ///
 /// Examples:
-/// - `StateA` -> vec![StateA]
-/// - `[StateA, StateB]` -> vec![StateA, StateB]
+/// - `StateA` -> vec![`StateA`]
+/// - `[StateA, StateB]` -> vec![`StateA`, `StateB`]
 pub fn parse_state_set(input: &ParseBuffer<'_>) -> Result<Vec<Ident>> {
     if input.peek(syn::token::Bracket) {
         let content;
@@ -799,7 +827,7 @@ pub fn parse_state_set(input: &ParseBuffer<'_>) -> Result<Vec<Ident>> {
 
 /// Parse an identifier list value (either a single identifier or a bracketed list).
 ///
-/// This is similar to parse_state_set but used for non-state lists
+/// This is similar to `parse_state_set` but used for non-state lists
 /// like guards, callbacks, etc.
 pub fn parse_ident_list_value(input: &ParseBuffer<'_>) -> Result<Vec<Ident>> {
     parse_state_set(input)
@@ -836,7 +864,7 @@ pub fn storage_field_ident(name: &Ident) -> Ident {
 impl StateMachine {
     /// Build the transition graph from the parsed events.
     ///
-    /// This populates the transition_graph field by extracting all
+    /// This populates the `transition_graph` field by extracting all
     /// transitions from events and creating edges in the graph.
     pub fn build_transition_graph(&mut self) {
         for event in &self.events {

@@ -10,6 +10,15 @@ use alloc::string::String;
 /// machine. Restoration after successful validation is infallible and inert.
 pub trait SnapshotMachine: Machine + Sized {
     type Snapshot;
+    /// Check the whole envelope before any part of it is consumed.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first [`SnapshotError`] found: `UnsupportedVersion` or
+    /// `WrongMachine` from the header, `UnknownState` for an undeclared leaf,
+    /// `InactiveData` for data attached to a state that is not active, or
+    /// `InvalidHistory` for a history record that names no valid leaf. Composed
+    /// machines validate their regions in order and surface the first failure.
     fn validate_snapshot(snapshot: &Self::Snapshot) -> Result<(), SnapshotError>;
     /// Capture a live machine; use `try_into_snapshot` if it may be poisoned.
     fn into_snapshot(self) -> Self::Snapshot;
@@ -18,6 +27,11 @@ pub trait SnapshotMachine: Machine + Sized {
     #[doc(hidden)]
     fn from_validated_snapshot(snapshot: Self::Snapshot, capacity: usize) -> Self;
 
+    /// Capture the machine unless it is poisoned.
+    ///
+    /// # Errors
+    ///
+    /// Returns the machine itself, untouched, when `is_poisoned()` is `true`.
     fn try_into_snapshot(self) -> Result<Self::Snapshot, Self> {
         if self.is_poisoned() {
             Err(self)
@@ -26,6 +40,11 @@ pub trait SnapshotMachine: Machine + Sized {
         }
     }
     /// Validation failure returns the entire original owned envelope.
+    ///
+    /// # Errors
+    ///
+    /// Returns the untouched `snapshot` together with the [`SnapshotError`]
+    /// reported by [`validate_snapshot`](Self::validate_snapshot).
     fn from_snapshot(
         snapshot: Self::Snapshot,
         capacity: usize,

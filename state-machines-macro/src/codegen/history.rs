@@ -96,9 +96,11 @@ pub fn condition_on(edge: &TransitionEdge, receiver: &TokenStream) -> TokenStrea
         return quote! { true };
     };
     let field = field(&choice.region);
-    let tests = choice.stored.iter().map(|index| match index {
-        Some(index) => quote! { #receiver.#field == Some(#index) },
-        None => quote! { #receiver.#field.is_none() },
+    let tests = choice.stored.iter().map(|index| {
+        index.map_or_else(
+            || quote! { #receiver.#field.is_none() },
+            |index| quote! { #receiver.#field == Some(#index) },
+        )
     });
     quote! { (false #( || #tests )*) }
 }

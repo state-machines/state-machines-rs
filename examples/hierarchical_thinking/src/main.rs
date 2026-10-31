@@ -6,9 +6,9 @@
 //! ## The Problem: Shared Transitions Across Related States
 //!
 //! Life support has multiple active modes:
-//! - O2Generation (producing oxygen)
-//! - CO2Scrubbing (removing carbon dioxide)
-//! - PressureRegulation (maintaining cabin pressure)
+//! - `O2Generation` (producing oxygen)
+//! - `CO2Scrubbing` (removing carbon dioxide)
+//! - `PressureRegulation` (maintaining cabin pressure)
 //!
 //! All three need a **common emergency shutdown** that works from ANY active mode.
 //! Without superstates, you'd need 3 separate shutdown transitions:
@@ -37,7 +37,7 @@
 //!
 //! ## Ruby Comparison
 //!
-//! Ruby's state_machines doesn't have formal superstate support. You'd use predicates:
+//! Ruby's `state_machines` doesn't have formal superstate support. You'd use predicates:
 //!
 //! ```ruby
 //! def life_support_active?
@@ -69,7 +69,7 @@
 //! ## Key Concepts Demonstrated
 //!
 //! 1. **Polymorphic Transitions** - Single transition works from multiple states
-//! 2. **SubstateOf Trait** - Compile-time marker for superstate membership
+//! 2. **`SubstateOf` Trait** - Compile-time marker for superstate membership
 //! 3. **Initial Substate** - Superstate transitions resolve to first declared child
 //! 4. **State Data Storage** - Each substate can have associated data
 //! 5. **When to Group States** - Shared transitions/behaviors indicate superstate
@@ -151,7 +151,7 @@
 //!
 //! **Realistic Scenario:**
 //! - Start offline (no power consumption)
-//! - Activate life support (enters first mode: O2Generation)
+//! - Activate life support (enters first mode: `O2Generation`)
 //! - Cycle through subsystem modes
 //! - Emergency shutdown works from ANY active mode
 
@@ -222,13 +222,13 @@ state_machine! {
 impl<C, S> LifeSupportSystem<C, S> {
     /// Display current operational status
     fn status(&self, state_name: &str) {
-        println!("  Status: {}", state_name);
+        println!("  Status: {state_name}");
     }
 }
 
 // State-specific implementations
 impl<C> LifeSupportSystem<C, O2Generation> {
-    /// Access O2 generation data (only available in O2Generation state)
+    /// Access O2 generation data (only available in `O2Generation` state)
     fn display_o2_status(&self) {
         let data = self.o2_generation_data().expect("initialized on entry");
         println!("  O2 Production: {:.1} L/min", data.production_rate);
@@ -243,7 +243,7 @@ impl<C> LifeSupportSystem<C, O2Generation> {
 }
 
 impl<C> LifeSupportSystem<C, CO2Scrubbing> {
-    /// Access CO2 scrubbing data (only available in CO2Scrubbing state)
+    /// Access CO2 scrubbing data (only available in `CO2Scrubbing` state)
     fn display_co2_status(&self) {
         let data = self.co2_scrubbing_data().expect("initialized on entry");
         println!("  CO2 Scrubbing Efficiency: {:.1}%", data.scrub_efficiency);
@@ -257,7 +257,7 @@ impl<C> LifeSupportSystem<C, CO2Scrubbing> {
 }
 
 impl<C> LifeSupportSystem<C, PressureRegulation> {
-    /// Access pressure data (only available in PressureRegulation state)
+    /// Access pressure data (only available in `PressureRegulation` state)
     fn display_pressure_status(&self) {
         let data = self
             .pressure_regulation_data()
@@ -276,7 +276,18 @@ fn main() {
     println!("=== Life Support System Hierarchy Demo ===\n");
     println!("This example demonstrates hierarchical states (superstates).\n");
 
-    // Demonstrate introspection with hierarchical states
+    print_schema();
+    let system = scenario_normal_operations();
+    scenario_polymorphic_deactivation(system);
+    scenario_emergency_shutdown();
+    explain_polymorphism();
+    print_takeaways();
+
+    statechart::run_demo();
+}
+
+/// Demonstrate introspection with hierarchical states.
+fn print_schema() {
     let schema = LifeSupportSystem::<(), Offline>::schema();
     println!("=== Machine Introspection (with Superstates) ===\n");
     println!("Machine: {}", schema.name);
@@ -292,8 +303,10 @@ fn main() {
     }
     println!("\nMermaid Diagram:");
     println!("{}", schema.to_mermaid());
+}
 
-    // Scenario 1: Activating life support and cycling through modes
+/// Scenario 1: activate life support and cycle through every mode.
+fn scenario_normal_operations() -> LifeSupportSystem<(), O2Generation> {
     println!("--- Scenario 1: Normal Operations ---");
 
     let system = LifeSupportSystem::new(());
@@ -330,8 +343,11 @@ fn main() {
     println!("✓ Transitioned: PressureRegulation → O2Generation");
     system.status("O2Generation (Active)");
     println!();
+    system
+}
 
-    // Scenario 2: Polymorphic deactivate (works from any LifeSupport substate)
+/// Scenario 2: polymorphic deactivate works from any `LifeSupport` substate.
+fn scenario_polymorphic_deactivation(system: LifeSupportSystem<(), O2Generation>) {
     println!("--- Scenario 2: Polymorphic Deactivation ---");
     println!("Current state: O2Generation");
     println!("Calling deactivate() - works because O2Generation ⊆ LifeSupport");
@@ -339,8 +355,10 @@ fn main() {
     let _system = system.deactivate().unwrap();
     println!("✓ Deactivated from O2Generation → Offline");
     println!("  Power consumption: 0 kW\n");
+}
 
-    // Scenario 3: Emergency shutdown from different substate
+/// Scenario 3: emergency shutdown from a different substate.
+fn scenario_emergency_shutdown() {
     println!("--- Scenario 3: Emergency Shutdown (Polymorphic) ---");
 
     let system = LifeSupportSystem::new(());
@@ -355,8 +373,10 @@ fn main() {
     let _system = system.emergency_shutdown().unwrap();
     println!("✓ Emergency shutdown from PressureRegulation → Offline");
     println!("  All systems safed\n");
+}
 
-    // Scenario 4: Demonstrate polymorphism
+/// Scenario 4: how the `SubstateOf` bound makes the polymorphism type-safe.
+fn explain_polymorphism() {
     println!("--- Scenario 4: Understanding Polymorphism ---");
     println!("The deactivate and emergency_shutdown events work from:");
     println!("  • O2Generation (substate of LifeSupport)");
@@ -374,7 +394,9 @@ fn main() {
     println!("Compiler ensures type safety:");
     println!("  system.deactivate()  // ✓ Works from any LifeSupport substate");
     println!("  // system.deactivate() // ✗ Won't compile from Offline state");
+}
 
+fn print_takeaways() {
     println!("\n=== Key Takeaways ===");
     println!("✓ Superstates group related states for shared transitions");
     println!("✓ Polymorphic transitions use SubstateOf<T> trait bounds");
@@ -402,6 +424,4 @@ fn main() {
     println!();
     println!("Similar to Rust trait bounds:");
     println!("  fn shutdown<S: SubstateOf<LifeSupport>>(system: System<S>)");
-
-    statechart::run_demo();
 }

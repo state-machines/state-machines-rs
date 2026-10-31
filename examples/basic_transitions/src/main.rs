@@ -5,7 +5,7 @@
 //!
 //! ## The Ruby Way (Mutation)
 //!
-//! In Ruby's state_machines, you mutate an object in place:
+//! In Ruby's `state_machines`, you mutate an object in place:
 //!
 //! ```ruby
 //! airlock = Airlock.new          # state: :pressurized
@@ -33,7 +33,7 @@
 //!
 //! 1. **Type Safety** - Invalid transitions become compiler errors
 //! 2. **Move Semantics** - Old state is consumed, can't be reused
-//! 3. **Zero Cost** - Types exist only at compile time (PhantomData)
+//! 3. **Zero Cost** - Types exist only at compile time (`PhantomData`)
 //! 4. **Explicit Errors** - Result type shows success/failure paths
 //!
 //! ## Caveats & Flow

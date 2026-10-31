@@ -19,7 +19,7 @@ state_machine! {
     }
 }
 impl<C, S> Region<C, S> {
-    fn own(&self, payload: &mut Resource) -> Data {
+    const fn own(&self, payload: &mut Resource) -> Data {
         Data(payload.0.take().unwrap())
     }
 }
@@ -168,7 +168,11 @@ mod invocation {
 #[cfg(feature = "async")]
 mod asynchronous {
     use super::*;
-    use std::{cell::RefCell, rc::Rc};
+    use std::{
+        cell::RefCell,
+        future::{Future, ready},
+        rc::Rc,
+    };
     type Log = Rc<RefCell<Vec<&'static str>>>;
     state_machine! {
         name: AsyncRegion, dynamic: true, async: true, context: Log, initial: Idle,
@@ -176,8 +180,9 @@ mod asynchronous {
         events { finish { payload: &'static str, transition: { from: Idle, to: Complete, before: [record] } } }
     }
     impl<S> AsyncRegion<S> {
-        async fn record(&self, payload: &&'static str) {
+        fn record(&self, payload: &&'static str) -> impl Future<Output = ()> {
             self.ctx.borrow_mut().push(*payload);
+            ready(())
         }
     }
     #[test]

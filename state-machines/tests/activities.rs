@@ -6,7 +6,7 @@ use state_machines::{
 use std::assert_matches;
 use std::{
     cell::{Cell, RefCell},
-    future::Future,
+    future::{Future, ready},
     pin::Pin,
     rc::Rc,
     sync::{
@@ -248,8 +248,8 @@ fn child_dispatch_failure_maps_to_exactly_one_error_event() {
         fn is_poisoned(&self) -> bool {
             false
         }
-        async fn dispatch(&mut self, _: ()) -> Result<(), Self::Error> {
-            Err("child error")
+        fn dispatch(&mut self, (): ()) -> impl Future<Output = Result<(), Self::Error>> {
+            ready(Err("child error"))
         }
     }
     let errors = Rc::new(Cell::new(0));
@@ -312,7 +312,9 @@ mod asynchronous {
         events { finish { transition: { from: Active, to: Finished, before: [effect] } } }
     }
     impl<C, S> AsyncChild<C, S> {
-        async fn effect(&self) {}
+        fn effect(&self) -> impl Future<Output = ()> {
+            ready(())
+        }
     }
     #[test]
     fn async_child_uses_the_same_invocation_contract() {

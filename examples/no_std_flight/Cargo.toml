@@ -1,9 +1,25 @@
 [package]
 name = "no_std_flight"
 version = "0.0.8"
-edition = "2021"
+edition = "2024"
 rust-version.workspace = true
 publish = false
 
 [dependencies]
 state-machines = { path = "../../state-machines", default-features = false }
+
+# Not `workspace = true`: Cargo forbids mixing inherited and local entries, and
+# dead_code_pub_in_binary must stay off this library (its unit-test harness is
+# a binary, so every `pub` item would look dead).
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+# Lints this codebase opts out of, with the reason:
+# - the local runtime and the methods generated for it are !Send by design; `runtime-send` is the Send flavour
+future_not_send = "allow"
+# - the macro invokes every callback as `self.hook()`, so a callback that needs nothing from the machine still takes `&self`
+unused_self = "allow"

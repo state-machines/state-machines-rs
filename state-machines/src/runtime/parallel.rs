@@ -82,16 +82,16 @@ impl<L: Machine, R: Machine> Parallel<L, R> {
             joins: VecDeque::new(),
         }
     }
-    pub fn left(&self) -> &L {
+    pub const fn left(&self) -> &L {
         &self.left
     }
-    pub fn right(&self) -> &R {
+    pub const fn right(&self) -> &R {
         &self.right
     }
-    pub fn left_mut(&mut self) -> &mut L {
+    pub const fn left_mut(&mut self) -> &mut L {
         &mut self.left
     }
-    pub fn right_mut(&mut self) -> &mut R {
+    pub const fn right_mut(&mut self) -> &mut R {
         &mut self.right
     }
     pub fn current_state(&self) -> (L::State, R::State) {
@@ -112,6 +112,14 @@ impl<L: Machine, R: Machine> Parallel<L, R> {
         self.joins.pop_front()
     }
 
+    /// Dispatch to both regions, left first; see [`handle`](Self::handle).
+    ///
+    /// # Errors
+    ///
+    /// [`ParallelError::Poisoned`] when either region is already poisoned,
+    /// [`ParallelError::Left`] when the left dispatch fails (the right event is
+    /// then dropped undispatched), or [`ParallelError::Right`] with
+    /// `left_committed: true` when the right dispatch fails after the left succeeded.
     pub async fn fork(
         &mut self,
         left: L::Event,
@@ -120,6 +128,14 @@ impl<L: Machine, R: Machine> Parallel<L, R> {
         self.handle(ParallelEvent::Both { left, right }).await
     }
 
+    /// Route one event to the left, the right, or both regions (left first).
+    ///
+    /// # Errors
+    ///
+    /// [`ParallelError::Poisoned`] when either region is already poisoned.
+    /// Otherwise the failing region's own error: [`ParallelError::Left`], or
+    /// [`ParallelError::Right`] whose `left_committed` is `true` only for a
+    /// [`ParallelEvent::Both`] whose left dispatch had already succeeded.
     pub async fn handle(
         &mut self,
         event: ParallelEvent<L::Event, R::Event>,

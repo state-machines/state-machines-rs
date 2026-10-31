@@ -63,7 +63,7 @@ impl<S> Wired<S> {
     fn own(&self, value: &mut String) -> Owned {
         Owned(std::mem::take(value))
     }
-    fn automatic(&self, ctx: &Log) -> bool {
+    const fn automatic(&self, ctx: &Log) -> bool {
         ctx.automatic
     }
 }

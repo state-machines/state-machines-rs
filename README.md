@@ -19,7 +19,7 @@ While learning Rust, I chose to port something familiar and widely used—so I c
 - **Ruby Parallels**: Familiar DSL syntax and callbacks make the transition smoother
 - **Production Ready**: Despite the educational focus, this is a fully functional state machine library with:
   - **Typestate pattern** for compile-time state safety
-  - **Zero-cost abstractions** using PhantomData
+  - **Zero-cost abstractions** using `PhantomData`
   - Guards and unless conditions
   - Before/after event callbacks
   - Sync and async support
@@ -53,7 +53,7 @@ While learning Rust, I chose to port something familiar and widely used—so I c
 
 **Type-safe** – Invalid transitions become compile errors, not runtime errors
 
-**Hierarchical States** – Superstates with polymorphic transitions via SubstateOf trait, and superstate data that lives for the whole region
+**Hierarchical States** – Superstates with polymorphic transitions via `SubstateOf` trait, and superstate data that lives for the whole region
 
 **Dynamic Dispatch** – Runtime event dispatch for event-driven systems (opt-in via feature flag or explicit config). Sync dynamic machines implement `DynamicMachine`, so generic code
 (for example a behavior-tree leaf) can read `state()` and call `handle()` on any of them.
@@ -140,12 +140,16 @@ gain optional, allocation-free history storage.
 Requires Rust 1.99 or newer. Development and CI use Rust 1.99.0
 (`mise install` sets up the pinned toolchain).
 
-Add to your `Cargo.toml`:
+Add the crate with `cargo add`, which picks the current release so nothing in
+your manifest goes stale:
 
-```toml
-[dependencies]
-state-machines = "0.21"
+```sh
+cargo add state-machines
 ```
+
+The crate has no required dependencies of its own. Enable the optional ones
+through features (below) and the facade re-exports them: `state_machines::serde`
+with `serde`, `state_machines::serde_json` with `std`.
 
 ### Basic Example
 
@@ -323,7 +327,7 @@ fn main() {
 
 **When to Use:**
 - **Embedded systems** – Hardware types known at compile time
-- **no_std environments** – Direct hardware register access
+- **`no_std` environments** – Direct hardware register access
 - **Fixed architectures** – Single deployment target
 - **Performance critical** – Compiler can optimize better
 
@@ -338,9 +342,8 @@ See `examples/guards_and_validation` for a complete example using concrete conte
 
 Async state machines are behind the `async` feature:
 
-```toml
-[dependencies]
-state-machines = { version = "0.21", features = ["async"] }
+```sh
+cargo add state-machines --features async
 ```
 
 The typestate pattern works seamlessly with async Rust:
@@ -549,10 +552,10 @@ fn main() {
 
 **Key Features:**
 
-- **Polymorphic Transitions**: Define transitions `from: Flight` that work from ANY substate (LaunchPrep, Launching)
+- **Polymorphic Transitions**: Define transitions `from: Flight` that work from ANY substate (`LaunchPrep`, Launching)
 - **Automatic Resolution**: `to: Flight` transitions resolve to the superstate's initial child state
 - **State Data Storage**: Each state with data gets optional-reference accessors like `launch_prep_data()` and `launching_data()`; constructors/restore may leave data absent
-- **SubstateOf Trait**: Generated trait implementations enable compile-time polymorphism
+- **`SubstateOf` Trait**: Generated trait implementations enable compile-time polymorphism
 - **Storage Lifecycle**: State data is automatically initialized on entry, cleared on exit
 
 **Under the Hood:**
@@ -600,7 +603,7 @@ Rust's typestate pattern makes this compile-time safe with zero runtime overhead
 
 ### Around Callbacks
 
-Around callbacks wrap transitions with **transaction-like semantics**, providing Before and AfterSuccess hooks that bracket the entire transition execution:
+Around callbacks wrap transitions with **transaction-like semantics**, providing Before and `AfterSuccess` hooks that bracket the entire transition execution:
 
 ```rust
 use state_machines::{state_machine, core::{AroundStage, AroundOutcome}};
@@ -656,7 +659,7 @@ fn main() {
 3. **Before callbacks** – Event-level before hooks
 4. **State transition** – Actual state change occurs
 5. **After callbacks** – Event-level after hooks
-6. **Around AfterSuccess** – Runs last, guaranteed to execute after successful transition
+6. **Around `AfterSuccess`** – Runs last, guaranteed to execute after successful transition
 
 **Aborting Transitions:**
 
@@ -797,7 +800,7 @@ state_machine! {
 }
 ```
 
-All Before stages run in order, then the transition, then all AfterSuccess stages.
+All Before stages run in order, then the transition, then all `AfterSuccess` stages.
 
 **Performance:**
 
@@ -851,9 +854,8 @@ state_machine! {
 ```
 
 **Option 2: Cargo feature flag (conditional compilation)**
-```toml
-[dependencies]
-state-machines = { version = "0.21", features = ["dynamic"] }
+```sh
+cargo add state-machines --features dynamic
 ```
 
 With the feature flag enabled, ALL state machines get dynamic dispatch without explicit `dynamic: true`.
@@ -1243,7 +1245,7 @@ impl CircuitBreaker {
 
 | Mode | Overhead | Safety | Use Case |
 |------|----------|--------|----------|
-| **Typestate** | Zero (PhantomData) | Compile-time | Known sequences |
+| **Typestate** | Zero (`PhantomData`) | Compile-time | Known sequences |
 | **Dynamic** | Enum match (~few ns) | Runtime | Event-driven |
 
 Dynamic mode adds minimal runtime overhead (enum discriminant check + match). For most applications, this is negligible compared to the actual business logic.
@@ -1259,7 +1261,7 @@ You're never forced to choose one over the other. Start with typestate for safet
 
 ---
 
-## Comparison to Ruby's state_machines
+## Comparison to Ruby's `state_machines`
 
 If you're coming from Ruby, here's how the concepts map:
 
@@ -1320,7 +1322,7 @@ fn main() {
 - **Typestate pattern**: Each state is encoded in the type system (`Vehicle<Parked>` vs `Vehicle<Idling>`)
 - **Move semantics**: Transitions consume the old state and return a new one
 - **Compile-time validation**: Can't call `ignite()` twice - second call won't compile!
-- **Zero overhead**: PhantomData optimizes away completely
+- **Zero overhead**: `PhantomData` optimizes away completely
 - **Explicit errors**: Guards return `Result<Machine<NewState>, (Machine<OldState>, GuardError)>`
 - **No mutation**: Callbacks take `&self`, not `&mut self` (machine is consumed by transition)
 
@@ -1361,7 +1363,7 @@ fn embedded_main() {
 # fn main() {} // For doctest
 ```
 
-- Disable default features: `state-machines = { version = "0.21", default-features = false }`
+- Disable default features: `cargo add state-machines --no-default-features`
 - The library uses no allocator - purely stack-based with zero-sized state markers
 - CI runs `cargo build --no-default-features` to prevent std regressions
 - See `examples/no_std_flight/` for a complete embedded example
@@ -1745,7 +1747,7 @@ Contributions are welcome! This is a learning project, so:
 
 Licensed under either of:
 
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0>)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
 
 at your option.

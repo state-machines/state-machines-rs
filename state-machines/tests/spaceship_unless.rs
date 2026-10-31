@@ -1,6 +1,3 @@
-#![allow(non_camel_case_types)]
-#![allow(non_snake_case)]
-
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -30,7 +27,7 @@ state_machine! {
 }
 
 impl<C, S> AirlockController<C, S> {
-    fn sealed(&self, _ctx: &C) -> bool {
+    const fn sealed(&self, _ctx: &C) -> bool {
         true
     }
     fn door_open(&self, _ctx: &C) -> bool {
@@ -42,9 +39,9 @@ impl<C, S> AirlockController<C, S> {
 fn unless_blocks_when_true() {
     let _guard = AIRLOCK_TEST_LOCK.lock().unwrap();
     AIRLOCK_OPEN.store(true, Ordering::SeqCst);
-    let _a = AirlockController::new(());
-    let err = _a.cycle().expect_err("unless should block when true");
-    let (_a, guard_err) = err;
+    let airlock = AirlockController::new(());
+    let err = airlock.cycle().expect_err("unless should block when true");
+    let (_airlock, guard_err) = err;
     assert_eq!(guard_err.guard, "door_open");
     assert_eq!(guard_err.event, "cycle");
 }
@@ -53,6 +50,6 @@ fn unless_blocks_when_true() {
 fn unless_allows_when_false() {
     let _guard = AIRLOCK_TEST_LOCK.lock().unwrap();
     AIRLOCK_OPEN.store(false, Ordering::SeqCst);
-    let _a = AirlockController::new(());
-    let _a = _a.cycle().expect("unless false allows cycling");
+    let airlock = AirlockController::new(());
+    let _cycled = airlock.cycle().expect("unless false allows cycling");
 }

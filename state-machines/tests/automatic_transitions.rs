@@ -23,7 +23,7 @@ impl<S> Automatic<S> {
         ctx.calls.set(ctx.calls.get() + 1);
         ctx.enabled
     }
-    fn effect(&self) -> Result<(), &'static str> {
+    const fn effect(&self) -> Result<(), &'static str> {
         if self.ctx.fail { Err("effect") } else { Ok(()) }
     }
 }
@@ -82,6 +82,7 @@ mod cycle {
 #[cfg(feature = "async")]
 mod asynchronous {
     use super::*;
+    use std::future::{Future, ready};
     state_machine! {
         name: AsyncAuto, dynamic: true, async: true, initial: Start,
         states: [Start, Middle, Done],
@@ -91,8 +92,8 @@ mod asynchronous {
         }
     }
     impl<C, S> AsyncAuto<C, S> {
-        async fn ready(&self, _ctx: &C) -> bool {
-            true
+        fn ready(&self, _ctx: &C) -> impl Future<Output = bool> {
+            ready(true)
         }
     }
     #[test]

@@ -7,14 +7,14 @@
 //! Then I shipped an early release, and Rust was like:
 //! "Congratulations, Citizen! Now you need to follow the rules of the land."
 //!
-//! And thus, this module was born, converting between PascalCase and snake_case
+//! And thus, this module was born, converting between `PascalCase` and `snake_case`
 //! so both the compiler and developers can live in harmony.
 
 use crate::types::StateMachine;
 use proc_macro2::{Ident, TokenStream as TokenStream2};
 use quote::{ToTokens, quote};
 
-/// Convert PascalCase or camelCase to snake_case.
+/// Convert `PascalCase` or camelCase to `snake_case`.
 ///
 /// Examples:
 /// - `Trip` → `trip`
@@ -22,8 +22,8 @@ use quote::{ToTokens, quote};
 /// - `HTTPRequest` → `http_request`
 /// - `XMLParser` → `xml_parser`
 ///
-/// This is used to generate snake_case method names from PascalCase event names,
-/// following Rust naming conventions while preserving event enum variants in PascalCase.
+/// This is used to generate `snake_case` method names from `PascalCase` event names,
+/// following Rust naming conventions while preserving event enum variants in `PascalCase`.
 pub fn to_snake_case(s: &str) -> String {
     let mut result = String::new();
     let chars: Vec<char> = s.chars().collect();
@@ -58,7 +58,7 @@ pub fn to_snake_case(s: &str) -> String {
     result
 }
 
-/// Create a snake_case identifier from a PascalCase identifier.
+/// Create a `snake_case` identifier from a `PascalCase` identifier.
 ///
 /// Preserves the original span for better error messages.
 pub fn to_snake_case_ident(ident: &Ident) -> Ident {
@@ -66,27 +66,26 @@ pub fn to_snake_case_ident(ident: &Ident) -> Ident {
     Ident::new(&snake, ident.span())
 }
 
-/// Convert snake_case to PascalCase.
+/// Convert `snake_case` to `PascalCase`.
 ///
 /// Examples:
 /// - `next` → `Next`
 /// - `enter_half_open` → `EnterHalfOpen`
 /// - `set_threshold` → `SetThreshold`
 ///
-/// This is used to generate PascalCase enum variants from snake_case event names.
+/// This is used to generate `PascalCase` enum variants from `snake_case` event names.
 pub fn to_pascal_case(s: &str) -> String {
     s.split('_')
         .map(|word| {
             let mut chars = word.chars();
-            match chars.next() {
-                None => String::new(),
-                Some(first) => first.to_uppercase().chain(chars).collect(),
-            }
+            chars.next().map_or_else(String::new, |first| {
+                first.to_uppercase().chain(chars).collect()
+            })
         })
         .collect()
 }
 
-/// The PascalCase event-enum variant for a snake_case event name.
+/// The `PascalCase` event-enum variant for a `snake_case` event name.
 pub fn event_pascal(event: &Ident) -> Ident {
     Ident::new(&to_pascal_case(&event.to_string()), event.span())
 }
@@ -102,16 +101,16 @@ pub fn ctx_generics(machine: &StateMachine) -> TokenStream2 {
 
 /// The type of the machine's `ctx` field: the concrete context, or `C`.
 pub fn ctx_ty(machine: &StateMachine) -> TokenStream2 {
-    match &machine.context {
-        Some(ctx) => quote! { #ctx },
-        None => quote! { C },
-    }
+    machine
+        .context
+        .as_ref()
+        .map_or_else(|| quote! { C }, |ctx| quote! { #ctx })
 }
 
 /// Public error type shared by fallible startup and consuming transitions.
 pub fn transition_error_ty(machine: &StateMachine) -> TokenStream2 {
-    machine.error.as_ref().map_or(
-        quote! { ::state_machines::core::GuardError },
+    machine.error.as_ref().map_or_else(
+        || quote! { ::state_machines::core::GuardError },
         |ty| quote! { ::state_machines::EventError<#ty> },
     )
 }

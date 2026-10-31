@@ -32,7 +32,7 @@ impl<S> Startup<S> {
             Ok(())
         }
     }
-    fn resource(&self, request: &mut Request) -> Resource {
+    const fn resource(&self, request: &mut Request) -> Resource {
         request.0.take().unwrap()
     }
 }
@@ -69,6 +69,7 @@ fn entry_moves_a_non_default_non_clone_resource() {
 #[cfg(feature = "async")]
 mod asynchronous {
     use super::*;
+    use std::future::{Future, ready};
     state_machine! {
         name: AsyncStartup, dynamic: true, async: true,
         initial: Initial, states: [Initial],
@@ -76,7 +77,9 @@ mod asynchronous {
         events { tick { transition: { from: Initial, internal: true } } }
     }
     impl<C, S> AsyncStartup<C, S> {
-        async fn enter(&self) {}
+        fn enter(&self) -> impl Future<Output = ()> {
+            ready(())
+        }
     }
     #[test]
     fn async_startup_works_in_both_modes() {

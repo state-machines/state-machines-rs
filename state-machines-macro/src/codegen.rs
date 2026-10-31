@@ -15,7 +15,7 @@ pub mod snapshot;
 pub mod typestate;
 pub mod utils;
 
-use crate::types::*;
+use crate::types::StateMachine;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::Result;
@@ -31,16 +31,16 @@ impl StateMachine {
         self.validate()?;
 
         // Always generate typestate-based machine
-        let typestate_code = typestate::generate_typestate_machine(self)?;
+        let typestate_code = typestate::generate_typestate_machine(self);
 
         // Generate Inspectable impl (gated on the linked facade's `inspect` feature)
-        let inspect_code = inspect::generate_inspectable_impl(self)?;
+        let inspect_code = inspect::generate_inspectable_impl(self);
 
         // Conditionally generate dynamic dispatch wrapper
         let should_generate_dynamic = self.dynamic_mode || cfg!(feature = "dynamic");
 
         if should_generate_dynamic {
-            let dynamic_code = dynamic::generate_dynamic_wrapper(self)?;
+            let dynamic_code = dynamic::generate_dynamic_wrapper(self);
             let snapshot_code = snapshot::generate(self);
             Ok(quote! {
                 #typestate_code

@@ -34,7 +34,7 @@ fn main() {
 
     // Events enabled from the current state (after guards/unless).
     let available = light.get_available_events();
-    println!("available: {:?}", available);
+    println!("available: {available:?}");
 
     let is_available = light.is_available_event(&available[0]);
     assert!(is_available);
@@ -49,7 +49,7 @@ fn main() {
     println!("ended at {}", light.current_state());
 
     let is_available = light.is_available_event(&TrafficLightEvent::Next);
-    println!("is_available: {:?}", is_available);
+    println!("is_available: {is_available:?}");
 
     pollster::block_on(timed::run_demo());
 }

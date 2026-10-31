@@ -1,6 +1,3 @@
-#![allow(non_camel_case_types)]
-#![allow(non_snake_case)]
-
 use state_machines::{
     core::{AroundOutcome, AroundStage},
     state_machine,
@@ -32,13 +29,12 @@ impl<C, S> Transaction<C, S> {
         match stage {
             AroundStage::Before => {
                 CALL_COUNT.fetch_add(1, Ordering::SeqCst);
-                AroundOutcome::Proceed
             }
             AroundStage::AfterSuccess => {
                 CALL_COUNT.fetch_add(10, Ordering::SeqCst);
-                AroundOutcome::Proceed
             }
         }
+        AroundOutcome::Proceed
     }
 }
 
@@ -92,21 +88,18 @@ fn around_callback_can_abort_at_before_stage() {
         }
     }
 
-    let machine = Guarded::new(());
     static FAILURE_COUNT: AtomicUsize = AtomicUsize::new(0);
+    let machine = Guarded::new(());
     let result = machine.advance();
 
     // Should have failed
     assert!(result.is_err());
-    let (machine, err) = result.unwrap_err();
+    // Machine is handed back alongside the error
+    let (_machine, err) = result.unwrap_err();
 
-    // Machine should be returned
     assert_eq!(err.guard, "abort_guard");
     assert_eq!(err.event, "advance");
     assert_eq!(FAILURE_COUNT.load(Ordering::SeqCst), 3);
-
-    // Can retry
-    let _machine = machine;
 }
 
 #[test]
@@ -140,14 +133,13 @@ fn around_callback_with_guards_and_callbacks() {
                 AroundStage::Before => {
                     // Should run first
                     assert_eq!(EXECUTION_ORDER.fetch_add(1, Ordering::SeqCst), 0);
-                    AroundOutcome::Proceed
                 }
                 AroundStage::AfterSuccess => {
                     // Should run last
                     assert_eq!(EXECUTION_ORDER.fetch_add(1, Ordering::SeqCst), 4);
-                    AroundOutcome::Proceed
                 }
             }
+            AroundOutcome::Proceed
         }
 
         fn before_cb(&self) {
@@ -193,26 +185,24 @@ fn multiple_around_callbacks() {
             match stage {
                 AroundStage::Before => {
                     FIRST.store(1, Ordering::SeqCst);
-                    AroundOutcome::Proceed
                 }
                 AroundStage::AfterSuccess => {
                     FIRST.store(2, Ordering::SeqCst);
-                    AroundOutcome::Proceed
                 }
             }
+            AroundOutcome::Proceed
         }
 
         fn second_wrapper(&self, stage: AroundStage) -> AroundOutcome<X> {
             match stage {
                 AroundStage::Before => {
                     SECOND.store(1, Ordering::SeqCst);
-                    AroundOutcome::Proceed
                 }
                 AroundStage::AfterSuccess => {
                     SECOND.store(2, Ordering::SeqCst);
-                    AroundOutcome::Proceed
                 }
             }
+            AroundOutcome::Proceed
         }
     }
 

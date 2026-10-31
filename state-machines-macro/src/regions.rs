@@ -10,7 +10,7 @@ use syn::{
 
 pub struct Regions {
     name: Ident,
-    regions: Vec<(Ident, Type)>,
+    members: Vec<(Ident, Type)>,
     events: Vec<Event>,
     snapshot: bool,
 }
@@ -77,7 +77,7 @@ impl Parse for Regions {
         let name = name.ok_or_else(|| input.error("missing machine name"))?;
         let result = Self {
             name,
-            regions,
+            members: regions,
             events,
             snapshot,
         };
@@ -118,7 +118,7 @@ impl Parse for Event {
 
 impl Regions {
     fn validate(&self) -> Result<()> {
-        if self.regions.len() < 2 {
+        if self.members.len() < 2 {
             return Err(syn::Error::new(
                 self.name.span(),
                 "orthogonal machines need at least two regions",
@@ -147,7 +147,7 @@ impl Regions {
         .into_iter()
         .map(String::from)
         .collect();
-        for (name, _) in &self.regions {
+        for (name, _) in &self.members {
             if name.to_string().starts_with("__sm_") {
                 return Err(syn::Error::new(
                     name.span(),
@@ -190,18 +190,18 @@ impl Regions {
 
     /// Right-associated binary composition supports any number of named regions.
     fn composition(&self, index: usize) -> TokenStream {
-        let ty = &self.regions[index].1;
+        let ty = &self.members[index].1;
         let left = quote! { ::state_machines::runtime::Region<#ty> };
-        if index + 1 == self.regions.len() {
+        if index + 1 == self.members.len() {
             return left;
         }
         let right = self.composition(index + 1);
         quote! { ::state_machines::runtime::Parallel<#left, #right> }
     }
     fn construct(&self, index: usize) -> TokenStream {
-        let name = &self.regions[index].0;
+        let name = &self.members[index].0;
         let left = quote! { ::state_machines::runtime::Region::new(#name, capacity) };
-        if index + 1 == self.regions.len() {
+        if index + 1 == self.members.len() {
             return left;
         }
         let right = self.construct(index + 1);
@@ -211,9 +211,9 @@ impl Regions {
         let left = event
             .routes
             .iter()
-            .find(|(name, _)| name == &self.regions[index].0)
+            .find(|(name, _)| name == &self.members[index].0)
             .map(|(_, expr)| quote! { #expr });
-        if index + 1 == self.regions.len() {
+        if index + 1 == self.members.len() {
             return left;
         }
         let right = self.route(event, index + 1);
@@ -245,19 +245,19 @@ impl Regions {
         for _ in 0..index {
             access = quote! { #access.#right };
         }
-        if index + 1 < self.regions.len() {
+        if index + 1 < self.members.len() {
             access = quote! { #access.#left };
         }
         access
     }
-    fn configuration(&self, value: TokenStream) -> TokenStream {
+    fn configuration(&self, value: &TokenStream) -> TokenStream {
         let config = format_ident!("{}State", self.name);
-        let fields = self.regions.iter().enumerate().map(|(index, (name, _))| {
+        let fields = self.members.iter().enumerate().map(|(index, (name, _))| {
             let mut value = value.clone();
             for _ in 0..index {
                 value = quote! { #value.1 };
             }
-            if index + 1 < self.regions.len() {
+            if index + 1 < self.members.len() {
                 value = quote! { #value.0 };
             }
             quote! { #name: #value }
@@ -268,8 +268,8 @@ impl Regions {
     fn split_regions(&self) -> TokenStream {
         let mut value = quote! { self.inner };
         let mut bindings = TokenStream::new();
-        for (index, (name, _)) in self.regions.iter().enumerate() {
-            if index + 1 == self.regions.len() {
+        for (index, (name, _)) in self.members.iter().enumerate() {
+            if index + 1 == self.members.len() {
                 bindings.extend(quote! { let #name = #value; });
             } else {
                 let rest = format_ident!("__sm_regions_{}", index);
@@ -287,21 +287,21 @@ impl Regions {
         let name = &self.name;
         let snapshot = format_ident!("{}Snapshot", name);
         let machine = name.to_string();
-        let fields = self.regions.iter().map(|(name, ty)| {
+        let fields = self.members.iter().map(|(name, ty)| {
             quote! {
                 pub #name: <#ty as ::state_machines::runtime::SnapshotMachine>::Snapshot
             }
         });
-        let names: Vec<_> = self.regions.iter().map(|(name, _)| name).collect();
+        let names: Vec<_> = self.members.iter().map(|(name, _)| name).collect();
         let captures = names.iter().map(|name| {
             quote! {
                 #name: ::state_machines::runtime::SnapshotMachine::into_snapshot(#name)
             }
         });
-        let validates = self.regions.iter().map(|(name, ty)| quote! {
+        let validates = self.members.iter().map(|(name, ty)| quote! {
             <#ty as ::state_machines::runtime::SnapshotMachine>::validate_snapshot(&snapshot.#name)?;
         });
-        let restores = self.regions.iter().map(|(name, ty)| quote! {
+        let restores = self.members.iter().map(|(name, ty)| quote! {
             <#ty as ::state_machines::runtime::SnapshotMachine>::from_validated_snapshot(snapshot.#name, capacity)
         });
         quote! {
@@ -347,36 +347,101 @@ impl Regions {
         }
     }
 
-    pub fn expand(&self) -> TokenStream {
-        let name = &self.name;
-        let event_name = format_ident!("{}Event", name);
-        let config = format_ident!("{}State", name);
-        let error = format_ident!("{}Error", name);
-        let inner = self.composition(0);
-        let construct = self.construct(0);
-        let split = self.split_regions();
-        let snapshots = self.snapshots();
-        let region_types = self.regions.iter().map(|(_, ty)| ty);
-        let region_values = self
-            .regions
-            .iter()
-            .map(|(name, _)| quote! { #name.into_machine() });
-        let parameters = self.regions.iter().map(|(name, ty)| quote! { #name: #ty });
-        let config_fields = self.regions.iter().map(
-            |(name, ty)| quote! { pub #name: <#ty as ::state_machines::runtime::Machine>::State },
-        );
+    /// The event enum routed into the regions, one variant per declared event.
+    fn event_enum(&self) -> TokenStream {
+        let event_name = format_ident!("{}Event", self.name);
         let variants = self.events.iter().map(|event| {
             let variant = format_ident!("{}", to_pascal_case(&event.name.to_string()));
             let payload = event.payload.as_ref().map(|ty| quote! { (#ty) });
             quote! { #variant #payload }
         });
+        quote! {
+            // Variant names are the user's event names; a shared prefix is their call.
+            #[allow(clippy::enum_variant_names)]
+            #[derive(Debug)]
+            pub enum #event_name { #(#variants,)* }
+        }
+    }
+
+    /// The `{Name}State` configuration struct: one field per region's state.
+    fn config_struct(&self) -> TokenStream {
+        let config = format_ident!("{}State", self.name);
+        let config_fields = self.members.iter().map(
+            |(name, ty)| quote! { pub #name: <#ty as ::state_machines::runtime::Machine>::State },
+        );
+        quote! {
+            #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+            pub struct #config { #(#config_fields,)* }
+        }
+    }
+
+    /// `handle`: route each event variant into the composed parallel machine.
+    fn handle_method(&self) -> TokenStream {
+        let event_name = format_ident!("{}Event", self.name);
+        let error = format_ident!("{}Error", self.name);
         let handlers = self.events.iter().map(|event| {
             let variant = format_ident!("{}", to_pascal_case(&event.name.to_string()));
             let pattern = event.payload.as_ref().map(|_| quote! { (payload) });
             let route = self.route(event, 0).expect("validated nonempty routes");
             quote! { #event_name::#variant #pattern => self.inner.handle(#route).await }
         });
-        let accessors = self.regions.iter().enumerate().map(|(index, (name, ty))| {
+        quote! {
+            // An event-less composition matches an empty enum: nothing to await.
+            #[allow(clippy::unused_async, clippy::unused_async_trait_impl)]
+            pub async fn handle(&mut self, event: #event_name) -> Result<(), #error> {
+                match event { #(#handlers,)* }
+            }
+        }
+    }
+
+    /// `schema()`, compiled only when the linked facade enables `inspect`.
+    fn schema_method(&self) -> TokenStream {
+        let name_str = self.name.to_string();
+        let region_metadata = self.members.iter().map(|(name, ty)| {
+            let name = name.to_string();
+            let ty = quote! { #ty }.to_string();
+            quote! { ::state_machines::RegionSchema { name: #name.into(), machine: #ty.into() } }
+        });
+        let event_metadata = self.events.iter().map(|event| {
+            let name = event.name.to_string();
+            let payload = event.payload.as_ref().map_or_else(
+                || quote! { None },
+                |ty| {
+                    let value = quote! { #ty }.to_string();
+                    quote! { Some(#value.into()) }
+                },
+            );
+            let routes = event.routes.iter().map(|(region, _)| region.to_string());
+            quote! { ::state_machines::RegionEventSchema { name: #name.into(), payload: #payload,
+            regions: ::state_machines::__private::vec![#(#routes.into()),*] } }
+        });
+        quote! {
+            ::state_machines::__sm_if_inspect! {
+                pub fn schema() -> ::state_machines::MachineSchema {
+                    ::state_machines::MachineSchema { name: #name_str.into(),
+                        regions: ::state_machines::__private::vec![#(#region_metadata,)*],
+                        region_events: ::state_machines::__private::vec![#(#event_metadata,)*],
+                        ..::core::default::Default::default()
+                    }
+                }
+            }
+        }
+    }
+
+    /// The inherent API: construction, region accessors, dispatch and driving.
+    fn inherent_impl(&self) -> TokenStream {
+        let name = &self.name;
+        let config = format_ident!("{}State", name);
+        let error = format_ident!("{}Error", name);
+        let construct = self.construct(0);
+        let split = self.split_regions();
+        let region_types = self.members.iter().map(|(_, ty)| ty);
+        let region_values = self
+            .members
+            .iter()
+            .map(|(name, _)| quote! { #name.into_machine() });
+        let parameters = self.members.iter().map(|(name, ty)| quote! { #name: #ty });
+        let accessors = self.members.iter().enumerate().map(|(index, (name, ty))| {
             let mutable = format_ident!("{}_mut", name);
             let get = self.access(index, false);
             let get_mut = self.access(index, true);
@@ -385,7 +450,51 @@ impl Regions {
                 pub fn #mutable(&mut self) -> &mut ::state_machines::runtime::Region<#ty> { #get_mut }
             }
         });
-        let scope_arms = self.regions.iter().enumerate().map(|(index, (region, _))| {
+        let current = self.configuration(&quote! { state });
+        let join = self.configuration(&quote! { state });
+        let handle = self.handle_method();
+        let schema = self.schema_method();
+        quote! {
+            impl #name {
+                pub fn new(#(#parameters,)* capacity: usize) -> Self { Self { inner: #construct } }
+                pub fn into_regions(self) -> (#(#region_types,)*) {
+                    #split
+                    (#(#region_values,)*)
+                }
+                #(#accessors)*
+                pub fn current_state(&self) -> #config {
+                    let state = self.inner.current_state(); #current
+                }
+                pub fn is_finished(&self) -> bool { self.inner.is_finished() }
+                pub fn is_poisoned(&self) -> bool { self.inner.is_poisoned() }
+                pub fn take_join(&mut self) -> Option<#config> {
+                    self.inner.take_join().map(|state| #join)
+                }
+                #handle
+                pub fn start(&mut self, clock: &impl ::state_machines::runtime::Clock) -> Result<(), #error> {
+                    ::state_machines::runtime::Machine::start_regions(&mut self.inner, clock)
+                }
+                pub fn tick(&mut self, clock: &impl ::state_machines::runtime::Clock) -> Result<(), #error> {
+                    ::state_machines::runtime::Machine::tick_regions(&mut self.inner, clock)
+                }
+                pub fn poll_activities(&mut self, cx: &mut ::core::task::Context<'_>) -> usize {
+                    ::state_machines::runtime::Machine::poll_regions(&mut self.inner, cx)
+                }
+                pub async fn drain(&mut self, max_steps: usize) -> Result<usize, #error> {
+                    ::state_machines::runtime::Machine::drive_regions(&mut self.inner, max_steps).await
+                }
+                #schema
+            }
+        }
+    }
+
+    /// The `runtime::Machine` impl delegating to the inherent API.
+    fn machine_impl(&self) -> TokenStream {
+        let name = &self.name;
+        let event_name = format_ident!("{}Event", name);
+        let config = format_ident!("{}State", name);
+        let error = format_ident!("{}Error", name);
+        let scope_arms = self.members.iter().enumerate().map(|(index, (region, _))| {
             let region = region.to_string();
             let get = self.access(index, false);
             quote! {
@@ -394,93 +503,46 @@ impl Regions {
                     ::state_machines::runtime::Machine::scope_epoch(#get, nested),
             }
         });
-        let current = self.configuration(quote! { state });
-        let join = self.configuration(quote! { state });
-        let name_str = name.to_string();
-        let region_metadata = self.regions.iter().map(|(name, ty)| {
-            let name = name.to_string();
-            let ty = quote! { #ty }.to_string();
-            quote! { ::state_machines::RegionSchema { name: #name.into(), machine: #ty.into() } }
-        });
-        let event_metadata = self.events.iter().map(|event| {
-            let name = event.name.to_string();
-            let payload = event.payload.as_ref().map_or(quote! { None }, |ty| {
-                let value = quote! { #ty }.to_string();
-                quote! { Some(#value.into()) }
-            });
-            let routes = event.routes.iter().map(|(region, _)| region.to_string());
-            quote! { ::state_machines::RegionEventSchema { name: #name.into(), payload: #payload,
-            regions: ::state_machines::__private::vec![#(#routes.into()),*] } }
-        });
+        quote! {
+            impl ::state_machines::runtime::Machine for #name {
+                type Event = #event_name;
+                type Error = #error;
+                type State = #config;
+                fn state(&self) -> Self::State { self.current_state() }
+                fn epoch(&self) -> u64 { ::state_machines::runtime::Machine::epoch(&self.inner) }
+                fn scope_epoch(&self, scope: &str) -> Option<u64> {
+                    if self.is_poisoned() { return None; }
+                    match scope { #(#scope_arms)* _ => None }
+                }
+                fn is_finished(&self) -> bool { self.is_finished() }
+                fn is_poisoned(&self) -> bool { self.is_poisoned() }
+                async fn dispatch(&mut self, event: Self::Event) -> Result<(), Self::Error> { self.handle(event).await }
+                fn start_regions(&mut self, clock: &impl ::state_machines::runtime::Clock) -> Result<(), Self::Error> { self.start(clock) }
+                fn tick_regions(&mut self, clock: &impl ::state_machines::runtime::Clock) -> Result<(), Self::Error> { self.tick(clock) }
+                fn poll_regions(&mut self, cx: &mut ::core::task::Context<'_>) -> usize { self.poll_activities(cx) }
+                async fn drive_regions(&mut self, max_steps: usize) -> Result<usize, Self::Error> { self.drain(max_steps).await }
+            }
+        }
+    }
+
+    pub fn expand(&self) -> TokenStream {
+        let name = &self.name;
+        let error = format_ident!("{}Error", name);
+        let inner = self.composition(0);
+        let event_enum = self.event_enum();
+        let config_struct = self.config_struct();
+        let inherent_impl = self.inherent_impl();
+        let machine_impl = self.machine_impl();
+        let snapshots = self.snapshots();
         quote! {
             ::state_machines::__sm_require_runtime!();
             ::state_machines::__sm_if_runtime! {
-                #[derive(Debug)]
-                pub enum #event_name { #(#variants,)* }
-                #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-                pub struct #config { #(#config_fields,)* }
+                #event_enum
+                #config_struct
                 pub type #error = <#inner as ::state_machines::runtime::Machine>::Error;
                 pub struct #name { inner: #inner }
-                impl #name {
-                    pub fn new(#(#parameters,)* capacity: usize) -> Self { Self { inner: #construct } }
-                    pub fn into_regions(self) -> (#(#region_types,)*) {
-                        #split
-                        (#(#region_values,)*)
-                    }
-                    #(#accessors)*
-                    pub fn current_state(&self) -> #config {
-                        let state = self.inner.current_state(); #current
-                    }
-                    pub fn is_finished(&self) -> bool { self.inner.is_finished() }
-                    pub fn is_poisoned(&self) -> bool { self.inner.is_poisoned() }
-                    pub fn take_join(&mut self) -> Option<#config> {
-                        self.inner.take_join().map(|state| #join)
-                    }
-                    // An event-less composition matches an empty enum: nothing to await.
-                    #[allow(clippy::unused_async, clippy::unused_async_trait_impl)]
-                    pub async fn handle(&mut self, event: #event_name) -> Result<(), #error> {
-                        match event { #(#handlers,)* }
-                    }
-                    pub fn start(&mut self, clock: &impl ::state_machines::runtime::Clock) -> Result<(), #error> {
-                        ::state_machines::runtime::Machine::start_regions(&mut self.inner, clock)
-                    }
-                    pub fn tick(&mut self, clock: &impl ::state_machines::runtime::Clock) -> Result<(), #error> {
-                        ::state_machines::runtime::Machine::tick_regions(&mut self.inner, clock)
-                    }
-                    pub fn poll_activities(&mut self, cx: &mut ::core::task::Context<'_>) -> usize {
-                        ::state_machines::runtime::Machine::poll_regions(&mut self.inner, cx)
-                    }
-                    pub async fn drain(&mut self, max_steps: usize) -> Result<usize, #error> {
-                        ::state_machines::runtime::Machine::drive_regions(&mut self.inner, max_steps).await
-                    }
-                    ::state_machines::__sm_if_inspect! {
-                        pub fn schema() -> ::state_machines::MachineSchema {
-                            ::state_machines::MachineSchema { name: #name_str.into(),
-                                regions: ::state_machines::__private::vec![#(#region_metadata,)*],
-                                region_events: ::state_machines::__private::vec![#(#event_metadata,)*],
-                                ..::core::default::Default::default()
-                            }
-                        }
-                    }
-                }
-                impl ::state_machines::runtime::Machine for #name {
-                    type Event = #event_name;
-                    type Error = #error;
-                    type State = #config;
-                    fn state(&self) -> Self::State { self.current_state() }
-                    fn epoch(&self) -> u64 { ::state_machines::runtime::Machine::epoch(&self.inner) }
-                    fn scope_epoch(&self, scope: &str) -> Option<u64> {
-                        if self.is_poisoned() { return None; }
-                        match scope { #(#scope_arms)* _ => None }
-                    }
-                    fn is_finished(&self) -> bool { self.is_finished() }
-                    fn is_poisoned(&self) -> bool { self.is_poisoned() }
-                    async fn dispatch(&mut self, event: Self::Event) -> Result<(), Self::Error> { self.handle(event).await }
-                    fn start_regions(&mut self, clock: &impl ::state_machines::runtime::Clock) -> Result<(), Self::Error> { self.start(clock) }
-                    fn tick_regions(&mut self, clock: &impl ::state_machines::runtime::Clock) -> Result<(), Self::Error> { self.tick(clock) }
-                    fn poll_regions(&mut self, cx: &mut ::core::task::Context<'_>) -> usize { self.poll_activities(cx) }
-                    async fn drive_regions(&mut self, max_steps: usize) -> Result<usize, Self::Error> { self.drain(max_steps).await }
-                }
+                #inherent_impl
+                #machine_impl
                 #snapshots
             }
         }

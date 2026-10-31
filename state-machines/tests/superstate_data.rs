@@ -1,6 +1,3 @@
-#![allow(non_camel_case_types)]
-#![allow(non_snake_case)]
-
 use state_machines::state_machine;
 use std::sync::atomic::{AtomicBool, Ordering};
 

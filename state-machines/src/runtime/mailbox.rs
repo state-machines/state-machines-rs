@@ -11,7 +11,7 @@ cfg_select! {
             Arc::new(Mutex::new(value))
         }
         fn shared<T>(inner: &Inner<T>) -> Ref<'_, T> {
-            inner.lock().unwrap_or_else(|error| error.into_inner())
+            inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
         }
         fn exclusive<T>(inner: &Inner<T>) -> RefMut<'_, T> {
             shared(inner)

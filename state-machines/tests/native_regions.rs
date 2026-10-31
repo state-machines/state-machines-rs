@@ -19,7 +19,7 @@ state_machine! {
     }
 }
 impl<S> WorkerRegion<S> {
-    fn make_timeout(&self) -> WorkerRegionEvent {
+    const fn make_timeout(&self) -> WorkerRegionEvent {
         WorkerRegionEvent::Timeout
     }
     fn record(&self, payload: &Owned) {
@@ -111,7 +111,10 @@ fn native_owned_fork_and_named_configuration_join_once() {
             schema.region_events[0].regions,
             ["observer", "primary", "backup"]
         );
-        assert!(schema.validate().is_empty());
+        assert_eq!(
+            schema.validate(),
+            [] as [state_machines::SchemaDiagnostic; 0]
+        );
         assert!(schema.to_mermaid().contains("--"));
     }
 }

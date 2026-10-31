@@ -10,3 +10,6 @@ state-machines = { path = "../../state-machines", features = ["dynamic", "runtim
 pollster.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+[lints]
+workspace = true

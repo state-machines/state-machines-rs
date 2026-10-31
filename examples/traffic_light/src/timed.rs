@@ -43,10 +43,10 @@ state_machine! {
     }
 }
 impl<S> Intersection<S> {
-    fn close_window(&self) -> IntersectionEvent {
+    const fn close_window(&self) -> IntersectionEvent {
         IntersectionEvent::Maintenance
     }
-    fn next_color(&self) -> IntersectionEvent {
+    const fn next_color(&self) -> IntersectionEvent {
         IntersectionEvent::Next
     }
     fn record_crossing(&self, request: &CrossingRequest) {

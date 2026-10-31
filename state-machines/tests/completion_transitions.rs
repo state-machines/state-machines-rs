@@ -105,13 +105,17 @@ mod unary {
                 .as_deref(),
             Some("Outer")
         );
-        assert!(schema.validate().is_empty());
+        assert_eq!(
+            schema.validate(),
+            [] as [state_machines::SchemaDiagnostic; 0]
+        );
     }
 }
 
 #[cfg(feature = "async")]
 mod asynchronous {
     use super::*;
+    use std::future::{Future, ready};
     state_machine! {
         name: AsyncCompletion, dynamic: true, async: true, context: bool, initial: Work,
         states: [superstate Parent { state Work, state Done }, Next],
@@ -122,8 +126,8 @@ mod asynchronous {
         }
     }
     impl<S> AsyncCompletion<S> {
-        async fn approved(&self, ctx: &bool) -> bool {
-            *ctx
+        fn approved(&self, ctx: &bool) -> impl Future<Output = bool> {
+            ready(*ctx)
         }
     }
     #[test]

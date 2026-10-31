@@ -1,6 +1,3 @@
-#![allow(non_camel_case_types)]
-#![allow(non_snake_case)]
-
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use state_machines::state_machine;
@@ -56,10 +53,10 @@ impl<C, S> CargoBay<C, S> {
     fn record_failure(&self, _error: &state_machines::core::GuardError) {
         FAILURES.fetch_add(1, Ordering::SeqCst);
     }
-    fn nonempty(&self, _ctx: &C, cargo: &Cargo) -> bool {
+    const fn nonempty(&self, _ctx: &C, cargo: &Cargo) -> bool {
         cargo.mass_kg > 0
     }
-    fn heavy(&self, _ctx: &C, cargo: &Cargo) -> bool {
+    const fn heavy(&self, _ctx: &C, cargo: &Cargo) -> bool {
         cargo.mass_kg >= 2000
     }
     fn fits_once(&self, ctx: &C, cargo: &Cargo) -> bool {
@@ -74,7 +71,7 @@ impl<C, S> CargoBay<C, S> {
         ALARM_ACTIVE.load(Ordering::SeqCst)
     }
 
-    fn cargo_fits(&self, _ctx: &C, cargo: &Cargo) -> bool {
+    const fn cargo_fits(&self, _ctx: &C, cargo: &Cargo) -> bool {
         cargo.mass_kg <= 1000
     }
 }

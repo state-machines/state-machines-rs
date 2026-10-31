@@ -21,7 +21,7 @@
 //!
 //! ## Ruby Comparison
 //!
-//! Ruby's state_machines has similar hooks:
+//! Ruby's `state_machines` has similar hooks:
 //!
 //! ```ruby
 //! state_machine :engine do
@@ -53,7 +53,7 @@
 //!
 //! ## Key Concepts Demonstrated
 //!
-//! 1. **Execution Order** - Around Before → Guards → Before → Transition → After → Around AfterSuccess
+//! 1. **Execution Order** - Around Before → Guards → Before → Transition → After → Around `AfterSuccess`
 //! 2. **Around Callbacks** - Transaction-like semantics, can abort transitions
 //! 3. **Multiple Callbacks** - All execute in order
 //! 4. **State Access** - Callbacks receive `&self` (read-only)
@@ -101,7 +101,7 @@
 //! }
 //! ```
 //!
-//! Abort at Before stage prevents transition. AfterSuccess only runs if transition succeeds.
+//! Abort at Before stage prevents transition. `AfterSuccess` only runs if transition succeeds.
 //!
 //! ### Caveat 4: Callback Execution Order is Fixed
 //!
@@ -232,12 +232,12 @@ impl<C, S> RocketEngine<C, S> {
         match stage {
             AroundStage::Before => {
                 let ts = timestamp();
-                println!("[{}] Around::Before - Opening fuel valve...", ts);
+                println!("[{ts}] Around::Before - Opening fuel valve...");
 
                 FuelSystem::open_valve();
 
                 if !FuelSystem::is_valve_open() {
-                    println!("[{}] Around::Before - Valve failed to open! ABORTING", ts);
+                    println!("[{ts}] Around::Before - Valve failed to open! ABORTING");
                     return AroundOutcome::Abort(TransitionError::guard_failed(
                         Idle,
                         "ignite",
@@ -245,18 +245,14 @@ impl<C, S> RocketEngine<C, S> {
                     ));
                 }
 
-                println!("[{}] Around::Before - Valve open, proceeding...", ts);
-                AroundOutcome::Proceed
+                println!("[{ts}] Around::Before - Valve open, proceeding...");
             }
             AroundStage::AfterSuccess => {
                 let ts = timestamp();
-                println!(
-                    "[{}] Around::AfterSuccess - Transition complete, valve locked open",
-                    ts
-                );
-                AroundOutcome::Proceed
+                println!("[{ts}] Around::AfterSuccess - Transition complete, valve locked open");
             }
         }
+        AroundOutcome::Proceed
     }
 
     // === BEFORE CALLBACKS ===
@@ -266,36 +262,33 @@ impl<C, S> RocketEngine<C, S> {
     fn check_fuel_pressure(&self) {
         let ts = timestamp();
         let pressure = FuelSystem::get_pressure();
-        println!(
-            "[{}] Before::check_fuel_pressure - Pressure: {} PSI",
-            ts, pressure
-        );
+        println!("[{ts}] Before::check_fuel_pressure - Pressure: {pressure} PSI");
 
         if pressure < 100 {
-            println!("[{}]   ⚠️  Warning: Pressure below optimal (100 PSI)", ts);
+            println!("[{ts}]   ⚠️  Warning: Pressure below optimal (100 PSI)");
         } else {
-            println!("[{}]   ✓ Pressure nominal", ts);
+            println!("[{ts}]   ✓ Pressure nominal");
         }
     }
 
     /// Before callback: Pre-ignition checks
     fn pre_ignition_checks(&self) {
         let ts = timestamp();
-        println!("[{}] Before::pre_ignition_checks - Running diagnostics", ts);
-        println!("[{}]   ✓ Spark plug ready", ts);
-        println!("[{}]   ✓ Injector system ready", ts);
-        println!("[{}]   ✓ Telemetry active", ts);
+        println!("[{ts}] Before::pre_ignition_checks - Running diagnostics");
+        println!("[{ts}]   ✓ Spark plug ready");
+        println!("[{ts}]   ✓ Injector system ready");
+        println!("[{ts}]   ✓ Telemetry active");
     }
 
     /// Before callback: Verify valve is open
     fn verify_valve_open(&self) {
         let ts = timestamp();
-        println!("[{}] Before::verify_valve_open - Checking valve status", ts);
+        println!("[{ts}] Before::verify_valve_open - Checking valve status");
 
         if FuelSystem::is_valve_open() {
-            println!("[{}]   ✓ Valve confirmed open", ts);
+            println!("[{ts}]   ✓ Valve confirmed open");
         } else {
-            println!("[{}]   ✗ ERROR: Valve not open!", ts);
+            println!("[{ts}]   ✗ ERROR: Valve not open!");
         }
     }
 
@@ -305,43 +298,40 @@ impl<C, S> RocketEngine<C, S> {
     /// After callback: Log armed status
     fn log_armed_status(&self) {
         let ts = timestamp();
-        println!("[{}] After::log_armed_status - Engine now ARMED", ts);
-        println!("[{}]   Logging to telemetry database...", ts);
+        println!("[{ts}] After::log_armed_status - Engine now ARMED");
+        println!("[{ts}]   Logging to telemetry database...");
     }
 
     /// After callback: Send telemetry
     fn send_telemetry(&self) {
         let ts = timestamp();
-        println!(
-            "[{}] After::send_telemetry - Broadcasting status update",
-            ts
-        );
-        println!("[{}]   → Mission Control: Engine armed", ts);
-        println!("[{}]   → Onboard computer: Ready for ignition", ts);
+        println!("[{ts}] After::send_telemetry - Broadcasting status update");
+        println!("[{ts}]   → Mission Control: Engine armed");
+        println!("[{ts}]   → Onboard computer: Ready for ignition");
     }
 
     /// After callback: Log ignition
     fn log_ignition(&self) {
         let ts = timestamp();
-        println!("[{}] After::log_ignition - IGNITION SEQUENCE STARTED", ts);
-        println!("[{}]   Fuel flow: ACTIVE", ts);
-        println!("[{}]   Combustion: INITIATED", ts);
+        println!("[{ts}] After::log_ignition - IGNITION SEQUENCE STARTED");
+        println!("[{ts}]   Fuel flow: ACTIVE");
+        println!("[{ts}]   Combustion: INITIATED");
     }
 
     /// After callback: Log thrust
     fn log_thrust(&self) {
         let ts = timestamp();
-        println!("[{}] After::log_thrust - FULL THRUST ACHIEVED", ts);
-        println!("[{}]   Throttle: 100%", ts);
-        println!("[{}]   Vector: Nominal", ts);
+        println!("[{ts}] After::log_thrust - FULL THRUST ACHIEVED");
+        println!("[{ts}]   Throttle: 100%");
+        println!("[{ts}]   Vector: Nominal");
     }
 
     /// After callback: Emergency shutdown
     fn emergency_shutdown(&self) {
         let ts = timestamp();
-        println!("[{}] After::emergency_shutdown - EMERGENCY ABORT", ts);
+        println!("[{ts}] After::emergency_shutdown - EMERGENCY ABORT");
         FuelSystem::close_valve();
-        println!("[{}]   System safed", ts);
+        println!("[{ts}]   System safed");
     }
 }
 

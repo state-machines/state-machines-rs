@@ -8,3 +8,6 @@ publish = false
 [dependencies]
 state-machines = { path = "../../state-machines", features = ["async", "runtime"] }
 pollster.workspace = true
+
+[lints]
+workspace = true

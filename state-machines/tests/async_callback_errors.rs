@@ -1,10 +1,11 @@
 #![cfg(feature = "async")]
-#![allow(non_camel_case_types)]
-#![allow(non_snake_case)]
 
-use std::sync::{
-    Mutex,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    future::{Future, ready},
+    sync::{
+        Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use pollster::block_on;
@@ -46,35 +47,37 @@ state_machine! {
 }
 
 impl<C, S> AuthRecovery<C, S> {
-    async fn choose_done(&self, _ctx: &C) -> bool {
-        CHOOSE_DONE.load(Ordering::SeqCst)
+    fn choose_done(&self, _ctx: &C) -> impl Future<Output = bool> {
+        ready(CHOOSE_DONE.load(Ordering::SeqCst))
     }
-    async fn notify(&self) {
+    fn notify(&self) -> impl Future<Output = ()> {
         COMPLETED.store(true, Ordering::SeqCst);
+        ready(())
     }
-    async fn recover(&self, error: &EventError<AuthError>) {
+    fn recover(&self, error: &EventError<AuthError>) -> impl Future<Output = ()> {
         let EventError::Callback(error) = error else {
             panic!("expected callback failure");
         };
         ERRORS.lock().unwrap().push(error.action);
+        ready(())
     }
 
-    async fn refresh_token(&self) -> Result<(), AuthError> {
+    fn refresh_token(&self) -> impl Future<Output = Result<(), AuthError>> {
         BEFORE_CALLED.store(true, Ordering::SeqCst);
-        if BEFORE_FAILS.load(Ordering::SeqCst) {
+        ready(if BEFORE_FAILS.load(Ordering::SeqCst) {
             Err(AuthError::Network)
         } else {
             Ok(())
-        }
+        })
     }
 
-    async fn record_completion(&self) -> Result<(), AuthError> {
+    fn record_completion(&self) -> impl Future<Output = Result<(), AuthError>> {
         AFTER_CALLED.store(true, Ordering::SeqCst);
-        if AFTER_FAILS.load(Ordering::SeqCst) {
+        ready(if AFTER_FAILS.load(Ordering::SeqCst) {
             Err(AuthError::Audit)
         } else {
             Ok(())
-        }
+        })
     }
 }
 
@@ -108,7 +111,7 @@ fn async_before_callback_failure_returns_source_machine() {
                 assert_eq!(err.event, "refresh");
                 assert_eq!(err.source, AuthError::Network);
             }
-            other => panic!("expected callback error, got {other:?}"),
+            EventError::Guard(other) => panic!("expected callback error, got {other:?}"),
         }
 
         assert!(BEFORE_CALLED.load(Ordering::SeqCst));
@@ -145,7 +148,7 @@ fn async_after_callback_failure_rolls_back_transition() {
                 assert_eq!(err.event, "refresh");
                 assert_eq!(err.source, AuthError::Audit);
             }
-            other => panic!("expected callback error, got {other:?}"),
+            EventError::Guard(other) => panic!("expected callback error, got {other:?}"),
         }
 
         assert!(BEFORE_CALLED.load(Ordering::SeqCst));

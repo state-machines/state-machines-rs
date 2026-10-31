@@ -106,6 +106,16 @@ pub use state_machines_core::{
 };
 pub use state_machines_macro::state_machine;
 
+/// The `serde` the snapshot and schema types derive against. Derive your own
+/// payload types against it with `#[serde(crate = "state_machines::serde")]`
+/// and you need no `serde` entry of your own.
+#[cfg(feature = "serde")]
+pub use serde;
+/// The `serde_json` behind `MachineSchema::to_json`, for parsing schemas and
+/// snapshots back without a dependency of your own.
+#[cfg(feature = "std")]
+pub use state_machines_core::serde_json;
+
 #[cfg(feature = "inspect")]
 pub use state_machines_core::{
     DeadlineSchema, DiagnosticLevel, EventSchema, Inspectable, MachineSchema, RegionEventSchema,

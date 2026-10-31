@@ -34,7 +34,7 @@ impl<S> Persistent<S> {
     fn own(&self, payload: &mut String) -> Data {
         Data(std::mem::take(payload))
     }
-    fn make_ping(&self) -> PersistentEvent {
+    const fn make_ping(&self) -> PersistentEvent {
         PersistentEvent::Ping
     }
 }

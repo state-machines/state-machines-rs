@@ -79,7 +79,7 @@
 //! Dynamic routing moves payloads. `Clone` is not required; rejected dispatch
 //! consumes the attempted event rather than returning its payload.
 //!
-//! ### Caveat 4: current_state() Returns a Runtime State Enum
+//! ### Caveat 4: `current_state()` Returns a Runtime State Enum
 //!
 //! ```rust,ignore
 //! let state: ComputerState = dynamic.current_state();
@@ -213,7 +213,7 @@ state_machine! {
 }
 
 impl<C, S> SpacecraftComputer<C, S> {
-    fn own_command(&self, command: &mut Command) -> QueuedCommand {
+    const fn own_command(&self, command: &mut Command) -> QueuedCommand {
         QueuedCommand(Some(std::mem::replace(
             command,
             Command {
@@ -228,7 +228,17 @@ fn main() {
     println!("=== Spacecraft Computer Command System Demo ===\n");
     println!("This example demonstrates when to use dynamic vs typestate.\n");
 
-    // === PATTERN 1: Typestate for Known Sequence ===
+    let computer = demo_typestate_boot();
+    let mut computer = demo_dynamic_event_loop(computer);
+    demo_runtime_error(&mut computer);
+    demo_hybrid_extraction(computer);
+    print_decision_guide();
+
+    pollster::block_on(regions::run_demo());
+}
+
+/// Pattern 1: typestate for a sequence that is known at compile time.
+fn demo_typestate_boot() -> SpacecraftComputer<(), Active> {
     println!("--- Pattern 1: Typestate Boot Sequence ---");
     println!("Use typestate when sequence is known at compile time:\n");
 
@@ -242,8 +252,13 @@ fn main() {
     // computer.boot().unwrap();  // ✗ Error: no method named `boot` found
 
     println!("✓ Typestate prevents invalid transitions at compile time\n");
+    computer
+}
 
-    // === PATTERN 2: Dynamic for Runtime Events ===
+/// Pattern 2: dynamic dispatch for commands that arrive at runtime.
+fn demo_dynamic_event_loop(
+    computer: SpacecraftComputer<(), Active>,
+) -> DynamicSpacecraftComputer<()> {
     println!("--- Pattern 2: Dynamic Event Loop ---");
     println!("Use dynamic when events come from external sources:\n");
 
@@ -268,22 +283,25 @@ fn main() {
 
     println!("Processing incoming commands...\n");
     for (source, event) in commands {
-        print!("[{}] Sending command: {:?} → ", source, event);
+        print!("[{source}] Sending command: {event:?} → ");
 
         match computer.handle(event) {
             Ok(()) => {
                 println!("Success (state: {})", computer.current_state());
             }
             Err(e) => {
-                println!("Failed: {:?}", e);
+                println!("Failed: {e:?}");
             }
         }
     }
 
     println!("\n✓ Dynamic mode allows runtime command dispatch");
     println!("  Current state: {}\n", computer.current_state());
+    computer
+}
 
-    // === PATTERN 3: Invalid Transition (Runtime Error) ===
+/// Pattern 3: dynamic mode turns invalid transitions into runtime errors.
+fn demo_runtime_error(computer: &mut DynamicSpacecraftComputer<()>) {
     println!("--- Pattern 3: Dynamic Mode Runtime Errors ---");
     println!("Dynamic mode allows invalid transitions to compile:\n");
 
@@ -292,15 +310,17 @@ fn main() {
         Ok(()) => println!("✗ ERROR: Should have failed!"),
         Err(DynamicError::InvalidTransition { from, event }) => {
             println!("✓ Runtime error caught:");
-            println!("  Cannot '{}' from '{}' state", event, from);
+            println!("  Cannot '{event}' from '{from}' state");
             println!("  Machine remains in: {}", computer.current_state());
         }
-        Err(e) => println!("✗ Unexpected error: {:?}", e),
+        Err(e) => println!("✗ Unexpected error: {e:?}"),
     }
 
     println!("\n✓ Invalid transitions fail at runtime (not compile time)\n");
+}
 
-    // === PATTERN 4: Hybrid - Back to Typestate for Safety ===
+/// Pattern 4: extract the typestate again for safety-critical operations.
+fn demo_hybrid_extraction(computer: DynamicSpacecraftComputer<()>) {
     println!("--- Pattern 4: Hybrid Pattern (Critical Operations) ---");
     println!("Extract typestate for safety-critical operations:\n");
 
@@ -324,8 +344,9 @@ fn main() {
             println!("  Cannot extract as Active");
         }
     }
+}
 
-    // === DECISION GUIDE ===
+fn print_decision_guide() {
     println!("\n\n=== Decision Guide: When to Use Which ===");
     println!("\nUse TYPESTATE when:");
     println!("  ✓ Sequence known at compile time (boot → init → ready)");
@@ -376,6 +397,4 @@ fn main() {
     println!("✓ Invalid transitions: compile error (typestate) vs runtime error (dynamic)");
     println!("✓ Use hybrid pattern for best of both worlds");
     println!("✓ Decision based on whether event sequence is known at compile time");
-
-    pollster::block_on(regions::run_demo());
 }

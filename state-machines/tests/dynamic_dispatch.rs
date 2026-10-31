@@ -1,6 +1,3 @@
-#![allow(non_camel_case_types)]
-#![allow(non_snake_case)]
-
 use state_machines::state_machine;
 
 state_machine! {
@@ -446,8 +443,8 @@ state_machine! {
 
 #[cfg(feature = "async")]
 impl<C, S> AsyncGuardedAvailability<C, S> {
-    async fn is_allowed(&self, _ctx: &C) -> bool {
-        ASYNC_IS_ALLOWED.load(Ordering::SeqCst)
+    fn is_allowed(&self, _ctx: &C) -> impl std::future::Future<Output = bool> {
+        std::future::ready(ASYNC_IS_ALLOWED.load(Ordering::SeqCst))
     }
 }
 

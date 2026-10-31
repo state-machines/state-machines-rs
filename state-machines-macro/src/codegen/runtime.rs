@@ -43,11 +43,10 @@ pub fn generate(machine: &StateMachine) -> (TokenStream, TokenStream, TokenStrea
                     }
                 }
             });
-            rules.push(if let Some(delay) = delay {
-                quote! { ::state_machines::runtime::LifecycleRule::After { scope: #scope, delay: #delay, event: Self::#method } }
-            } else {
-                quote! { ::state_machines::runtime::LifecycleRule::Invoke { scope: #scope, start: Self::#method } }
-            });
+            rules.push(delay.map_or_else(
+                || quote! { ::state_machines::runtime::LifecycleRule::Invoke { scope: #scope, start: Self::#method } },
+                |delay| quote! { ::state_machines::runtime::LifecycleRule::After { scope: #scope, delay: #delay, event: Self::#method } },
+            ));
         }
         for deferred in &declaration.defer {
             let variant = super::utils::event_pascal(deferred);

@@ -61,6 +61,14 @@ type TimerReservation<S> = (TimerId, Visit<S>, u64);
 impl<M: Machine> Runner<M> {
     /// Reserve capacity and bind a timeout to the current leaf visit.
     /// Internal transitions preserve it; any external transition cancels it.
+    ///
+    /// # Errors
+    ///
+    /// The event is handed back inside the [`ScheduleError`] variant that names the reason:
+    /// `Poisoned` when the machine is poisoned, `InactiveScope` when the leaf visit
+    /// cannot be captured, `Backwards` when `clock.now()` is earlier than the last
+    /// observed time, `Overflow` when `now + delay` or the timer id counter would wrap,
+    /// or `Full` when no mailbox slot is free for the timeout.
     pub fn schedule_after(
         &mut self,
         clock: &impl Clock,
@@ -69,6 +77,15 @@ impl<M: Machine> Runner<M> {
     ) -> Result<TimerId, ScheduleError<M::Event>> {
         self.schedule_after_in(WorkScope::Leaf, clock, delay, event)
     }
+    /// Like [`schedule_after`](Self::schedule_after), bound to `scope` instead of the leaf.
+    ///
+    /// # Errors
+    ///
+    /// The event is handed back inside the [`ScheduleError`] variant that names the reason:
+    /// `Poisoned` when the machine is poisoned, `InactiveScope` when `scope` is not
+    /// currently active, `Backwards` when `clock.now()` is earlier than the last
+    /// observed time, `Overflow` when `now + delay` or the timer id counter would wrap,
+    /// or `Full` when no mailbox slot is free for the timeout.
     pub fn schedule_after_in(
         &mut self,
         scope: WorkScope,
@@ -128,6 +145,11 @@ impl<M: Machine> Runner<M> {
 
     /// Move due timers to the external FIFO. Call this from the host's clock driver.
     /// A backwards clock is rejected without delivering any timers.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClockError::Backwards`] when `clock.now()` is earlier than the
+    /// time observed by the previous `tick`, `start`, or schedule call.
     pub fn tick(&mut self, clock: &impl Clock) -> Result<usize, ClockError> {
         let now = clock.now();
         if self.last_time.is_some_and(|last| now < last) {
@@ -135,34 +157,35 @@ impl<M: Machine> Runner<M> {
         }
         self.last_time = Some(now);
         self.reconcile_work();
+        // Timer ids are unique, so ordering by (deadline, id) is total.
         let mut due: Vec<_> = self
             .timers
             .entries
             .iter()
             .enumerate()
-            .filter(|(_, entry)| {
+            .filter_map(|(index, entry)| {
                 entry
                     .pending
                     .as_ref()
-                    .is_some_and(|timer| timer.deadline <= now)
+                    .filter(|timer| timer.deadline <= now)
+                    .map(|timer| (timer.deadline, entry.id.0, index))
             })
-            .map(|(index, _)| index)
             .collect();
-        due.sort_by_key(|index| {
-            let entry = &self.timers.entries[*index];
-            let timer = entry.pending.as_ref().expect("due timers are pending");
-            (timer.deadline, entry.id.0)
-        });
-        let count = due.len();
+        due.sort_unstable();
+        let mut count = 0;
         let waker = {
             let mut inbox = self.sink.inbox.borrow_mut();
-            for index in due {
+            for (_, _, index) in due {
                 let entry = &mut self.timers.entries[index];
+                let Some(timer) = entry.pending.take() else {
+                    continue;
+                };
                 inbox.external.push_back(Envelope {
-                    event: entry.pending.take().expect("due timers are pending").event,
+                    event: timer.event,
                     timer: Some(entry.id),
                     activity: None,
                 });
+                count += 1;
             }
             if count > 0 { inbox.waker.take() } else { None }
         };

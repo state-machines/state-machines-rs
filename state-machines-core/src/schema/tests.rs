@@ -104,12 +104,12 @@ fn graph_validation() {
     schema.events[0].transitions.push(duplicate);
     schema.events[1].transitions[0].target = "Missing".into();
     schema.initial = "Missing".into();
-    let errors: Vec<_> = schema
+    let errors = schema
         .validate()
         .into_iter()
         .filter(|d| d.level == DiagnosticLevel::Error)
-        .collect();
-    assert_eq!(errors.len(), 3);
+        .count();
+    assert_eq!(errors, 3);
 }
 
 #[test]

@@ -28,6 +28,7 @@ pub use lifecycle::{ActivityFuture, LifecycleRule, SetupError, SetupFailure};
 use work::{Registry, Visit};
 
 /// Implemented by generated dynamic machines when the facade's runtime feature is enabled.
+///
 /// Implementers must advance `epoch` on every committed external transition, even
 /// self-re-entry or a commit followed by a failed automatic step. Internal edges
 /// must retain it. State/epoch must not change through shared references.
@@ -42,6 +43,7 @@ pub trait Machine: RuntimeValue {
     fn scope_epoch(&self, _scope: &str) -> Option<u64> {
         None
     }
+    #[must_use]
     fn runtime_rules() -> Vec<LifecycleRule<Self>>
     where
         Self: Sized,
@@ -68,9 +70,22 @@ pub trait Machine: RuntimeValue {
     }
     /// Host-driven lifecycle operations for composed regions. Ordinary machines
     /// use their enclosing Runner; compositions forward these to region runners.
+    ///
+    /// # Errors
+    ///
+    /// The default never fails. Compositions surface the first region runner
+    /// whose `start` was rejected (a poisoned region, a backwards clock, or a
+    /// failed entry setup), wrapped in their own `Error`.
     fn start_regions(&mut self, _clock: &impl Clock) -> Result<(), Self::Error> {
         Ok(())
     }
+    /// Advance the clock of every composed region runner.
+    ///
+    /// # Errors
+    ///
+    /// The default never fails. Compositions surface the first region runner
+    /// whose `tick` was rejected because `clock.now()` moved backwards,
+    /// wrapped in their own `Error`.
     fn tick_regions(&mut self, _clock: &impl Clock) -> Result<(), Self::Error> {
         Ok(())
     }
@@ -121,7 +136,7 @@ struct Inbox<E> {
     waker: Option<Waker>,
 }
 impl<E> Inbox<E> {
-    fn reserve(&mut self) -> bool {
+    const fn reserve(&mut self) -> bool {
         if self.closed || self.pending == self.capacity {
             return false;
         }
@@ -193,13 +208,28 @@ impl<E> EventSink<E> {
         }
         Ok(())
     }
+    /// Queue an external event behind every event already queued.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueueError::Closed`] once the owning [`Runner`] was dropped,
+    /// and [`QueueError::Full`] when every mailbox slot is taken; the event is
+    /// handed back inside the error either way.
     pub fn enqueue(&self, event: E) -> Result<(), QueueError<E>> {
         self.push(event, false)
     }
+    /// Queue an internal event ahead of all external events.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueueError::Closed`] once the owning [`Runner`] was dropped,
+    /// and [`QueueError::Full`] when every mailbox slot is taken; the event is
+    /// handed back inside the error either way.
     pub fn raise(&self, event: E) -> Result<(), QueueError<E>> {
         self.push(event, true)
     }
     /// Includes deferred events, not the currently executing event.
+    #[must_use]
     pub fn pending(&self) -> usize {
         self.inbox.borrow().pending
     }
@@ -264,8 +294,9 @@ struct Deferral<S, E> {
 /// Explicit FIFO deferral rules override dispatch while their scope is active.
 /// Internal raised events precede external events; recalled events retain FIFO order.
 pub struct Runner<M: Machine> {
-    machine: Option<M>,
-    sink: EventSink<M::Event>,
+    // Declared first so the mailbox closes before the machine drops.
+    sink: Mailbox<M::Event>,
+    machine: M,
     rules: Vec<Deferral<M::State, M::Event>>,
     deferred: VecDeque<(usize, Envelope<M::Event>)>,
     timers: Registry<TimerId, M::State, timers::Timeout<M::Event>>,
@@ -289,8 +320,8 @@ impl<M: Machine> Runner<M> {
             })
             .collect();
         Self {
-            machine: Some(machine),
-            sink: EventSink::new(capacity),
+            sink: Mailbox(EventSink::new(capacity)),
+            machine,
             rules,
             deferred: VecDeque::new(),
             timers: Registry::new(),
@@ -304,18 +335,32 @@ impl<M: Machine> Runner<M> {
                 .collect(),
         }
     }
-    pub fn machine(&self) -> &M {
-        self.machine.as_ref().expect("runner owns its machine")
+    pub const fn machine(&self) -> &M {
+        &self.machine
     }
-    fn machine_mut(&mut self) -> &mut M {
-        self.machine.as_mut().expect("runner owns its machine")
+    const fn machine_mut(&mut self) -> &mut M {
+        &mut self.machine
     }
     pub fn sink(&self) -> EventSink<M::Event> {
         self.sink.clone()
     }
+    /// Queue an external event; see [`EventSink::enqueue`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueueError::Full`] when every mailbox slot is taken. The
+    /// runner's own mailbox is never closed, so [`QueueError::Closed`] cannot
+    /// occur here.
     pub fn enqueue(&self, event: M::Event) -> Result<(), QueueError<M::Event>> {
         self.sink.enqueue(event)
     }
+    /// Queue an internal event; see [`EventSink::raise`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueueError::Full`] when every mailbox slot is taken. The
+    /// runner's own mailbox is never closed, so [`QueueError::Closed`] cannot
+    /// occur here.
     pub fn raise(&self, event: M::Event) -> Result<(), QueueError<M::Event>> {
         self.sink.raise(event)
     }
@@ -347,7 +392,7 @@ impl<M: Machine> Runner<M> {
         });
     }
     fn reconcile_work(&mut self) {
-        let machine = self.machine.as_ref().expect("runner owns its machine");
+        let machine = &self.machine;
         let released = self.timers.reconcile(machine) + self.activities.reconcile(machine);
         self.release(released);
     }
@@ -358,12 +403,11 @@ impl<M: Machine> Runner<M> {
         inbox.pending = inbox.pending.strict_sub(count);
     }
     fn apply_cancellation(&self, result: Option<bool>) -> bool {
-        if let Some(pending) = result {
-            self.release(usize::from(pending));
-            true
-        } else {
-            false
-        }
+        let Some(pending) = result else {
+            return false;
+        };
+        self.release(usize::from(pending));
+        true
     }
     fn live_delivery(&self, event: &Envelope<M::Event>) -> bool {
         event.timer.is_none_or(|id| self.timers.contains(id))
@@ -391,7 +435,22 @@ impl<M: Machine> Runner<M> {
         while let Some(event) = recalled.pop_back() {
             inbox.external.push_front(event);
         }
+        drop(inbox);
     }
+    /// Dispatch queued events until the mailbox is empty or `max_steps` were consumed.
+    /// Every popped envelope counts as a step, including skipped cancelled work.
+    ///
+    /// # Errors
+    ///
+    /// - [`RunError::Poisoned`] when the machine is poisoned before or after a step.
+    /// - [`RunError::Setup`] when a declarative entry rule cannot be armed
+    ///   (no clock observed yet, scheduling rejected, or the activity reservation failed).
+    /// - [`RunError::Dispatch`] with the machine's own error when `dispatch_one` or
+    ///   an automatic microstep fails; the mailbox keeps the remaining events.
+    /// - [`RunError::AutomaticStepLimit`] when automatic transitions are still
+    ///   enabled after 64 microsteps.
+    /// - [`RunError::StepLimit`] when `max_steps` events were consumed and more
+    ///   are still queued.
     pub async fn drain(&mut self, max_steps: usize) -> Result<usize, RunError<M::Error>> {
         // Explicit driving (not construction/restore) settles the initial
         // configuration even without an external event. Reuse the same bounded
@@ -404,23 +463,21 @@ impl<M: Machine> Runner<M> {
                 core::task::Poll::Ready(())
             })
             .await;
-            let runnable = {
-                let inbox = self.sink.inbox.borrow();
-                !inbox.internal.is_empty() || !inbox.external.is_empty()
-            };
-            if !runnable {
-                return Ok(steps);
-            }
-            if steps == max_steps {
-                return Err(RunError::StepLimit { limit: max_steps });
-            }
-            let event = {
+            let next = {
                 let mut inbox = self.sink.inbox.borrow_mut();
-                inbox
-                    .internal
-                    .pop_front()
-                    .or_else(|| inbox.external.pop_front())
-                    .expect("runnable inbox holds an event")
+                if inbox.internal.is_empty() && inbox.external.is_empty() {
+                    None
+                } else if steps == max_steps {
+                    return Err(RunError::StepLimit { limit: max_steps });
+                } else {
+                    inbox
+                        .internal
+                        .pop_front()
+                        .or_else(|| inbox.external.pop_front())
+                }
+            };
+            let Some(event) = next else {
+                return Ok(steps);
             };
             if !self.live_delivery(&event) {
                 self.release(1);
@@ -452,6 +509,16 @@ impl<M: Machine> Runner<M> {
         }
     }
     /// Entry setup surrounds every automatic microstep, including transient scopes.
+    ///
+    /// # Errors
+    ///
+    /// - [`RunError::Poisoned`] when the machine is poisoned on entry.
+    /// - [`RunError::Setup`] when a declarative entry rule cannot be armed
+    ///   (no clock observed yet, scheduling rejected, or the activity reservation failed).
+    /// - [`RunError::Dispatch`] with the machine's own error when an automatic
+    ///   microstep fails.
+    /// - [`RunError::AutomaticStepLimit`] when `max_steps` microsteps ran and the
+    ///   machine still reports an enabled automatic transition.
     pub async fn stabilize(&mut self, max_steps: usize) -> Result<usize, RunError<M::Error>> {
         self.reconcile_work();
         self.recall();
@@ -480,14 +547,24 @@ impl<M: Machine> Runner<M> {
         }
     }
     /// Extracting the machine closes the mailbox and discards runner-only queues.
-    pub fn into_machine(mut self) -> M {
-        self.machine.take().expect("runner owns its machine")
+    pub fn into_machine(self) -> M {
+        self.machine
     }
 }
-impl<M: Machine> Drop for Runner<M> {
+
+/// The runner's owning mailbox handle: closing it is what makes every cloned
+/// [`EventSink`] report [`QueueError::Closed`] once the runner is gone.
+struct Mailbox<E>(EventSink<E>);
+impl<E> core::ops::Deref for Mailbox<E> {
+    type Target = EventSink<E>;
+    fn deref(&self) -> &EventSink<E> {
+        &self.0
+    }
+}
+impl<E> Drop for Mailbox<E> {
     fn drop(&mut self) {
         let (waker, internal, external) = {
-            let mut inbox = self.sink.inbox.borrow_mut();
+            let mut inbox = self.0.inbox.borrow_mut();
             inbox.closed = true;
             inbox.pending = 0;
             (

@@ -2,19 +2,121 @@
 //! A budget prevents unbounded automatic cycles without poisoning committed state.
 use super::utils::{maybe_async, maybe_await};
 use crate::types::StateMachine;
-use proc_macro2::TokenStream;
+use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
+
+/// One `__sm_automatic_step` match arm per leaf state: try each enabled
+/// automatic edge in declaration order, committing the first that succeeds.
+fn automatic_step_arms(
+    machine: &StateMachine,
+    any: &Ident,
+    await_: &TokenStream,
+    map_error: &TokenStream,
+) -> Vec<TokenStream> {
+    machine
+        .states
+        .iter()
+        .map(|source| {
+            let groups = super::branching::groups(machine, source);
+            let selections = groups.iter().filter_map(|edges| {
+                let event = machine.event(&edges[0].event);
+                if !event.automatic {
+                    return None;
+                }
+                let event_enabled = super::branching::condition_on(
+                    machine,
+                    &event.hooks,
+                    &quote! {},
+                    &quote! { current },
+                );
+                let choices = edges.iter().enumerate().map(|(index, edge)| {
+                    let enabled = super::branching::condition_on(
+                        machine,
+                        &edge.selection,
+                        &quote! {},
+                        &quote! { current },
+                    );
+                    let history = super::history::condition_on(edge, &quote! { current });
+                    let helper = if edges.len() > 1 {
+                        format_ident!("__sm_{}_{}", event.name, index)
+                    } else {
+                        format_ident!("__sm_auto_{}", event.name)
+                    };
+                    let target = &edge.target;
+                    let commit = super::scopes::commit(machine, source, edge);
+                    quote! {
+                        if #history && (#enabled) {
+                            match current.#helper() #await_ {
+                                Ok(machine) => {
+                                    let previous_epoch = self.epoch;
+                                    #commit
+                                    let next = #any::#target(machine);
+                                    self.last_state = next.state();
+                                    self.inner = Some(next);
+                                    if record { self.__sm_record_completions(previous_epoch); }
+                                    return Ok(true);
+                                }
+                                Err((machine, error)) => {
+                                    self.inner = Some(#any::#source(machine));
+                                    return Err(#map_error);
+                                }
+                            }
+                        }
+                    }
+                });
+                Some(quote! { if #event_enabled { #( #choices )* } })
+            });
+            quote! {
+                #any::#source(current) => {
+                    #( #selections )*
+                    self.inner = Some(#any::#source(current));
+                    Ok(false)
+                }
+            }
+        })
+        .collect()
+}
+
+/// One `__sm_has_automatic` match arm per leaf state: `true` when any
+/// automatic event's `can_*` predicate holds there.
+fn automatic_available_arms(
+    machine: &StateMachine,
+    any: &Ident,
+    await_: &TokenStream,
+) -> Vec<TokenStream> {
+    machine
+        .states
+        .iter()
+        .map(|state| {
+            let checks = super::branching::groups(machine, state)
+                .iter()
+                .filter_map(|edges| {
+                    let event = machine.event(&edges[0].event);
+                    event.automatic.then(|| {
+                        let can = format_ident!("can_{}", event.name);
+                        quote! { current.#can() #await_ }
+                    })
+                })
+                .collect::<Vec<_>>();
+            if checks.is_empty() {
+                quote! { #any::#state(_) => false }
+            } else {
+                quote! { #any::#state(current) => false #( || #checks )* }
+            }
+        })
+        .collect()
+}
 
 pub fn dynamic_methods(machine: &StateMachine) -> TokenStream {
     let any = format_ident!("Any{}State", machine.name);
     let async_ = maybe_async(machine.async_mode);
     let await_ = maybe_await(machine.async_mode);
-    let error_ty = machine.error.as_ref().map_or(
-        quote! { ::state_machines::DynamicError },
+    let error_ty = machine.error.as_ref().map_or_else(
+        || quote! { ::state_machines::DynamicError },
         |ty| quote! { ::state_machines::DynamicError<#ty> },
     );
-    let error_ctor = machine.error.as_ref().map_or(
-        quote! { ::state_machines::DynamicError },
+    let error_ctor = machine.error.as_ref().map_or_else(
+        || quote! { ::state_machines::DynamicError },
         |ty| quote! { ::state_machines::DynamicError::<#ty> },
     );
     let map_error = if machine.error.is_some() {
@@ -22,81 +124,8 @@ pub fn dynamic_methods(machine: &StateMachine) -> TokenStream {
     } else {
         quote! { ::state_machines::DynamicError::from_guard_error(error) }
     };
-    let step_arms = machine.states.iter().map(|source| {
-        let groups = super::branching::groups(machine, source);
-        let selections = groups.iter().filter_map(|edges| {
-            let event = machine.event(&edges[0].event);
-            if !event.automatic {
-                return None;
-            }
-            let event_enabled = super::branching::condition_on(
-                machine,
-                &event.hooks,
-                &quote! {},
-                &quote! { current },
-            );
-            let choices = edges.iter().enumerate().map(|(index, edge)| {
-                let enabled = super::branching::condition_on(
-                    machine,
-                    &edge.selection,
-                    &quote! {},
-                    &quote! { current },
-                );
-                let history = super::history::condition_on(edge, &quote! { current });
-                let helper = if edges.len() > 1 {
-                    format_ident!("__sm_{}_{}", event.name, index)
-                } else {
-                    format_ident!("__sm_auto_{}", event.name)
-                };
-                let target = &edge.target;
-                let commit = super::scopes::commit(machine, source, edge);
-                quote! {
-                    if #history && (#enabled) {
-                        match current.#helper() #await_ {
-                            Ok(machine) => {
-                                let previous_epoch = self.epoch;
-                                #commit
-                                let next = #any::#target(machine);
-                                self.last_state = next.state();
-                                self.inner = Some(next);
-                                if record { self.__sm_record_completions(previous_epoch); }
-                                return Ok(true);
-                            }
-                            Err((machine, error)) => {
-                                self.inner = Some(#any::#source(machine));
-                                return Err(#map_error);
-                            }
-                        }
-                    }
-                }
-            });
-            Some(quote! { if #event_enabled { #( #choices )* } })
-        });
-        quote! {
-            #any::#source(current) => {
-                #( #selections )*
-                self.inner = Some(#any::#source(current));
-                Ok(false)
-            }
-        }
-    });
-    let available_arms = machine.states.iter().map(|state| {
-        let checks = super::branching::groups(machine, state)
-            .iter()
-            .filter_map(|edges| {
-                let event = machine.event(&edges[0].event);
-                event.automatic.then(|| {
-                    let can = format_ident!("can_{}", event.name);
-                    quote! { current.#can() #await_ }
-                })
-            })
-            .collect::<Vec<_>>();
-        if checks.is_empty() {
-            quote! { #any::#state(_) => false }
-        } else {
-            quote! { #any::#state(current) => false #( || #checks )* }
-        }
-    });
+    let step_arms = automatic_step_arms(machine, &any, &await_, &map_error);
+    let available_arms = automatic_available_arms(machine, &any, &await_);
     quote! {
         #async_ fn __sm_has_automatic(&self) -> bool {
             match self.inner.as_ref() {

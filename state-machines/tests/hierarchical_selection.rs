@@ -22,7 +22,7 @@ impl<S> Routing<S> {
         ctx.child
     }
 }
-fn policy(child: bool) -> Policy {
+const fn policy(child: bool) -> Policy {
     Policy {
         child,
         checks: Cell::new(0),
@@ -68,6 +68,7 @@ fn dynamic_and_schema_use_the_same_specificity_policy() {
 #[cfg(feature = "async")]
 mod asynchronous {
     use state_machines::state_machine;
+    use std::future::{Future, ready};
     state_machine! {
         name: AsyncRouting, dynamic: true, async: true, initial: Child,
         states: [superstate Root { state Child }, Success, Fallback],
@@ -79,8 +80,8 @@ mod asynchronous {
         }
     }
     impl<C, S> AsyncRouting<C, S> {
-        async fn enabled(&self, _ctx: &C) -> bool {
-            true
+        fn enabled(&self, _ctx: &C) -> impl Future<Output = bool> {
+            ready(true)
         }
     }
     #[test]

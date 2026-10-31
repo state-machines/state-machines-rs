@@ -159,7 +159,7 @@ impl SignalSystem {
         // Simulate async I/O delay
         simulated_io().await;
         let strength = SIGNAL_STRENGTH.load(Ordering::Relaxed);
-        println!("  [SignalSystem] Scan complete: {} strength", strength);
+        println!("  [SignalSystem] Scan complete: {strength} strength");
         strength
     }
 
@@ -168,7 +168,7 @@ impl SignalSystem {
         // Simulate network round-trip
         simulated_io().await;
         let available = NETWORK_AVAILABLE.load(Ordering::Relaxed);
-        println!("  [SignalSystem] Lock status: {}", available);
+        println!("  [SignalSystem] Lock status: {available}");
         available
     }
 
@@ -176,7 +176,7 @@ impl SignalSystem {
         println!("  [SignalSystem] Transmitting data packets...");
         for i in 1..=3 {
             simulated_io().await;
-            println!("  [SignalSystem]   Packet {} sent", i);
+            println!("  [SignalSystem]   Packet {i} sent");
         }
         println!("  [SignalSystem] Transmission complete");
     }
@@ -255,7 +255,7 @@ impl<C, S> DroneScout<C, S> {
         // Simulate async hardware query
         simulated_io().await;
         let has_power = true; // Always have power in this demo
-        println!("[Guard] Power status: {}", has_power);
+        println!("[Guard] Power status: {has_power}");
         has_power
     }
 
@@ -266,10 +266,7 @@ impl<C, S> DroneScout<C, S> {
         println!("[Guard] Checking for signal...");
         let strength = SignalSystem::scan_for_signal().await;
         let detected = strength >= 50; // Need at least 50 strength
-        println!(
-            "[Guard] Signal detected: {} (strength: {})",
-            detected, strength
-        );
+        println!("[Guard] Signal detected: {detected} (strength: {strength})");
         detected
     }
 
@@ -277,7 +274,7 @@ impl<C, S> DroneScout<C, S> {
     async fn network_ready(&self, _ctx: &C) -> bool {
         println!("[Guard] Verifying network readiness...");
         let ready = SignalSystem::establish_lock().await;
-        println!("[Guard] Network ready: {}", ready);
+        println!("[Guard] Network ready: {ready}");
         ready
     }
 

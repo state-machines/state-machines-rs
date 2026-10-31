@@ -7,7 +7,7 @@ use super::utils::{
 use crate::types::{Hooks, StateMachine, TransitionEdge};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{Ident, Result};
+use syn::Ident;
 
 pub fn groups<'a>(machine: &'a StateMachine, state: &Ident) -> Vec<Vec<&'a TransitionEdge>> {
     let mut groups: Vec<Vec<&TransitionEdge>> = Vec::new();
@@ -72,6 +72,8 @@ pub fn enums(machine: &StateMachine) -> TokenStream {
                     })
                     .collect::<Vec<_>>();
                 quote! {
+                    // Variant names are the user's target states; a shared prefix is their call.
+                    #[allow(clippy::enum_variant_names)]
                     #[derive(Debug)]
                     pub enum #outcome #generics { #( #variants, )* }
                 }
@@ -102,11 +104,7 @@ pub fn condition_on(
     quote! { true #( && #guards )* #( && #unless )* }
 }
 
-pub fn methods(
-    machine: &StateMachine,
-    source: &Ident,
-    edges: &[&TransitionEdge],
-) -> Result<TokenStream> {
+pub fn methods(machine: &StateMachine, source: &Ident, edges: &[&TransitionEdge]) -> TokenStream {
     let event = machine.event(&edges[0].event);
     let name = &event.name;
     let outcome = outcome_name(machine, source, name);
@@ -115,18 +113,17 @@ pub fn methods(
     let select_name = format_ident!("__sm_select_{}", name);
     let async_ = maybe_async(machine.async_mode);
     let await_ = maybe_await(machine.async_mode);
-    let (param, can_param, payload_ref, payload_arg) =
-        event
-            .payload
-            .as_ref()
-            .map_or((quote! {}, quote! {}, quote! {}, quote! {}), |ty| {
-                (
-                    quote! { , payload: #ty },
-                    quote! { , payload: &#ty },
-                    quote! { , &payload },
-                    quote! { payload },
-                )
-            });
+    let (param, can_param, payload_ref, payload_arg) = event.payload.as_ref().map_or_else(
+        || (quote! {}, quote! {}, quote! {}, quote! {}),
+        |ty| {
+            (
+                quote! { , payload: #ty },
+                quote! { , payload: &#ty },
+                quote! { , &payload },
+                quote! { payload },
+            )
+        },
+    );
     let can_payload = if event.payload.is_some() {
         quote! { , payload }
     } else {
@@ -165,7 +162,7 @@ pub fn methods(
             edge,
             Some(&helper),
             false,
-        )?);
+        ));
         let enabled = condition(machine, &edge.selection, &payload_ref);
         let history = super::history::condition(edge);
         let target = &edge.target;
@@ -184,7 +181,7 @@ pub fn methods(
         let history = super::history::condition(edge);
         quote! { #history && (#enabled) }
     });
-    Ok(quote! {
+    quote! {
         #( #helpers )*
         pub #async_ fn #name(self #param) -> Result<#outcome #generics, (Self, #error_ty)> {
             self.#select_name(#payload_arg) #await_.map(|(outcome, _)| outcome)
@@ -198,5 +195,5 @@ pub fn methods(
         pub #async_ fn #can_name(&self #can_param) -> bool {
             #event_enabled && (false #( || (#candidates) )*)
         }
-    })
+    }
 }

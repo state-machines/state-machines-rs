@@ -1,7 +1,3 @@
-#![allow(non_camel_case_types)]
-#![allow(non_snake_case)]
-#![allow(clippy::enum_variant_names)]
-
 use benchit::{Bench, Group};
 use state_machines::{
     core::{AroundOutcome, AroundStage},
@@ -59,7 +55,7 @@ state_machine! {
 }
 
 impl<C, S> GuardedDoor<C, S> {
-    fn check_permission(&self, _ctx: &C) -> bool {
+    const fn check_permission(&self, _ctx: &C) -> bool {
         true // Always pass for benchmark
     }
 }
@@ -96,11 +92,11 @@ state_machine! {
 }
 
 impl<C, S> CallbackEngine<C, S> {
-    fn pre_start_check(&self) {
+    const fn pre_start_check(&self) {
         // Minimal work
     }
 
-    fn log_started(&self) {
+    const fn log_started(&self) {
         // Minimal work
     }
 }
@@ -138,15 +134,15 @@ state_machine! {
 }
 
 impl<C, S> FullFeatured<C, S> {
-    fn activation_allowed(&self, _ctx: &C) -> bool {
+    const fn activation_allowed(&self, _ctx: &C) -> bool {
         true
     }
 
-    fn prepare(&self) {
+    const fn prepare(&self) {
         // Minimal work
     }
 
-    fn notify(&self) {
+    const fn notify(&self) {
         // Minimal work
     }
 }
@@ -269,11 +265,8 @@ state_machine! {
 }
 
 impl<C, S> AroundTransaction<C, S> {
-    fn transaction_wrapper(&self, stage: AroundStage) -> AroundOutcome<AroundIdle> {
-        match stage {
-            AroundStage::Before => AroundOutcome::Proceed,
-            AroundStage::AfterSuccess => AroundOutcome::Proceed,
-        }
+    const fn transaction_wrapper(&self, _stage: AroundStage) -> AroundOutcome<AroundIdle> {
+        AroundOutcome::Proceed
     }
 }
 
@@ -305,25 +298,16 @@ state_machine! {
 }
 
 impl<C, S> MultiAround<C, S> {
-    fn first_wrapper(&self, stage: AroundStage) -> AroundOutcome<MultiStart> {
-        match stage {
-            AroundStage::Before => AroundOutcome::Proceed,
-            AroundStage::AfterSuccess => AroundOutcome::Proceed,
-        }
+    const fn first_wrapper(&self, _stage: AroundStage) -> AroundOutcome<MultiStart> {
+        AroundOutcome::Proceed
     }
 
-    fn second_wrapper(&self, stage: AroundStage) -> AroundOutcome<MultiStart> {
-        match stage {
-            AroundStage::Before => AroundOutcome::Proceed,
-            AroundStage::AfterSuccess => AroundOutcome::Proceed,
-        }
+    const fn second_wrapper(&self, _stage: AroundStage) -> AroundOutcome<MultiStart> {
+        AroundOutcome::Proceed
     }
 
-    fn third_wrapper(&self, stage: AroundStage) -> AroundOutcome<MultiStart> {
-        match stage {
-            AroundStage::Before => AroundOutcome::Proceed,
-            AroundStage::AfterSuccess => AroundOutcome::Proceed,
-        }
+    const fn third_wrapper(&self, _stage: AroundStage) -> AroundOutcome<MultiStart> {
+        AroundOutcome::Proceed
     }
 }
 
@@ -360,22 +344,19 @@ state_machine! {
 }
 
 impl<C, S> FullStack<C, S> {
-    fn can_proceed(&self, _ctx: &C) -> bool {
+    const fn can_proceed(&self, _ctx: &C) -> bool {
         true
     }
 
-    fn wrapper(&self, stage: AroundStage) -> AroundOutcome<StackIdle> {
-        match stage {
-            AroundStage::Before => AroundOutcome::Proceed,
-            AroundStage::AfterSuccess => AroundOutcome::Proceed,
-        }
+    const fn wrapper(&self, _stage: AroundStage) -> AroundOutcome<StackIdle> {
+        AroundOutcome::Proceed
     }
 
-    fn prepare(&self) {
+    const fn prepare(&self) {
         // Minimal work
     }
 
-    fn cleanup(&self) {
+    const fn cleanup(&self) {
         // Minimal work
     }
 }

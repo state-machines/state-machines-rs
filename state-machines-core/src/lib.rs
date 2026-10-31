@@ -2,6 +2,14 @@
 
 use core::fmt::{self, Debug};
 
+/// The `serde` the schema types derive against, so consumers deriving on their
+/// own payload types need no extra dependency: `#[serde(crate = "state_machines_core::serde")]`.
+#[cfg(feature = "serde")]
+pub use serde;
+/// The `serde_json` behind [`MachineSchema::to_json`], for parsing it back.
+#[cfg(feature = "serde_json")]
+pub use serde_json;
+
 #[cfg(feature = "inspect")]
 pub mod schema;
 
@@ -52,6 +60,11 @@ pub enum SnapshotError {
 
 impl SnapshotError {
     /// Shared version/name validation for leaf and composed snapshot envelopes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SnapshotError::UnsupportedVersion`] when `version` is not `1`,
+    /// and [`SnapshotError::WrongMachine`] when `machine` differs from `expected`.
     pub fn validate_header(version: u32, machine: &str, expected: &str) -> Result<(), Self> {
         if version != 1 {
             return Err(Self::UnsupportedVersion {
@@ -103,7 +116,7 @@ impl<S> TransitionError<S>
 where
     S: MachineState,
 {
-    pub fn invalid_transition(from: S, event: &'static str) -> Self {
+    pub const fn invalid_transition(from: S, event: &'static str) -> Self {
         Self {
             from,
             event,
@@ -111,7 +124,7 @@ where
         }
     }
 
-    pub fn guard_failed(from: S, event: &'static str, guard: &'static str) -> Self {
+    pub const fn guard_failed(from: S, event: &'static str, guard: &'static str) -> Self {
         Self {
             from,
             event,
@@ -156,6 +169,7 @@ pub struct GuardError {
 }
 
 impl GuardError {
+    #[must_use]
     pub const fn new(guard: &'static str, event: &'static str) -> Self {
         Self {
             guard,
@@ -164,6 +178,7 @@ impl GuardError {
         }
     }
 
+    #[must_use]
     pub const fn with_kind(
         guard: &'static str,
         event: &'static str,
@@ -189,7 +204,7 @@ pub struct CallbackError<E> {
 }
 
 impl<E> CallbackError<E> {
-    pub fn new(action: &'static str, event: &'static str, source: E) -> Self {
+    pub const fn new(action: &'static str, event: &'static str, source: E) -> Self {
         Self {
             action,
             event,
@@ -219,11 +234,12 @@ pub enum EventError<E> {
 }
 
 impl<E> EventError<E> {
+    #[must_use]
     pub const fn guard(err: GuardError) -> Self {
         Self::Guard(err)
     }
 
-    pub fn callback(action: &'static str, event: &'static str, source: E) -> Self {
+    pub const fn callback(action: &'static str, event: &'static str, source: E) -> Self {
         Self::Callback(CallbackError::new(action, event, source))
     }
 }
@@ -250,7 +266,7 @@ impl<E> FallibleCallbackReturn<E> for () {
 }
 
 impl<E> FallibleCallbackReturn<E> for Result<(), E> {
-    fn into_result(self) -> Result<(), E> {
+    fn into_result(self) -> Self {
         self
     }
 }
@@ -327,19 +343,22 @@ pub enum DynamicError<E = ()> {
 }
 
 impl<E> DynamicError<E> {
-    pub fn invalid_transition(from: &'static str, event: &'static str) -> Self {
+    #[must_use]
+    pub const fn invalid_transition(from: &'static str, event: &'static str) -> Self {
         Self::InvalidTransition { from, event }
     }
 
-    pub fn guard_failed(guard: &'static str, event: &'static str) -> Self {
+    #[must_use]
+    pub const fn guard_failed(guard: &'static str, event: &'static str) -> Self {
         Self::GuardFailed { guard, event }
     }
 
-    pub fn action_failed(action: &'static str, event: &'static str) -> Self {
+    #[must_use]
+    pub const fn action_failed(action: &'static str, event: &'static str) -> Self {
         Self::ActionFailed { action, event }
     }
 
-    pub fn callback_failed(action: &'static str, event: &'static str, source: E) -> Self {
+    pub const fn callback_failed(action: &'static str, event: &'static str, source: E) -> Self {
         Self::CallbackFailed {
             action,
             event,
@@ -347,7 +366,8 @@ impl<E> DynamicError<E> {
         }
     }
 
-    pub fn wrong_state(
+    #[must_use]
+    pub const fn wrong_state(
         expected: &'static str,
         actual: &'static str,
         operation: &'static str,
@@ -359,8 +379,13 @@ impl<E> DynamicError<E> {
         }
     }
 
-    /// Convert from GuardError to DynamicError.
-    pub fn from_guard_error(err: GuardError) -> Self {
+    /// Convert from `GuardError` to `DynamicError`.
+    #[must_use]
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "a conversion consumes its input, like `From`"
+    )]
+    pub const fn from_guard_error(err: GuardError) -> Self {
         match err.kind {
             TransitionErrorKind::GuardFailed { guard } => Self::GuardFailed {
                 guard,

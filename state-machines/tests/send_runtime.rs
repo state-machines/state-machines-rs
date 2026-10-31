@@ -6,7 +6,7 @@ use state_machines::{
 };
 use std::{
     assert_matches,
-    future::pending,
+    future::{Future, pending, ready},
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -25,8 +25,8 @@ state_machine! {
     }
 }
 impl<C, S> SendWorker<C, S> {
-    async fn own(&self, payload: &mut Option<Owned>) -> Owned {
-        payload.take().unwrap()
+    fn own(&self, payload: &mut Option<Owned>) -> impl Future<Output = Owned> {
+        ready(payload.take().unwrap())
     }
 }
 state_machine! {
@@ -51,8 +51,8 @@ impl Clock for Time {
 fn event(value: &str) -> SendWorkerEvent {
     SendWorkerEvent::Finish(Some(Owned(value.into())))
 }
-fn assert_send<T: Send>(_: &T) {}
-fn assert_send_sync<T: Send + Sync>(_: &T) {}
+const fn assert_send<T: Send>(_: &T) {}
+const fn assert_send_sync<T: Send + Sync>(_: &T) {}
 fn runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -150,16 +150,16 @@ fn capacity_and_close_return_the_original_owned_event() {
 #[test]
 fn concurrent_producers_share_one_exact_capacity_limit() {
     let runner = Runner::new(DynamicSendWorker::new(()), 64);
-    let producers: Vec<_> = (0..8)
-        .map(|_| {
-            let sink = runner.sink();
-            std::thread::spawn(move || {
-                (0..32)
-                    .filter(|_| sink.enqueue(event("owned")).is_ok())
-                    .count()
-            })
-        })
-        .collect();
+    // Spawn every producer before joining any, so they really contend.
+    let mut producers = Vec::new();
+    for _ in 0..8 {
+        let sink = runner.sink();
+        producers.push(std::thread::spawn(move || {
+            (0..32)
+                .filter(|_| sink.enqueue(event("owned")).is_ok())
+                .count()
+        }));
+    }
     let accepted: usize = producers.into_iter().map(|task| task.join().unwrap()).sum();
     assert_eq!(accepted, 64);
     assert_eq!(runner.pending(), 64);
@@ -248,12 +248,12 @@ fn send_activity_completion_and_named_scope_deadline_use_the_shared_driver() {
 #[test]
 fn event_destructors_can_reenter_the_closed_sink_without_holding_its_lock() {
     #[derive(Debug)]
-    struct Reentrant(Option<EventSink<Reentrant>>, Arc<AtomicUsize>);
+    struct Reentrant(Option<EventSink<Self>>, Arc<AtomicUsize>);
     impl Drop for Reentrant {
         fn drop(&mut self) {
             if let Some(sink) = self.0.take() {
                 assert_matches!(
-                    sink.enqueue(Reentrant(None, self.1.clone())),
+                    sink.enqueue(Self(None, self.1.clone())),
                     Err(QueueError::Closed(_))
                 );
             }
@@ -275,8 +275,8 @@ fn event_destructors_can_reenter_the_closed_sink_without_holding_its_lock() {
         fn is_poisoned(&self) -> bool {
             false
         }
-        async fn dispatch(&mut self, _: Reentrant) -> Result<(), ()> {
-            Ok(())
+        fn dispatch(&mut self, _: Reentrant) -> impl Future<Output = Result<(), ()>> {
+            ready(Ok(()))
         }
     }
     let drops = Arc::new(AtomicUsize::new(0));
@@ -379,7 +379,7 @@ mod snapshots {
         }
     }
     impl<C, S> SnapshotWorker<C, S> {
-        fn own(&self, value: &mut Option<Box<str>>) -> Box<str> {
+        const fn own(&self, value: &mut Option<Box<str>>) -> Box<str> {
             value.take().unwrap()
         }
     }

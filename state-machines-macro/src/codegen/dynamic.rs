@@ -9,30 +9,30 @@ use crate::codegen::utils::{
     async_lint_allows, ctx_generics, ctx_ty, empty_storage_inits, event_pascal, machine_params,
     maybe_async, maybe_await, to_snake_case, to_snake_case_ident, transition_error_ty,
 };
-use crate::types::*;
+use crate::types::{StateMachine, StateStorageSpec, TransitionEdge};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::Result;
+use syn::Ident;
 
 /// Generate dynamic dispatch wrapper code for the state machine.
 ///
 /// This generates:
 /// - Event enum for runtime event dispatch
-/// - AnyState enum wrapping all typed state machines
-/// - DynamicMachine struct with handle() method
+/// - `AnyState` enum wrapping all typed state machines
+/// - `DynamicMachine` struct with `handle()` method
 /// - Conversion methods between typestate and dynamic modes
-pub fn generate_dynamic_wrapper(machine: &StateMachine) -> Result<TokenStream2> {
-    let event_enum = generate_event_enum(machine)?;
-    let any_state_enum = generate_any_state_enum(machine)?;
-    let dynamic_machine = generate_dynamic_machine(machine)?;
-    let conversions = generate_conversions(machine)?;
+pub fn generate_dynamic_wrapper(machine: &StateMachine) -> TokenStream2 {
+    let event_enum = generate_event_enum(machine);
+    let any_state_enum = generate_any_state_enum(machine);
+    let dynamic_machine = generate_dynamic_machine(machine);
+    let conversions = generate_conversions(machine);
 
-    Ok(quote! {
+    quote! {
         #event_enum
         #any_state_enum
         #dynamic_machine
         #conversions
-    })
+    }
 }
 
 /// Generate the Event enum from the events definition.
@@ -46,19 +46,22 @@ pub fn generate_dynamic_wrapper(machine: &StateMachine) -> Result<TokenStream2> 
 ///     SetThrust(u8),  // With payload
 /// }
 /// ```
-fn generate_event_enum(machine: &StateMachine) -> Result<TokenStream2> {
+fn generate_event_enum(machine: &StateMachine) -> TokenStream2 {
     let machine_name = &machine.name;
     let event_name = quote::format_ident!("{}Event", machine_name);
 
     let enum_variants = machine.events.iter().map(|event| {
         let pascal_name = event_pascal(&event.name);
-        if let Some(payload_ty) = &event.payload {
-            quote! { #pascal_name(#payload_ty) }
-        } else if event.automatic {
-            quote! { #[allow(dead_code)] #pascal_name }
-        } else {
-            quote! { #pascal_name }
-        }
+        event.payload.as_ref().map_or_else(
+            || {
+                if event.automatic {
+                    quote! { #[allow(dead_code)] #pascal_name }
+                } else {
+                    quote! { #pascal_name }
+                }
+            },
+            |payload_ty| quote! { #pascal_name(#payload_ty) },
+        )
     });
 
     let match_arms = machine.events.iter().map(|event| {
@@ -71,7 +74,9 @@ fn generate_event_enum(machine: &StateMachine) -> Result<TokenStream2> {
         }
     });
 
-    Ok(quote! {
+    quote! {
+        // Variant names are the user's event names; a shared prefix is their call.
+        #[allow(clippy::enum_variant_names)]
         #[derive(Debug)]
         pub enum #event_name {
             #(#enum_variants,)*
@@ -85,10 +90,10 @@ fn generate_event_enum(machine: &StateMachine) -> Result<TokenStream2> {
                 }
             }
         }
-    })
+    }
 }
 
-/// Generate the AnyState enum that wraps all typed state machines.
+/// Generate the `AnyState` enum that wraps all typed state machines.
 ///
 /// Example output:
 /// ```ignore
@@ -98,7 +103,7 @@ fn generate_event_enum(machine: &StateMachine) -> Result<TokenStream2> {
 ///     Landed(FlightController<Landed>),
 /// }
 /// ```
-fn generate_any_state_enum(machine: &StateMachine) -> Result<TokenStream2> {
+fn generate_any_state_enum(machine: &StateMachine) -> TokenStream2 {
     let machine_name = &machine.name;
     let any_state_name = quote::format_ident!("Any{}State", machine_name);
     let state_enum_name = quote::format_ident!("{}State", machine_name);
@@ -120,11 +125,13 @@ fn generate_any_state_enum(machine: &StateMachine) -> Result<TokenStream2> {
 
     let generics = ctx_generics(machine);
 
-    Ok(quote! {
+    quote! {
         /// Internal enum wrapping all typed state machines.
         ///
         /// This enables runtime polymorphism over different states while
         /// preserving the compile-time safety of the typestate pattern.
+        // Variant names are the user's state names; a shared prefix is their call.
+        #[allow(clippy::enum_variant_names)]
         #[derive(Debug)]
         enum #any_state_name #generics {
             #(#variants,)*
@@ -141,51 +148,214 @@ fn generate_any_state_enum(machine: &StateMachine) -> Result<TokenStream2> {
                 }
             }
         }
-    })
+    }
 }
 
-/// Generate the DynamicMachine struct with handle() method.
-///
-/// Example output:
-/// ```ignore
-/// pub struct DynamicFlightController {
-///     inner: AnyFlightState,
-/// }
-///
-/// impl DynamicFlightController {
-///     pub fn handle(&mut self, event: FlightEvent) -> Result<(), DynamicError> {
-///         // Runtime dispatch logic
-///     }
-/// }
-/// ```
-fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
-    let machine_name = &machine.name;
-    let dynamic_name = quote::format_ident!("Dynamic{}", machine_name);
-    let any_state_name = quote::format_ident!("Any{}State", machine_name);
-    let event_name = quote::format_ident!("{}Event", machine_name);
-    let state_enum_name = quote::format_ident!("{}State", machine_name);
+/// Identifiers and token fragments shared by every item of the dynamic wrapper.
+struct DynamicNames<'a> {
+    machine: &'a Ident,
+    dynamic: Ident,
+    any_state: Ident,
+    event: Ident,
+    state_enum: Ident,
+    generics: TokenStream2,
+    maybe_async: TokenStream2,
+    maybe_await: TokenStream2,
+    error_ty: TokenStream2,
+    error_ctor: TokenStream2,
+}
+
+impl<'a> DynamicNames<'a> {
+    fn new(machine: &'a StateMachine) -> Self {
+        let machine_name = &machine.name;
+        let (error_ty, error_ctor) = machine.error.as_ref().map_or_else(
+            || {
+                (
+                    quote! { state_machines::DynamicError },
+                    quote! { state_machines::DynamicError },
+                )
+            },
+            |error_ty| {
+                (
+                    quote! { state_machines::DynamicError<#error_ty> },
+                    quote! { state_machines::DynamicError::<#error_ty> },
+                )
+            },
+        );
+        Self {
+            machine: machine_name,
+            dynamic: quote::format_ident!("Dynamic{}", machine_name),
+            any_state: quote::format_ident!("Any{}State", machine_name),
+            event: quote::format_ident!("{}Event", machine_name),
+            state_enum: quote::format_ident!("{}State", machine_name),
+            generics: ctx_generics(machine),
+            maybe_async: maybe_async(machine.async_mode),
+            maybe_await: maybe_await(machine.async_mode),
+            error_ty,
+            error_ctor,
+        }
+    }
+}
+
+/// The `{Machine}State` selector enum with its `name()` and `Display`.
+fn state_enum(machine: &StateMachine, names: &DynamicNames<'_>) -> TokenStream2 {
+    let state_enum_name = &names.state_enum;
     let initial_state = &machine.initial;
-    let is_async = machine.async_mode;
-    let maybe_async = maybe_async(is_async);
-    let async_allows = async_lint_allows(is_async);
-    let maybe_await = maybe_await(is_async);
-    let (dynamic_error_ty, dynamic_error_ctor) = match &machine.error {
-        Some(error_ty) => (
-            quote! { state_machines::DynamicError<#error_ty> },
-            quote! { state_machines::DynamicError::<#error_ty> },
-        ),
-        None => (
-            quote! { state_machines::DynamicError },
-            quote! { state_machines::DynamicError },
-        ),
+    let state_variants = machine.states.iter().map(|state| {
+        if state == initial_state {
+            quote! { #[default] #state }
+        } else {
+            quote! { #state }
+        }
+    });
+    let state_name_arms = machine.states.iter().map(|state| {
+        let state_str = state.to_string();
+        quote! { Self::#state => #state_str }
+    });
+    quote! {
+        /// Runtime state selector used when constructing a dynamic machine.
+        // Variant names are the user's state names; a shared prefix is their call.
+        #[allow(clippy::enum_variant_names)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+        pub enum #state_enum_name {
+            #( #state_variants, )*
+        }
+
+        impl #state_enum_name {
+            /// Get the state name as a static string.
+            pub fn name(self) -> &'static str {
+                match self {
+                    #( #state_name_arms, )*
+                }
+            }
+        }
+
+        impl ::core::fmt::Display for #state_enum_name {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                f.write_str((*self).name())
+            }
+        }
+    }
+}
+
+/// `initialize`, `new` and `new_init_state` on the dynamic wrapper.
+fn constructors(machine: &StateMachine, names: &DynamicNames<'_>) -> TokenStream2 {
+    let DynamicNames {
+        machine: machine_name,
+        any_state: any_state_name,
+        state_enum: state_enum_name,
+        maybe_async,
+        maybe_await,
+        ..
+    } = names;
+    let initial_state = &machine.initial;
+    let ctx_param_ty = ctx_ty(machine);
+    let startup_error = transition_error_ty(machine);
+    let scope_count = super::scopes::names(machine).len();
+    let initial_state_constructor = quote! {
+        #any_state_name::#initial_state(#machine_name::new(ctx))
     };
+    let state_constructor_arms = machine.states.iter().map(|state| {
+        if state == initial_state {
+            return quote! {
+                #state_enum_name::#state => #any_state_name::#state(#machine_name::new(ctx))
+            };
+        }
+        let storage_inits = empty_storage_inits(machine);
+        quote! {
+            #state_enum_name::#state => #any_state_name::#state(
+                #machine_name {
+                    ctx,
+                    _state: ::core::marker::PhantomData,
+                    #( #storage_inits, )*
+                }
+            )
+        }
+    });
+    quote! {
+        /// Construct and run the declared initial entry hooks.
+        pub #maybe_async fn initialize(ctx: #ctx_param_ty) -> Result<Self, (Self, #startup_error)> {
+            match #machine_name::new(ctx).initialize() #maybe_await {
+                Ok(machine) => Ok(machine.into_dynamic()),
+                Err((machine, error)) => Err((machine.into_dynamic(), error)),
+            }
+        }
+        /// Create a new dynamic machine in the declared initial state.
+        pub fn new(ctx: #ctx_param_ty) -> Self {
+            Self {
+                epoch: 0,
+                scope_epochs: [0; #scope_count],
+                inner: ::core::option::Option::Some(#initial_state_constructor),
+                last_state: #state_enum_name::#initial_state,
+                completions: ::state_machines::__private::Vec::new(),
+            }
+        }
+
+        /// Create a new dynamic machine in the specified state.
+        pub fn new_init_state(ctx: #ctx_param_ty, state: #state_enum_name) -> Self {
+            Self {
+                epoch: 0,
+                scope_epochs: [0; #scope_count],
+                inner: ::core::option::Option::Some(match state {
+                    #( #state_constructor_arms, )*
+                }),
+                last_state: state,
+                completions: ::state_machines::__private::Vec::new(),
+            }
+        }
+    }
+}
+
+/// The block run on a successful typestate transition: commit scope epochs
+/// and re-wrap the new machine in `AnyState`. Branching events select the
+/// edge index at runtime, so each candidate gets its own commit arm.
+fn handle_success(
+    machine: &StateMachine,
+    names: &DynamicNames<'_>,
+    state: &Ident,
+    edges: &[&TransitionEdge],
+) -> TokenStream2 {
+    let any_state_name = &names.any_state;
+    if edges.len() > 1 {
+        let commits = edges.iter().enumerate().map(|(index, edge)| {
+            let commit = super::scopes::commit(machine, state, edge);
+            quote! { #index => { #commit } }
+        });
+        let outcome = super::branching::outcome_name(machine, state, &edges[0].event);
+        let arms = super::branching::targets(edges).into_iter().map(|target| {
+            quote! { #outcome::#target(machine) => #any_state_name::#target(machine) }
+        });
+        quote! {
+            {
+                let (new_machine, selected) = new_machine;
+                match selected { #(#commits,)* _ => unreachable!("selected edge") }
+                match new_machine { #( #arms, )* }
+            }
+        }
+    } else {
+        let target = &edges[0].target;
+        let commit = super::scopes::commit(machine, state, edges[0]);
+        quote! { {
+            #commit
+            #any_state_name::#target(new_machine)
+        } }
+    }
+}
+
+/// One `(state, event)` match arm per transition group for `__sm_handle_one`.
+fn handle_match_arms(machine: &StateMachine, names: &DynamicNames<'_>) -> Vec<TokenStream2> {
+    let DynamicNames {
+        any_state: any_state_name,
+        event: event_name,
+        maybe_await,
+        ..
+    } = names;
     let map_event_error = if machine.error.is_some() {
         quote! { state_machines::DynamicError::from_event_error(err) }
     } else {
         quote! { state_machines::DynamicError::from_guard_error(err) }
     };
 
-    // Generate match arms for handle() method
     let mut match_arms = Vec::new();
 
     for event in &machine.events {
@@ -203,30 +373,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
                     } else {
                         event_method.clone()
                     };
-                    let success = if edges.len() > 1 {
-                        let commits = edges.iter().enumerate().map(|(index, edge)| {
-                            let commit = super::scopes::commit(machine, state, edge);
-                            quote! { #index => { #commit } }
-                        });
-                        let outcome = super::branching::outcome_name(machine, state, event_snake);
-                        let arms = super::branching::targets(&edges).into_iter().map(|target| {
-                                quote! { #outcome::#target(machine) => #any_state_name::#target(machine) }
-                            });
-                        quote! {
-                            {
-                                let (new_machine, selected) = new_machine;
-                                match selected { #(#commits,)* _ => unreachable!("selected edge") }
-                                match new_machine { #( #arms, )* }
-                            }
-                        }
-                    } else {
-                        let target = &edges[0].target;
-                        let commit = super::scopes::commit(machine, state, edges[0]);
-                        quote! { {
-                            #commit
-                            #any_state_name::#target(new_machine)
-                        } }
-                    };
+                    let success = handle_success(machine, names, state, &edges);
 
                     // Generate the match arm for this transition
                     // Use event_pascal for enum variant matching
@@ -254,34 +401,88 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
         }
     }
 
+    match_arms
+}
+
+/// The public `handle` entry point: dispatch one event, then settle
+/// automatic transitions when the machine declares any.
+fn handle_method(names: &DynamicNames<'_>, settle: &TokenStream2) -> TokenStream2 {
+    let DynamicNames {
+        event: event_name,
+        maybe_async,
+        maybe_await,
+        error_ty,
+        ..
+    } = names;
+    quote! {
+        /// Dispatch an event to the state machine at runtime.
+        ///
+        /// Returns an error if:
+        /// - The event is not valid from the current state
+        /// - A guard callback fails
+        /// - An action callback fails
+        pub #maybe_async fn handle(&mut self, event: #event_name) -> Result<(), #error_ty> {
+            self.__sm_handle_one(event, true) #maybe_await?;
+            #settle
+            Ok(())
+        }
+    }
+}
+
+/// `__sm_handle_one`: the single-step dispatcher behind `handle` and the runtime.
+fn handle_one_method(machine: &StateMachine, names: &DynamicNames<'_>) -> TokenStream2 {
+    let DynamicNames {
+        event: event_name,
+        maybe_async,
+        error_ty,
+        error_ctor,
+        ..
+    } = names;
+    let match_arms = handle_match_arms(machine, names);
+
     // Add a catch-all arm for invalid transitions
     let catch_all = quote! {
         (state, event) => {
             let state_name = state.name();
             self.inner = ::core::option::Option::Some(state);
-            return Err(#dynamic_error_ctor::invalid_transition(
+            return Err(#error_ctor::invalid_transition(
                 state_name,
                 event.name(),
             ));
         }
     };
 
-    let handle_sig = quote! {
-        pub #maybe_async fn handle(&mut self, event: #event_name) -> Result<(), #dynamic_error_ty>
-    };
-    let handle_one_sig = quote! {
-        #maybe_async fn __sm_handle_one(&mut self, event: #event_name, record: bool) -> Result<(), #dynamic_error_ty>
-    };
-    let automatic_methods = super::automatic::dynamic_methods(machine);
-    let has_automatic = machine.events.iter().any(|event| event.automatic);
-    let settle = |record: bool| {
-        if has_automatic {
-            quote! { self.__sm_settle(64, #record) #maybe_await?; }
-        } else {
-            quote! {}
+    quote! {
+        #maybe_async fn __sm_handle_one(&mut self, event: #event_name, record: bool) -> Result<(), #error_ty> {
+            let previous_epoch = self.epoch;
+            // Take ownership of inner state temporarily
+            let current = self.inner.take().ok_or(#error_ctor::Poisoned {
+                from: self.last_state.name(),
+                event: event.name(),
+            })?;
+
+            let new_state = match (current, event) {
+                #(#match_arms)*
+                #catch_all
+            };
+
+            self.last_state = new_state.state();
+            self.inner = ::core::option::Option::Some(new_state);
+            if record { self.__sm_record_completions(previous_epoch); }
+            Ok(())
         }
-    };
-    let (settle, settle_quietly) = (settle(true), settle(false));
+    }
+}
+
+/// `get_available_events` and `is_available_event`, evaluating `can_*` predicates.
+fn available_events_methods(machine: &StateMachine, names: &DynamicNames<'_>) -> TokenStream2 {
+    let DynamicNames {
+        any_state: any_state_name,
+        event: event_name,
+        maybe_async,
+        maybe_await,
+        ..
+    } = names;
 
     let available_event_arms = machine.states.iter().map(|state| {
         let checks = super::branching::groups(machine, state)
@@ -336,7 +537,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
             .collect::<Vec<_>>()
     });
 
-    let available_events_method = quote! {
+    quote! {
         /// Return the payload-free events currently enabled by state and guards.
         ///
         /// Events with payloads are omitted because their guards cannot be
@@ -361,14 +562,234 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
                 _ => false,
             }
         }
-    };
+    }
+}
 
-    let generics = ctx_generics(machine);
-    let ctx_param_ty = ctx_ty(machine);
-    let startup_error = transition_error_ty(machine);
-    let scope_count = super::scopes::names(machine).len();
+/// Read-only state queries: current state, epochs, poisoning, finality,
+/// completion events and the available-event predicates.
+fn query_methods(machine: &StateMachine, names: &DynamicNames<'_>) -> TokenStream2 {
+    let DynamicNames {
+        any_state: any_state_name,
+        state_enum: state_enum_name,
+        ..
+    } = names;
     let scope_methods = super::scopes::methods(machine);
-    let (require_runtime, runtime_factories, runtime_rules) = super::runtime::generate(machine);
+    let available_events_method = available_events_methods(machine, names);
+    let finished_arms = machine.states.iter().map(|state| {
+        quote! { #any_state_name::#state(machine) => machine.is_finished() }
+    });
+    let completion_arms = machine.states.iter().map(|state| {
+        quote! { #any_state_name::#state(machine) => machine.completion_events() }
+    });
+    quote! {
+        /// Last committed state. If poisoned this is diagnostic only.
+        pub fn current_state(&self) -> #state_enum_name {
+            self.last_state
+        }
+
+        /// Increments on committed external transitions, including re-entry.
+        /// Internal transitions preserve the epoch; construction/restore start at zero.
+        pub fn transition_epoch(&self) -> u64 { self.epoch }
+        #scope_methods
+
+        /// Cancellation/unwinding dropped an owned in-flight transition.
+        /// No rollback of resources or side effects is promised.
+        pub fn is_poisoned(&self) -> bool {
+            self.inner.is_none()
+        }
+
+        #available_events_method
+
+        pub fn is_finished(&self) -> bool {
+            let Some(inner) = self.inner.as_ref() else { return false; };
+            match inner {
+                #( #finished_arms, )*
+            }
+        }
+
+        pub fn completion_events(&self) -> &'static [::state_machines::CompletionEvent] {
+            let Some(inner) = self.inner.as_ref() else { return &[]; };
+            match inner {
+                #( #completion_arms, )*
+            }
+        }
+
+        /// Drain notifications emitted by successful handle() calls.
+        pub fn take_completion_events(&mut self) -> ::state_machines::__private::Vec<::state_machines::CompletionEvent> {
+            ::core::mem::take(&mut self.completions)
+        }
+    }
+}
+
+/// `{state}_data`, `{state}_data_mut` and `set_{state}_data` for one storage spec.
+fn state_data_accessor(
+    names: &DynamicNames<'_>,
+    spec: &StateStorageSpec,
+    reachable_states: &[Ident],
+) -> TokenStream2 {
+    let DynamicNames {
+        any_state: any_state_name,
+        error_ty,
+        error_ctor,
+        ..
+    } = names;
+    let state_name = &spec.state_name;
+    let data_ty = &spec.ty;
+    let field = &spec.field;
+    let state_snake = to_snake_case(&state_name.to_string());
+    let read_method = quote::format_ident!("{}_data", state_snake);
+    let write_method = quote::format_ident!("{}_data_mut", state_snake);
+    let set_method = quote::format_ident!("set_{}_data", state_snake);
+    let state_str = state_name.to_string();
+
+    let read_match_arms = reachable_states.iter().map(|reachable| {
+        quote! { #any_state_name::#reachable(machine) => machine.#field.as_ref(), }
+    });
+
+    let write_match_arms = reachable_states.iter().map(|reachable| {
+        quote! { #any_state_name::#reachable(machine) => machine.#field.as_mut(), }
+    });
+
+    let set_match_arms = reachable_states.iter().map(|reachable| {
+        quote! {
+            #any_state_name::#reachable(machine) => {
+                machine.#field = ::core::option::Option::Some(data);
+                ::core::result::Result::Ok(())
+            }
+        }
+    });
+
+    quote! {
+        /// Read access to state data when in the `#state_name` state.
+        ///
+        /// Returns `None` if not currently in this state or if the machine
+        /// has been extracted via `into_{state}()` methods.
+        pub fn #read_method(&self) -> ::core::option::Option<&#data_ty> {
+            match self.inner.as_ref()? {
+                #(#read_match_arms)*
+                _ => ::core::option::Option::None,
+            }
+        }
+
+        /// Mutable access to state data when in the `#state_name` state.
+        ///
+        /// Returns `None` if not currently in this state or if the machine
+        /// has been extracted via `into_{state}()` methods.
+        pub fn #write_method(&mut self) -> ::core::option::Option<&mut #data_ty> {
+            match self.inner.as_mut()? {
+                #(#write_match_arms)*
+                _ => ::core::option::Option::None,
+            }
+        }
+
+        /// Set state data when in the `#state_name` state.
+        ///
+        /// Returns an error if:
+        /// - Not currently in the `#state_name` state
+        /// - The machine has been extracted via `into_{state}()` methods
+        pub fn #set_method(&mut self, data: #data_ty) -> Result<(), #error_ty> {
+            match self.inner.as_mut() {
+                ::core::option::Option::Some(state) => match state {
+                    #(#set_match_arms)*
+                    other => Err(#error_ctor::wrong_state(
+                        #state_str,
+                        other.name(),
+                        stringify!(#set_method),
+                    )),
+                },
+                ::core::option::Option::None => Err(#error_ctor::Poisoned {
+                    from: self.last_state.name(),
+                    event: stringify!(#set_method),
+                }),
+            }
+        }
+    }
+}
+
+/// State data accessor methods for every storage spec with reachable leaves.
+fn state_data_accessors(machine: &StateMachine, names: &DynamicNames<'_>) -> TokenStream2 {
+    let accessor_methods = machine.state_storage.iter().map(|spec| {
+        let reachable_states = machine
+            .hierarchy
+            .expand_state(&spec.state_name, &machine.states);
+        if reachable_states.is_empty() {
+            quote! {}
+        } else {
+            state_data_accessor(names, spec, reachable_states)
+        }
+    });
+    quote! {
+        #(#accessor_methods)*
+    }
+}
+
+/// `Default` for a generic-context wrapper whose context is itself `Default`.
+fn default_impl(machine: &StateMachine, names: &DynamicNames<'_>) -> TokenStream2 {
+    let dynamic_name = &names.dynamic;
+    // Rust eagerly checks concrete where-clauses. They cannot conditionally
+    // implement Default for a context that intentionally has no default value.
+    // Concrete-context callers construct explicitly or provide their own impl.
+    if machine.context.is_some() {
+        quote! {}
+    } else {
+        // Generic context: use C: Default bound
+        quote! {
+            impl<C: ::core::default::Default> Default for #dynamic_name<C> {
+                fn default() -> Self {
+                    Self::new(C::default())
+                }
+            }
+        }
+    }
+}
+
+/// The `DynamicMachine` trait impl. Sync machines only: an async `handle()`
+/// cannot satisfy a sync trait.
+fn dynamic_machine_trait_impl(machine: &StateMachine, names: &DynamicNames<'_>) -> TokenStream2 {
+    let DynamicNames {
+        dynamic: dynamic_name,
+        event: event_name,
+        state_enum: state_enum_name,
+        generics,
+        error_ty,
+        ..
+    } = names;
+    if machine.async_mode {
+        quote! {}
+    } else {
+        quote! {
+            impl #generics ::state_machines::DynamicMachine for #dynamic_name #generics {
+                type State = #state_enum_name;
+                type Event = #event_name;
+                type Error = #error_ty;
+                fn state(&self) -> Self::State { self.current_state() }
+                fn handle(&mut self, event: Self::Event) -> ::core::result::Result<(), Self::Error> {
+                    // Path call resolves to the inherent `handle`, not this one.
+                    #dynamic_name::handle(self, event)
+                }
+            }
+        }
+    }
+}
+
+/// The `runtime::Machine` impls, emitted for both the local and send
+/// runtime modes behind the facade's `runtime` feature gate.
+fn runtime_machine_impl(
+    machine: &StateMachine,
+    names: &DynamicNames<'_>,
+    runtime_rules: &TokenStream2,
+    settle_quietly: &TokenStream2,
+) -> TokenStream2 {
+    let DynamicNames {
+        dynamic: dynamic_name,
+        event: event_name,
+        state_enum: state_enum_name,
+        generics,
+        maybe_await,
+        error_ty,
+        ..
+    } = names;
+    let has_automatic = machine.events.iter().any(|event| event.automatic);
     let send_generics = if machine.context.is_some() {
         quote! {}
     } else if machine.async_mode {
@@ -391,7 +812,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
     let runtime_impl = quote! {
         #runtime_rules
         type Event = #event_name;
-        type Error = #dynamic_error_ty;
+        type Error = #error_ty;
         type State = #state_enum_name;
         fn state(&self) -> Self::State { self.current_state() }
         fn epoch(&self) -> u64 { self.transition_epoch() }
@@ -426,191 +847,74 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
         }
         #automatic_enabled
     };
-
-    // Sync machines only: an async `handle()` cannot satisfy a sync trait.
-    let dynamic_machine_impl = if is_async {
-        quote! {}
-    } else {
-        quote! {
-            impl #generics ::state_machines::DynamicMachine for #dynamic_name #generics {
-                type State = #state_enum_name;
-                type Event = #event_name;
-                type Error = #dynamic_error_ty;
-                fn state(&self) -> Self::State { self.current_state() }
-                fn handle(&mut self, event: Self::Event) -> ::core::result::Result<(), Self::Error> {
-                    // Path call resolves to the inherent `handle`, not this one.
-                    #dynamic_name::handle(self, event)
+    quote! {
+        ::state_machines::__sm_if_runtime! {
+            ::state_machines::__sm_runtime_mode! {
+                local {
+                    impl #generics ::state_machines::runtime::Machine for #dynamic_name #generics {
+                        #runtime_impl
+                    }
+                }
+                send {
+                    impl #send_generics ::state_machines::runtime::Machine for #dynamic_name #generics {
+                        #runtime_impl
+                    }
                 }
             }
         }
-    };
+    }
+}
 
-    let state_variants = machine.states.iter().map(|state| {
-        if state == initial_state {
-            quote! { #[default] #state }
+/// Generate the `DynamicMachine` struct with `handle()` method.
+///
+/// Example output:
+/// ```ignore
+/// pub struct DynamicFlightController {
+///     inner: AnyFlightState,
+/// }
+///
+/// impl DynamicFlightController {
+///     pub fn handle(&mut self, event: FlightEvent) -> Result<(), DynamicError> {
+///         // Runtime dispatch logic
+///     }
+/// }
+/// ```
+fn generate_dynamic_machine(machine: &StateMachine) -> TokenStream2 {
+    let names = DynamicNames::new(machine);
+    let DynamicNames {
+        dynamic: dynamic_name,
+        any_state: any_state_name,
+        state_enum: state_enum_name,
+        generics,
+        maybe_await,
+        ..
+    } = &names;
+    let async_allows = async_lint_allows(machine.async_mode);
+    let scope_count = super::scopes::names(machine).len();
+    let (require_runtime, runtime_factories, runtime_rules) = super::runtime::generate(machine);
+    let has_automatic = machine.events.iter().any(|event| event.automatic);
+    let settle = |record: bool| {
+        if has_automatic {
+            quote! { self.__sm_settle(64, #record) #maybe_await?; }
         } else {
-            quote! { #state }
-        }
-    });
-    let state_name_arms = machine.states.iter().map(|state| {
-        let state_str = state.to_string();
-        quote! { Self::#state => #state_str }
-    });
-    let finished_arms = machine.states.iter().map(|state| {
-        quote! { #any_state_name::#state(machine) => machine.is_finished() }
-    });
-    let completion_arms = machine.states.iter().map(|state| {
-        quote! { #any_state_name::#state(machine) => machine.completion_events() }
-    });
-
-    let initial_state_constructor = quote! {
-        #any_state_name::#initial_state(#machine_name::new(ctx))
-    };
-    let state_constructor_arms = machine.states.iter().map(|state| {
-        if state == initial_state {
-            return quote! {
-                #state_enum_name::#state => #any_state_name::#state(#machine_name::new(ctx))
-            };
-        }
-        let storage_inits = empty_storage_inits(machine);
-        quote! {
-            #state_enum_name::#state => #any_state_name::#state(
-                #machine_name {
-                    ctx,
-                    _state: ::core::marker::PhantomData,
-                    #( #storage_inits, )*
-                }
-            )
-        }
-    });
-
-    // Rust eagerly checks concrete where-clauses. They cannot conditionally
-    // implement Default for a context that intentionally has no default value.
-    // Concrete-context callers construct explicitly or provide their own impl.
-    let default_impl = if machine.context.is_some() {
-        quote! {}
-    } else {
-        // Generic context: use C: Default bound
-        quote! {
-            impl<C: ::core::default::Default> Default for #dynamic_name<C> {
-                fn default() -> Self {
-                    Self::new(C::default())
-                }
-            }
+            quote! {}
         }
     };
+    let (settle, settle_quietly) = (settle(true), settle(false));
 
-    // Generate state data accessor methods
-    let state_data_accessors = if machine.state_storage.is_empty() {
-        quote! {}
-    } else {
-        let accessor_methods = machine.state_storage.iter().map(|spec| {
-            let state_name = &spec.state_name;
-            let data_ty = &spec.ty;
-            let field = &spec.field;
-            let state_snake = to_snake_case(&state_name.to_string());
-            let read_method = quote::format_ident!("{}_data", state_snake);
-            let write_method = quote::format_ident!("{}_data_mut", state_snake);
-            let set_method = quote::format_ident!("set_{}_data", state_snake);
-            let state_str = state_name.to_string();
-            let reachable_states = machine
-                .hierarchy
-                .expand_state(state_name, &machine.states);
+    let state_enum = state_enum(machine, &names);
+    let constructors = constructors(machine, &names);
+    let handle = handle_method(&names, &settle);
+    let automatic_methods = super::automatic::dynamic_methods(machine);
+    let handle_one = handle_one_method(machine, &names);
+    let queries = query_methods(machine, &names);
+    let state_data_accessors = state_data_accessors(machine, &names);
+    let default_impl = default_impl(machine, &names);
+    let dynamic_machine_impl = dynamic_machine_trait_impl(machine, &names);
+    let runtime_impl = runtime_machine_impl(machine, &names, &runtime_rules, &settle_quietly);
 
-            if reachable_states.is_empty() {
-                quote! {}
-            } else {
-                let read_match_arms = reachable_states.iter().map(|reachable| {
-                    quote! { #any_state_name::#reachable(machine) => machine.#field.as_ref(), }
-                });
-
-                let write_match_arms = reachable_states.iter().map(|reachable| {
-                    quote! { #any_state_name::#reachable(machine) => machine.#field.as_mut(), }
-                });
-
-                let set_match_arms = reachable_states.iter().map(|reachable| {
-                    quote! {
-                        #any_state_name::#reachable(machine) => {
-                            machine.#field = ::core::option::Option::Some(data);
-                            ::core::result::Result::Ok(())
-                        }
-                    }
-                });
-
-                quote! {
-                    /// Read access to state data when in the `#state_name` state.
-                    ///
-                    /// Returns `None` if not currently in this state or if the machine
-                    /// has been extracted via `into_{state}()` methods.
-                    pub fn #read_method(&self) -> ::core::option::Option<&#data_ty> {
-                        match self.inner.as_ref()? {
-                            #(#read_match_arms)*
-                            _ => ::core::option::Option::None,
-                        }
-                    }
-
-                    /// Mutable access to state data when in the `#state_name` state.
-                    ///
-                    /// Returns `None` if not currently in this state or if the machine
-                    /// has been extracted via `into_{state}()` methods.
-                    pub fn #write_method(&mut self) -> ::core::option::Option<&mut #data_ty> {
-                        match self.inner.as_mut()? {
-                            #(#write_match_arms)*
-                            _ => ::core::option::Option::None,
-                        }
-                    }
-
-                    /// Set state data when in the `#state_name` state.
-                    ///
-                    /// Returns an error if:
-                    /// - Not currently in the `#state_name` state
-                    /// - The machine has been extracted via `into_{state}()` methods
-                    pub fn #set_method(&mut self, data: #data_ty) -> Result<(), #dynamic_error_ty> {
-                        match self.inner.as_mut() {
-                            ::core::option::Option::Some(state) => match state {
-                                #(#set_match_arms)*
-                                other => Err(#dynamic_error_ctor::wrong_state(
-                                    #state_str,
-                                    other.name(),
-                                    stringify!(#set_method),
-                                )),
-                            },
-                            ::core::option::Option::None => Err(#dynamic_error_ctor::Poisoned {
-                                from: self.last_state.name(),
-                                event: stringify!(#set_method),
-                            }),
-                        }
-                    }
-                }
-            }
-        }).collect::<Vec<_>>();
-
-        quote! {
-            #(#accessor_methods)*
-        }
-    };
-
-    Ok(quote! {
-        /// Runtime state selector used when constructing a dynamic machine.
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-        pub enum #state_enum_name {
-            #( #state_variants, )*
-        }
-
-        impl #state_enum_name {
-            /// Get the state name as a static string.
-            pub fn name(self) -> &'static str {
-                match self {
-                    #( #state_name_arms, )*
-                }
-            }
-        }
-
-        impl ::core::fmt::Display for #state_enum_name {
-            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-                f.write_str((*self).name())
-            }
-        }
+    quote! {
+        #state_enum
 
         /// Dynamic wrapper for runtime event dispatch.
         ///
@@ -629,129 +933,19 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
         #async_allows
         impl #generics #dynamic_name #generics {
             #runtime_factories
-            /// Construct and run the declared initial entry hooks.
-            pub #maybe_async fn initialize(ctx: #ctx_param_ty) -> Result<Self, (Self, #startup_error)> {
-                match #machine_name::new(ctx).initialize() #maybe_await {
-                    Ok(machine) => Ok(machine.into_dynamic()),
-                    Err((machine, error)) => Err((machine.into_dynamic(), error)),
-                }
-            }
-            /// Create a new dynamic machine in the declared initial state.
-            pub fn new(ctx: #ctx_param_ty) -> Self {
-                Self {
-                    epoch: 0,
-                    scope_epochs: [0; #scope_count],
-                    inner: ::core::option::Option::Some(#initial_state_constructor),
-                    last_state: #state_enum_name::#initial_state,
-                    completions: ::state_machines::__private::Vec::new(),
-                }
-            }
-
-            /// Create a new dynamic machine in the specified state.
-            pub fn new_init_state(ctx: #ctx_param_ty, state: #state_enum_name) -> Self {
-                Self {
-                    epoch: 0,
-                    scope_epochs: [0; #scope_count],
-                    inner: ::core::option::Option::Some(match state {
-                        #( #state_constructor_arms, )*
-                    }),
-                    last_state: state,
-                    completions: ::state_machines::__private::Vec::new(),
-                }
-            }
-
-            /// Dispatch an event to the state machine at runtime.
-            ///
-            /// Returns an error if:
-            /// - The event is not valid from the current state
-            /// - A guard callback fails
-            /// - An action callback fails
-            #handle_sig {
-                self.__sm_handle_one(event, true) #maybe_await?;
-                #settle
-                Ok(())
-            }
-
+            #constructors
+            #handle
             #automatic_methods
-
-            #handle_one_sig {
-                let previous_epoch = self.epoch;
-                // Take ownership of inner state temporarily
-                let current = self.inner.take().ok_or(#dynamic_error_ctor::Poisoned {
-                    from: self.last_state.name(),
-                    event: event.name(),
-                })?;
-
-                let new_state = match (current, event) {
-                    #(#match_arms)*
-                    #catch_all
-                };
-
-                self.last_state = new_state.state();
-                self.inner = ::core::option::Option::Some(new_state);
-                if record { self.__sm_record_completions(previous_epoch); }
-                Ok(())
-            }
-
-            /// Last committed state. If poisoned this is diagnostic only.
-            pub fn current_state(&self) -> #state_enum_name {
-                self.last_state
-            }
-
-            /// Increments on committed external transitions, including re-entry.
-            /// Internal transitions preserve the epoch; construction/restore start at zero.
-            pub fn transition_epoch(&self) -> u64 { self.epoch }
-            #scope_methods
-
-            /// Cancellation/unwinding dropped an owned in-flight transition.
-            /// No rollback of resources or side effects is promised.
-            pub fn is_poisoned(&self) -> bool {
-                self.inner.is_none()
-            }
-
-            #available_events_method
-
-            pub fn is_finished(&self) -> bool {
-                let Some(inner) = self.inner.as_ref() else { return false; };
-                match inner {
-                    #( #finished_arms, )*
-                }
-            }
-
-            pub fn completion_events(&self) -> &'static [::state_machines::CompletionEvent] {
-                let Some(inner) = self.inner.as_ref() else { return &[]; };
-                match inner {
-                    #( #completion_arms, )*
-                }
-            }
-
-            /// Drain notifications emitted by successful handle() calls.
-            pub fn take_completion_events(&mut self) -> ::state_machines::__private::Vec<::state_machines::CompletionEvent> {
-                ::core::mem::take(&mut self.completions)
-            }
-
+            #handle_one
+            #queries
             #state_data_accessors
         }
 
         #default_impl
         #dynamic_machine_impl
         #require_runtime
-
-        ::state_machines::__sm_if_runtime! {
-            ::state_machines::__sm_runtime_mode! {
-                local {
-                    impl #generics ::state_machines::runtime::Machine for #dynamic_name #generics {
-                        #runtime_impl
-                    }
-                }
-                send {
-                    impl #send_generics ::state_machines::runtime::Machine for #dynamic_name #generics {
-                        #runtime_impl
-                    }
-                }
-            }
-        }
-    })
+        #runtime_impl
+    }
 }
 
 /// Generate conversion methods between typestate and dynamic modes.
@@ -767,7 +961,7 @@ fn generate_dynamic_machine(machine: &StateMachine) -> Result<TokenStream2> {
 ///     pub fn into_in_flight(self) -> Result<FlightController<InFlight>, Self> { ... }
 /// }
 /// ```
-fn generate_conversions(machine: &StateMachine) -> Result<TokenStream2> {
+fn generate_conversions(machine: &StateMachine) -> TokenStream2 {
     let machine_name = &machine.name;
     let dynamic_name = quote::format_ident!("Dynamic{}", machine_name);
     let any_state_name = quote::format_ident!("Any{}State", machine_name);
@@ -819,11 +1013,11 @@ fn generate_conversions(machine: &StateMachine) -> Result<TokenStream2> {
         }
     });
 
-    Ok(quote! {
+    quote! {
         #(#into_dynamic_methods)*
 
         impl #generics #dynamic_name #generics {
             #(#extract_methods)*
         }
-    })
+    }
 }

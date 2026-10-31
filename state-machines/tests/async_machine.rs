@@ -1,8 +1,9 @@
 #![cfg(feature = "async")]
-#![allow(non_camel_case_types)]
-#![allow(non_snake_case)]
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::{
+    future::{Future, ready},
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 use pollster::block_on;
 use state_machines::state_machine;
@@ -53,20 +54,22 @@ impl<C, S> HyperdriveController<C, S> {
         CORE_STABLE.store(value, Ordering::SeqCst);
     }
 
-    async fn bridge_authorized(&self, _ctx: &C) -> bool {
-        BRIDGE_AUTHORIZED.load(Ordering::SeqCst)
+    fn bridge_authorized(&self, _ctx: &C) -> impl Future<Output = bool> {
+        ready(BRIDGE_AUTHORIZED.load(Ordering::SeqCst))
     }
 
-    async fn core_stable(&self, _ctx: &C) -> bool {
-        CORE_STABLE.load(Ordering::SeqCst)
+    fn core_stable(&self, _ctx: &C) -> impl Future<Output = bool> {
+        ready(CORE_STABLE.load(Ordering::SeqCst))
     }
 
-    async fn log_pre_engage(&self) {
+    fn log_pre_engage(&self) -> impl Future<Output = ()> {
         BEFORE_ENGAGE_CALLED.store(true, Ordering::SeqCst);
+        ready(())
     }
 
-    async fn log_post_engage(&self) {
+    fn log_post_engage(&self) -> impl Future<Output = ()> {
         AFTER_ENGAGE_CALLED.store(true, Ordering::SeqCst);
+        ready(())
     }
 }
 

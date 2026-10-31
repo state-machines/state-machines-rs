@@ -1,6 +1,4 @@
 #![cfg(feature = "inspect")]
-#![allow(non_camel_case_types)]
-#![allow(non_snake_case)]
 
 use state_machines::state_machine;
 
@@ -44,20 +42,20 @@ state_machine! {
 }
 
 impl<C, S> Probe<C, S> {
-    fn report_error(&self, _error: &state_machines::core::GuardError) {}
-    fn power_ok(&self, _ctx: &C) -> bool {
+    const fn report_error(&self, _error: &state_machines::core::GuardError) {}
+    const fn power_ok(&self, _ctx: &C) -> bool {
         true
     }
 
-    fn storm_active(&self, _ctx: &C) -> bool {
+    const fn storm_active(&self, _ctx: &C) -> bool {
         false
     }
 
-    fn spin_up(&self) {}
+    const fn spin_up(&self) {}
 
-    fn log_scan(&self) {}
+    const fn log_scan(&self) {}
 
-    fn wrap_scan(
+    const fn wrap_scan(
         &self,
         _stage: state_machines::AroundStage,
     ) -> state_machines::AroundOutcome<Idle> {

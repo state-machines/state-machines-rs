@@ -27,7 +27,7 @@ impl<M: Machine> Clone for LifecycleRule<M> {
     }
 }
 impl<M: Machine> LifecycleRule<M> {
-    fn scope(self) -> &'static str {
+    const fn scope(self) -> &'static str {
         match self {
             Self::After { scope, .. } | Self::Invoke { scope, .. } | Self::Defer { scope, .. } => {
                 scope
@@ -86,6 +86,16 @@ impl Clock for ObservedClock {
 impl<M: Machine> Runner<M> {
     /// Explicit initial entry setup. Later committed scope entries are wired by drain.
     /// Constructors/restore remain inert; the host supplies monotonic logical time.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SetupError`] with an empty `scope` and
+    /// [`SetupFailure::Poisoned`] when the machine is poisoned, or
+    /// [`SetupFailure::Schedule`] (`Backwards`) when `clock.now()` is earlier than
+    /// the last observed time. Otherwise the error names the lifecycle scope whose
+    /// rule could not be armed: [`SetupFailure::Schedule`] when its `after` timer
+    /// was rejected, or [`SetupFailure::Invoke`] when its activity could not be
+    /// reserved (poisoned, inactive scope, id overflow, or full mailbox).
     pub fn start(&mut self, clock: &impl Clock) -> Result<(), SetupError> {
         if self.machine().is_poisoned() {
             return Err(SetupError {

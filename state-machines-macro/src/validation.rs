@@ -3,7 +3,7 @@
 //! This module ensures that the state machine definition is valid
 //! before we try to generate code. It checks for:
 //! - Valid initial state (must be a leaf, not a superstate)
-//! - Event names follow snake_case convention
+//! - Event names follow `snake_case` convention
 //! - Event names don't claim `schema` (reserved for introspection)
 //! - All events have at least one transition
 //! - All transitions have source and target states
@@ -11,7 +11,7 @@
 //! - Superstates that are used as targets have initial states
 
 use crate::codegen::utils::to_snake_case;
-use crate::types::*;
+use crate::types::{Event, StateMachine, Transition, TransitionKind};
 use proc_macro2::Span;
 use std::collections::HashSet;
 use syn::Result;
@@ -28,9 +28,9 @@ fn err_if(cond: bool, span: Span, msg: &str) -> Result<()> {
     }
 }
 
-/// Check if a string is in snake_case format.
+/// Check if a string is in `snake_case` format.
 ///
-/// Valid snake_case:
+/// Valid `snake_case`:
 /// - All lowercase letters, digits, and underscores
 /// - No consecutive underscores
 /// - Doesn't start or end with underscore
@@ -79,8 +79,27 @@ impl StateMachine {
     /// The error includes a span pointing to the problematic element
     /// and a descriptive message.
     pub fn validate(&self) -> Result<()> {
+        self.validate_runtime_lifecycle()?;
+        self.validate_modes()?;
+        self.validate_initial()?;
+        let mut event_names = HashSet::new();
+        for event in &self.events {
+            self.validate_event(event, &mut event_names)?;
+        }
+        self.validate_transition_groups()?;
+        self.validate_global_callbacks()?;
+        self.validate_lifecycle()?;
+        self.validate_final_states()?;
+
+        // All validation passed!
+        Ok(())
+    }
+
+    /// `runtime:` rules need dynamic mode, declared scopes, and deferrals
+    /// naming declared external events.
+    fn validate_runtime_lifecycle(&self) -> Result<()> {
         err_if(
-            !self.runtime_lifecycle.is_empty() && !(self.dynamic_mode || cfg!(feature = "dynamic")),
+            !(self.runtime_lifecycle.is_empty() || self.dynamic_mode || cfg!(feature = "dynamic")),
             self.name.span(),
             "runtime lifecycle declarations require dynamic mode",
         )?;
@@ -116,6 +135,11 @@ impl StateMachine {
                 )?;
             }
         }
+        Ok(())
+    }
+
+    /// `snapshot` and `async` each depend on a mode or feature being on.
+    fn validate_modes(&self) -> Result<()> {
         err_if(
             self.snapshot && !(self.dynamic_mode || cfg!(feature = "dynamic")),
             self.name.span(),
@@ -125,10 +149,11 @@ impl StateMachine {
             self.async_mode && !cfg!(feature = "async"),
             self.name.span(),
             "`async: true` requires enabling the `async` feature on `state-machines`",
-        )?;
+        )
+    }
 
-        // Validate initial state
-
+    /// The initial state must be a declared leaf.
+    fn validate_initial(&self) -> Result<()> {
         // The initial state must be a leaf state, not a superstate
         // This prevents ambiguity about which child state to start in
         err_if(
@@ -142,189 +167,201 @@ impl StateMachine {
             !self.states.iter().any(|state| state == &self.initial),
             self.initial.span(),
             "`initial` must be a member of `states`",
-        )?;
-
+        )
         // Duplicate states are rejected while parsing, with the offending
         // span, so they never reach validation.
+    }
 
-        // Validate events and transitions
-
-        let mut event_names = HashSet::new();
-        for event in &self.events {
-            if let Some(scope) = &event.completion {
-                err_if(
-                    !self.hierarchy.is_superstate(scope),
-                    scope.span(),
-                    "completion must name a declared superstate",
-                )?;
-                err_if(
-                    event.transitions.iter().any(|transition| {
-                        transition.internal
-                            || transition.sources.iter().any(|source| source != scope)
-                    }),
-                    scope.span(),
-                    "completion transitions must exit their declared parent scope",
-                )?;
-            }
+    /// Event-level invariants: completion scope, uniqueness (tracked in
+    /// `event_names` across events), naming, reserved names, and at least
+    /// one transition. Then each transition in turn.
+    fn validate_event(&self, event: &Event, event_names: &mut HashSet<String>) -> Result<()> {
+        if let Some(scope) = &event.completion {
             err_if(
-                event.automatic && event.payload.is_some(),
-                event.name.span(),
-                "automatic transitions cannot require an external payload",
+                !self.hierarchy.is_superstate(scope),
+                scope.span(),
+                "completion must name a declared superstate",
             )?;
             err_if(
-                event.hierarchical && event.branching,
-                event.name.span(),
-                "choose either hierarchical specificity or ordered branching",
+                event.transitions.iter().any(|transition| {
+                    transition.internal || transition.sources.iter().any(|source| source != scope)
+                }),
+                scope.span(),
+                "completion transitions must exit their declared parent scope",
             )?;
-            err_if(
-                !event_names.insert(event.name.to_string()),
+        }
+        err_if(
+            event.automatic && event.payload.is_some(),
+            event.name.span(),
+            "automatic transitions cannot require an external payload",
+        )?;
+        err_if(
+            event.hierarchical && event.branching,
+            event.name.span(),
+            "choose either hierarchical specificity or ordered branching",
+        )?;
+        err_if(
+            !event_names.insert(event.name.to_string()),
+            event.name.span(),
+            "duplicate event",
+        )?;
+        // Validate event naming convention
+        // Events must be in snake_case to generate proper method names
+        let event_name = event.name.to_string();
+        if !is_snake_case(&event_name) {
+            let suggested = to_snake_case(&event_name);
+            return Err(syn::Error::new(
                 event.name.span(),
-                "duplicate event",
-            )?;
-            // Validate event naming convention
-            // Events must be in snake_case to generate proper method names
-            let event_name = event.name.to_string();
-            if !is_snake_case(&event_name) {
-                let suggested = to_snake_case(&event_name);
-                return Err(syn::Error::new(
-                    event.name.span(),
-                    format!(
-                        "event names must be in snake_case (e.g., '{}' instead of '{}')",
-                        suggested, event_name
-                    ),
-                ));
-            }
-
-            // `schema` collides with the inherent `schema()` emitted under the
-            // `inspect` feature. Reject it unconditionally: that feature is
-            // unified across the dependency graph (`std` implies it), so
-            // allowing it only while inspect is off would make it non-additive.
-            err_if(
-                event_name == "schema",
-                event.name.span(),
-                "`schema` is reserved for the introspection method generated by the `inspect` feature; rename the event",
-            )?;
-            err_if(
-                [
-                    "new",
-                    "initialize",
-                    "is_finished",
-                    "completion_events",
-                    "into_dynamic",
-                ]
-                .contains(&event_name.as_str()),
-                event.name.span(),
-                "event name is reserved for a generated machine method",
-            )?;
-
-            // Each event must have at least one transition
-            // An event with no transitions would be useless
-            err_if(
-                event.transitions.is_empty(),
-                event.name.span(),
-                "event must declare at least one transition",
-            )?;
-
-            for transition in &event.transitions {
-                if transition.kind == Some(TransitionKind::Local) {
-                    for source in &transition.sources {
-                        err_if(
-                            !self.hierarchy.is_superstate(source)
-                                || !self.hierarchy.expand_state(source, &self.states).contains(
-                                    &self
-                                        .hierarchy
-                                        .resolve_target(&transition.target)
-                                        .unwrap_or_else(|| transition.target.clone()),
-                                ),
-                            source.span(),
-                            "local transitions must remain inside their source superstate",
-                        )?;
-                    }
-                }
-                err_if(
-                    transition.data.is_some()
-                        && (transition.internal
-                            || !self
-                                .state_storage
-                                .iter()
-                                .any(|spec| spec.state_name == transition.target)
-                            || self.hierarchy.is_superstate(&transition.target)),
-                    transition.target.span(),
-                    "`data` factories require an external transition to a data-carrying leaf",
-                )?;
-                err_if(
-                    transition.history.is_some()
-                        && (transition.internal
-                            || !self.hierarchy.is_superstate(&transition.target)),
-                    transition.target.span(),
-                    "history targets must be external transitions to a superstate",
-                )?;
-                err_if(
-                    transition.fallback && !event.branching,
-                    event.name.span(),
-                    "`fallback` requires `branching: true`",
-                )?;
-                // Each transition must have at least one source state
-                err_if(
-                    transition.sources.is_empty(),
-                    transition.target.span(),
-                    "transition must declare at least one source state",
-                )?;
-
-                // Validate and resolve the target state
-
-                // If the target is a superstate, resolve it to its initial child
-                // This is allowed, and we'll use the superstate's initial state
-                let resolved_target = if self.hierarchy.is_superstate(&transition.target) {
-                    match self.hierarchy.resolve_target(&transition.target) {
-                        Some(resolved) => resolved,
-                        None => {
-                            // Superstate has no initial state specified
-                            return Err(syn::Error::new(
-                                transition.target.span(),
-                                "superstate target must declare an initial child",
-                            ));
-                        }
-                    }
-                } else {
-                    transition.target.clone()
-                };
-
-                // The resolved target must be a declared leaf state
-                err_if(
-                    !self.states.iter().any(|state| state == &resolved_target),
-                    transition.target.span(),
-                    "target state not declared in `states`",
-                )?;
-
-                // Validate source states
-
-                for source in &transition.sources {
-                    // Check if this is a declared leaf state
-                    let is_leaf = self.states.iter().any(|state| state == source);
-                    // Check if this is a declared superstate
-                    let is_super = self.hierarchy.is_superstate(source);
-
-                    // Source must be either a leaf or a superstate
-                    err_if(
-                        !(is_leaf || is_super),
-                        source.span(),
-                        "source state not declared in `states` or superstates",
-                    )?;
-
-                    // If it's a superstate, verify it has descendants
-                    // This catches edge cases where a superstate was declared
-                    // but has no children (which should be caught earlier,
-                    // but we check again for robustness)
-                    err_if(
-                        self.hierarchy.expand_state(source, &self.states).is_empty(),
-                        source.span(),
-                        "superstate does not resolve to any leaf states",
-                    )?;
-                }
-            }
+                format!(
+                    "event names must be in snake_case (e.g., '{suggested}' instead of '{event_name}')"
+                ),
+            ));
         }
 
+        // `schema` collides with the inherent `schema()` emitted under the
+        // `inspect` feature. Reject it unconditionally: that feature is
+        // unified across the dependency graph (`std` implies it), so
+        // allowing it only while inspect is off would make it non-additive.
+        err_if(
+            event_name == "schema",
+            event.name.span(),
+            "`schema` is reserved for the introspection method generated by the `inspect` feature; rename the event",
+        )?;
+        err_if(
+            [
+                "new",
+                "initialize",
+                "is_finished",
+                "completion_events",
+                "into_dynamic",
+            ]
+            .contains(&event_name.as_str()),
+            event.name.span(),
+            "event name is reserved for a generated machine method",
+        )?;
+
+        // Each event must have at least one transition
+        // An event with no transitions would be useless
+        err_if(
+            event.transitions.is_empty(),
+            event.name.span(),
+            "event must declare at least one transition",
+        )?;
+
+        for transition in &event.transitions {
+            self.validate_transition(event, transition)?;
+        }
+        Ok(())
+    }
+
+    /// Transition-level invariants: kind, data, history and fallback
+    /// constraints, then target and source resolution.
+    fn validate_transition(&self, event: &Event, transition: &Transition) -> Result<()> {
+        if transition.kind == Some(TransitionKind::Local) {
+            for source in &transition.sources {
+                err_if(
+                    !self.hierarchy.is_superstate(source)
+                        || !self.hierarchy.expand_state(source, &self.states).contains(
+                            &self
+                                .hierarchy
+                                .resolve_target(&transition.target)
+                                .unwrap_or_else(|| transition.target.clone()),
+                        ),
+                    source.span(),
+                    "local transitions must remain inside their source superstate",
+                )?;
+            }
+        }
+        err_if(
+            transition.data.is_some()
+                && (transition.internal
+                    || !self
+                        .state_storage
+                        .iter()
+                        .any(|spec| spec.state_name == transition.target)
+                    || self.hierarchy.is_superstate(&transition.target)),
+            transition.target.span(),
+            "`data` factories require an external transition to a data-carrying leaf",
+        )?;
+        err_if(
+            transition.history.is_some()
+                && (transition.internal || !self.hierarchy.is_superstate(&transition.target)),
+            transition.target.span(),
+            "history targets must be external transitions to a superstate",
+        )?;
+        err_if(
+            transition.fallback && !event.branching,
+            event.name.span(),
+            "`fallback` requires `branching: true`",
+        )?;
+        // Each transition must have at least one source state
+        err_if(
+            transition.sources.is_empty(),
+            transition.target.span(),
+            "transition must declare at least one source state",
+        )?;
+
+        // Validate and resolve the target state
+
+        // If the target is a superstate, resolve it to its initial child
+        // This is allowed, and we'll use the superstate's initial state
+        let resolved_target = if self.hierarchy.is_superstate(&transition.target) {
+            match self.hierarchy.resolve_target(&transition.target) {
+                Some(resolved) => resolved,
+                None => {
+                    // Superstate has no initial state specified
+                    return Err(syn::Error::new(
+                        transition.target.span(),
+                        "superstate target must declare an initial child",
+                    ));
+                }
+            }
+        } else {
+            transition.target.clone()
+        };
+
+        // The resolved target must be a declared leaf state
+        err_if(
+            !self.states.iter().any(|state| state == &resolved_target),
+            transition.target.span(),
+            "target state not declared in `states`",
+        )?;
+
+        self.validate_transition_sources(transition)
+    }
+
+    /// Every source must be a declared leaf or a superstate with leaves.
+    fn validate_transition_sources(&self, transition: &Transition) -> Result<()> {
+        for source in &transition.sources {
+            // Check if this is a declared leaf state
+            let is_leaf = self.states.iter().any(|state| state == source);
+            // Check if this is a declared superstate
+            let is_super = self.hierarchy.is_superstate(source);
+
+            // Source must be either a leaf or a superstate
+            err_if(
+                !(is_leaf || is_super),
+                source.span(),
+                "source state not declared in `states` or superstates",
+            )?;
+
+            // If it's a superstate, verify it has descendants
+            // This catches edge cases where a superstate was declared
+            // but has no children (which should be caught earlier,
+            // but we check again for robustness)
+            err_if(
+                self.hierarchy.expand_state(source, &self.states).is_empty(),
+                source.span(),
+                "superstate does not resolve to any leaf states",
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Per-state edge groups: ambiguity needs `branching`/`hierarchical`,
+    /// hierarchical handlers need distinct scopes, branch candidates need
+    /// guards with a guardless fallback last.
+    fn validate_transition_groups(&self) -> Result<()> {
         for state in &self.states {
             for edges in crate::codegen::branching::groups(self, state) {
                 let event = self.event(&edges[0].event);
@@ -369,12 +406,13 @@ impl StateMachine {
                 }
             }
         }
+        Ok(())
+    }
 
-        // Validate global callback filters
-
-        // Every state referenced in a `from`/`to` filter must be a declared
-        // leaf or superstate, and every event in an `on` filter must be a
-        // declared event. Otherwise a typo would silently never match.
+    /// Every state referenced in a `from`/`to` filter must be a declared
+    /// leaf or superstate, and every event in an `on` filter must be a
+    /// declared event. Otherwise a typo would silently never match.
+    fn validate_global_callbacks(&self) -> Result<()> {
         let buckets = [
             &self.callbacks.before,
             &self.callbacks.after,
@@ -401,7 +439,11 @@ impl StateMachine {
                 )?;
             }
         }
+        Ok(())
+    }
 
+    /// `lifecycle:` entries name declared states, once each.
+    fn validate_lifecycle(&self) -> Result<()> {
         let mut lifecycle_states = HashSet::new();
         for hooks in &self.lifecycle {
             err_if(
@@ -415,7 +457,11 @@ impl StateMachine {
                 "duplicate state lifecycle",
             )?;
         }
+        Ok(())
+    }
 
+    /// Final states are declared, unique, and have no outgoing transitions.
+    fn validate_final_states(&self) -> Result<()> {
         let mut finals = HashSet::new();
         for state in &self.final_states {
             err_if(
@@ -439,8 +485,6 @@ impl StateMachine {
                 "final states cannot declare their own outgoing transitions",
             )?;
         }
-
-        // All validation passed!
         Ok(())
     }
 }

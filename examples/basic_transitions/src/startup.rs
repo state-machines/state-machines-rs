@@ -25,7 +25,7 @@ state_machine! {
     }
 }
 impl<S> OwnedAirlock<S> {
-    fn take_seal(&self, request: &mut SealRequest) -> Seal {
+    const fn take_seal(&self, request: &mut SealRequest) -> Seal {
         Seal(request.0.take().expect("one owned seal per entry"))
     }
 }

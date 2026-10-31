@@ -4,7 +4,11 @@ use state_machines::{
     state_machine,
 };
 use std::assert_matches;
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::Cell,
+    future::{Future, ready},
+    rc::Rc,
+};
 
 struct VirtualClock(Cell<u64>);
 impl Clock for VirtualClock {
@@ -144,9 +148,9 @@ fn deadlines_then_registration_order_determine_delivery_order() {
         fn is_poisoned(&self) -> bool {
             false
         }
-        async fn dispatch(&mut self, event: u8) -> Result<(), ()> {
+        fn dispatch(&mut self, event: u8) -> impl Future<Output = Result<(), ()>> {
             self.0.push(event);
-            Ok(())
+            ready(Ok(()))
         }
     }
     let clock = VirtualClock(Cell::new(0));
@@ -178,7 +182,7 @@ mod partial_failure {
         }
     }
     impl<Ctx, S> Partial<Ctx, S> {
-        fn reject(&self) -> Result<(), Failure> {
+        const fn reject(&self) -> Result<(), Failure> {
             Err(Failure::Rejected)
         }
     }
