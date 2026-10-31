@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.33.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-v0.32.1...state-machines-v0.33.0) (2026-10-31)
+
+
+### Features
+
+* re-export serde crates and hold every workspace to clippy pedantic ([49ab801](https://github.com/state-machines/state-machines-rs/commit/49ab8018ee51ae971c288f70689311398acec245))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * state-machines-core bumped from 0.13.1 to 0.14.0
+    * state-machines-macro bumped from 0.32.1 to 0.33.0
+
 ## [0.32.1](https://github.com/state-machines/state-machines-rs/compare/state-machines-v0.32.0...state-machines-v0.32.1) (2026-10-14)
 
 
