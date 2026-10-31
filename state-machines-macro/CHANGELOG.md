@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-macro-v0.32.1...state-machines-macro-v0.33.0) (2026-10-31)
+
+
+### Features
+
+* re-export serde crates and hold every workspace to clippy pedantic ([49ab801](https://github.com/state-machines/state-machines-rs/commit/49ab8018ee51ae971c288f70689311398acec245))
+
 ## [0.32.1](https://github.com/state-machines/state-machines-rs/compare/state-machines-macro-v0.32.0...state-machines-macro-v0.32.1) (2026-10-14)
 
 
