@@ -390,11 +390,7 @@ fn storage_transfers(
                 let source_inside = spec_covers(machine, spec, source_state);
                 let target_inside = spec_covers(machine, spec, target_state);
                 match (source_inside, target_inside) {
-                    (true, true)
-                        if !machine.reentered_superstate(source_state, edge, &spec.state_name) =>
-                    {
-                        prev_binding(field)
-                    }
+                    (true, true) if !edge.exit.contains(&spec.state_name) => prev_binding(field),
                     (_, true) => init,
                     _ => clear,
                 }
@@ -421,7 +417,7 @@ fn preserved_storage_fields(
         .iter()
         .filter(|spec| {
             machine.hierarchy.is_superstate(&spec.state_name)
-                && !machine.reentered_superstate(source_state, edge, &spec.state_name)
+                && !edge.exit.contains(&spec.state_name)
                 && spec_covers(machine, spec, source_state)
                 && spec_covers(machine, spec, target_state)
         })
@@ -696,17 +692,9 @@ impl<'a> TransitionCtx<'a> {
 
     /// Statements run on `self` before it is torn down: around callbacks,
     /// guards, global and local before callbacks, then exit hooks.
-    fn pre_transition_calls(
-        &self,
-        before: &Phase,
-        source_state: &Ident,
-        target_state: &Ident,
-        check_guards: bool,
-    ) -> Vec<TokenStream2> {
+    fn pre_transition_calls(&self, before: &Phase, check_guards: bool) -> Vec<TokenStream2> {
         let edge = self.edge;
-        let (exit_hooks, _) = self
-            .machine
-            .lifecycle_callbacks(source_state, target_state, edge);
+        let (exit_hooks, _) = self.machine.lifecycle_callbacks(edge);
         let guard_checks = if check_guards {
             self.guard_checks()
         } else {
@@ -738,16 +726,11 @@ impl<'a> TransitionCtx<'a> {
 
     /// Statements run on `new_machine` once it exists: entry hooks, local and
     /// global after callbacks, around callbacks, then completion hooks.
-    fn post_transition_calls(
-        &self,
-        after: &Phase,
-        source_state: &Ident,
-        target_state: &Ident,
-    ) -> Vec<TokenStream2> {
+    fn post_transition_calls(&self, after: &Phase) -> Vec<TokenStream2> {
         let edge = self.edge;
         let machine = self.machine;
-        let (_, enter_hooks) = machine.lifecycle_callbacks(source_state, target_state, edge);
-        let completed = super::finality::completed(machine, target_state);
+        let (_, enter_hooks) = machine.lifecycle_callbacks(edge);
+        let completed = super::finality::completed(machine, &edge.target);
         let complete_hooks = completed
             .iter()
             .filter(|_| !edge.internal)
@@ -877,8 +860,8 @@ pub(super) fn generate_transition_method(
         },
         owner: quote! { old_machine },
     };
-    let pre_calls = ctx.pre_transition_calls(&before, source_state, target_state, check_guards);
-    let post_calls = ctx.post_transition_calls(&after, source_state, target_state);
+    let pre_calls = ctx.pre_transition_calls(&before, check_guards);
+    let post_calls = ctx.post_transition_calls(&after);
     let history_update = super::history::record_exit(machine, source_state, edge);
 
     quote! {

@@ -77,51 +77,20 @@ impl StateMachine {
             .collect()
     }
 
-    /// The shared ancestor prefix is not exited or re-entered. External
-    /// self-transitions still exit and enter the leaf.
-    pub fn lifecycle_callbacks(
-        &self,
-        source: &Ident,
-        target: &Ident,
-        edge: &TransitionEdge,
-    ) -> (Vec<Ident>, Vec<Ident>) {
-        if edge.internal {
-            return (Vec::new(), Vec::new());
-        }
-        let source_path = self.active_path(source);
-        let target_path = self.active_path(target);
-        let common = edge.retained_prefix(&source_path, &target_path);
-        let exit = source_path[common..]
+    pub fn lifecycle_callbacks(&self, edge: &TransitionEdge) -> (Vec<Ident>, Vec<Ident>) {
+        let exit = edge
+            .exit
             .iter()
-            .rev()
             .flat_map(|state| self.lifecycle_for(state))
             .flat_map(|hooks| hooks.exit.iter().cloned())
             .collect();
-        let enter = target_path[common..]
+        let enter = edge
+            .entry
             .iter()
             .flat_map(|state| self.lifecycle_for(state))
             .flat_map(|hooks| hooks.enter.iter().cloned())
             .collect();
         (exit, enter)
-    }
-
-    pub fn reentered_superstate(
-        &self,
-        source: &Ident,
-        edge: &TransitionEdge,
-        owner: &Ident,
-    ) -> bool {
-        if edge.kind != Some(TransitionKind::External) {
-            return false;
-        }
-        let path = self.hierarchy.ancestors_of(source);
-        match (
-            path.iter().position(|s| s == &edge.scope),
-            path.iter().position(|s| s == owner),
-        ) {
-            (Some(domain), Some(index)) => index >= domain,
-            _ => false,
-        }
     }
 }
 
@@ -212,32 +181,8 @@ pub struct TransitionEdge {
     pub fallback: bool,
     pub history: Option<HistoryChoice>,
     pub origin: usize,
-}
-
-impl TransitionEdge {
-    /// Leading scopes of `source_path` this edge keeps active; both paths
-    /// come from `StateMachine::active_path`.
-    pub fn retained_prefix(&self, source_path: &[Ident], target_path: &[Ident]) -> usize {
-        if self.internal {
-            return source_path.len();
-        }
-        let common = source_path
-            .iter()
-            .zip(target_path)
-            .take_while(|(a, b)| a == b)
-            .count()
-            .min(source_path.len() - 1);
-        if self.kind == Some(TransitionKind::External) {
-            common.min(
-                source_path
-                    .iter()
-                    .position(|state| state == &self.scope)
-                    .expect("an external edge's scope is on its source path"),
-            )
-        } else {
-            common
-        }
-    }
+    pub exit: Vec<Ident>,
+    pub entry: Vec<Ident>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

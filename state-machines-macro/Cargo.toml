@@ -17,6 +17,7 @@ include = ["src/**/*", "!src/**/tests.rs", "Cargo.toml", "../README.md", "LICENS
 proc-macro = true
 
 [dependencies]
+harel-machines = "0.2"
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "3", features = ["full"] }

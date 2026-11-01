@@ -43,7 +43,7 @@ fn automatic_step_arms(
                         format_ident!("__sm_auto_{}", event.name)
                     };
                     let target = &edge.target;
-                    let commit = super::scopes::commit(machine, source, edge);
+                    let commit = super::scopes::commit(machine, edge);
                     quote! {
                         if #history && (#enabled) {
                             match current.#helper() #await_ {

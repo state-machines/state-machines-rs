@@ -106,9 +106,6 @@ pub fn condition_on(edge: &TransitionEdge, receiver: &TokenStream) -> TokenStrea
 }
 
 pub fn record_exit(machine: &StateMachine, source: &Ident, edge: &TransitionEdge) -> TokenStream {
-    if edge.internal {
-        return quote! {};
-    }
     let index = machine
         .states
         .iter()
@@ -116,12 +113,7 @@ pub fn record_exit(machine: &StateMachine, source: &Ident, edge: &TransitionEdge
         .expect("edge sources are declared leaf states");
     let updates = regions(machine)
         .into_iter()
-        .filter(|region| {
-            let leaves = machine.hierarchy.expand_state(region, &machine.states);
-            leaves.contains(source)
-                && (!leaves.contains(&edge.target)
-                    || machine.reentered_superstate(source, edge, region))
-        })
+        .filter(|region| edge.exit.contains(region))
         .map(|region| {
             let field = field(region);
             quote! { new_machine.#field = Some(#index); }

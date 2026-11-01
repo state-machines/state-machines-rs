@@ -164,6 +164,7 @@ impl MachineFields {
 
         // Build the transition graph from events
         machine.build_transition_graph();
+        machine.resolve_domains()?;
 
         Ok(machine)
     }
@@ -938,6 +939,8 @@ impl StateMachine {
                                     fallback: transition.fallback,
                                     history: history.clone(),
                                     origin,
+                                    exit: Vec::new(),
+                                    entry: Vec::new(),
                                 },
                             );
                         }

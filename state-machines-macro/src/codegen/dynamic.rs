@@ -318,7 +318,7 @@ fn handle_success(
     let any_state_name = &names.any_state;
     if edges.len() > 1 {
         let commits = edges.iter().enumerate().map(|(index, edge)| {
-            let commit = super::scopes::commit(machine, state, edge);
+            let commit = super::scopes::commit(machine, edge);
             quote! { #index => { #commit } }
         });
         let outcome = super::branching::outcome_name(machine, state, &edges[0].event);
@@ -334,7 +334,7 @@ fn handle_success(
         }
     } else {
         let target = &edges[0].target;
-        let commit = super::scopes::commit(machine, state, edges[0]);
+        let commit = super::scopes::commit(machine, edges[0]);
         quote! { {
             #commit
             #any_state_name::#target(new_machine)

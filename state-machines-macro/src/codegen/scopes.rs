@@ -2,7 +2,6 @@
 use crate::types::{StateMachine, TransitionEdge};
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::Ident;
 
 pub fn names(machine: &StateMachine) -> Vec<String> {
     let mut names: Vec<_> = machine
@@ -16,14 +15,12 @@ pub fn names(machine: &StateMachine) -> Vec<String> {
     names
 }
 
-pub fn commit(machine: &StateMachine, source: &Ident, edge: &TransitionEdge) -> TokenStream {
+pub fn commit(machine: &StateMachine, edge: &TransitionEdge) -> TokenStream {
     if edge.internal {
         return quote! {};
     }
     let names = names(machine);
-    let path = machine.active_path(source);
-    let prefix = edge.retained_prefix(&path, &machine.active_path(&edge.target));
-    let exited = path[prefix..].iter().map(|scope| {
+    let exited = edge.exit.iter().map(|scope| {
         names
             .iter()
             .position(|name| scope == name)

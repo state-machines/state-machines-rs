@@ -1451,7 +1451,8 @@ their own outgoing edges; inherited exits remain available.
 ### Composite transition kinds
 
 `kind: internal` is the targetless form of `internal: true`. `kind: local`
-requires a superstate source and stays within it, preserving the parent.
+requires a superstate source and stays within it, preserving the parent and
+exiting every active state below it.
 `kind: external` exits and re-enters the declared source scope even when its
 target is inside that scope: parent entry/exit hooks run and parent data resets.
 History records successful re-entry exits too. Omit `kind` to retain legacy

@@ -66,3 +66,35 @@ fn dynamic_machine_trait_carries_the_declared_error_type() {
     }
     assert_error::<DynamicComposite>();
 }
+
+state_machine! {
+    name: Nested, context: Log, initial: X,
+    states: [superstate Outer { superstate Inner { state X, state Y }, state Z }],
+    lifecycle: {
+        Outer { enter: [enter_outer] },
+        Inner { enter: [enter_inner], exit: [exit_inner] },
+    },
+    events {
+        local { transition: { from: Outer, to: Y, kind: local } }
+        legacy { transition: { from: Outer, to: X } }
+    }
+}
+impl<S> Nested<S> {
+    fn enter_outer(&self) {
+        self.ctx.0.borrow_mut().push("enter_outer");
+    }
+    fn enter_inner(&self) {
+        self.ctx.0.borrow_mut().push("enter_inner");
+    }
+    fn exit_inner(&self) {
+        self.ctx.0.borrow_mut().push("exit_inner");
+    }
+}
+
+#[test]
+fn local_exits_every_active_state_below_its_source() {
+    let machine = Nested::new(Log::default()).local().unwrap();
+    assert_eq!(*machine.ctx.0.borrow(), ["exit_inner", "enter_inner"]);
+    let machine = machine.legacy().unwrap();
+    assert_eq!(*machine.ctx.0.borrow(), ["exit_inner", "enter_inner"]);
+}

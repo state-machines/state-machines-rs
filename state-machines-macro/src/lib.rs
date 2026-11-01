@@ -35,6 +35,7 @@
 use proc_macro::TokenStream;
 
 // Module declarations
+mod chart;
 mod codegen;
 mod parser;
 mod regions;
