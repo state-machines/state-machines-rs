@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.34.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-v0.33.0...state-machines-v0.34.0) (2026-11-01)
+
+
+### Features
+
+* **macro:** resolve transition domains with harel-machines ([650f18f](https://github.com/state-machines/state-machines-rs/commit/650f18f54369660af3ef5080c1c2f79c7f4e525d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * state-machines-macro bumped from 0.33.0 to 0.34.0
+
 ## [0.33.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-v0.32.1...state-machines-v0.33.0) (2026-10-31)
 
 
