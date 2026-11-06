@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.34.1](https://github.com/state-machines/state-machines-rs/compare/state-machines-macro-v0.34.0...state-machines-macro-v0.34.1) (2026-11-06)
+
+
+### Bug Fixes
+
+* satisfy pedantic/nursery clippy in macro parser helpers ([f55f069](https://github.com/state-machines/state-machines-rs/commit/f55f069eb2ad5a755646d2c930affb7fa5fbf6cd))
+* share optional colon/comma skipping in macro parser ([4c0e015](https://github.com/state-machines/state-machines-rs/commit/4c0e015cd2c24ba5fbdf699c5a0ff1d1de2e2db3))
+
 ## [0.34.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-macro-v0.33.0...state-machines-macro-v0.34.0) (2026-11-01)
 
 
