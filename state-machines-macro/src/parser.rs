@@ -762,7 +762,7 @@ impl Hooks {
 // ========== Helper Functions ==========
 
 /// Consume an optional trailing comma if one is present.
-pub(crate) fn skip_optional_comma(input: &ParseBuffer<'_>) -> Result<()> {
+pub fn skip_optional_comma(input: &ParseBuffer<'_>) -> Result<()> {
     if input.peek(Token![,]) {
         input.parse::<Token![,]>()?;
     }
@@ -770,7 +770,7 @@ pub(crate) fn skip_optional_comma(input: &ParseBuffer<'_>) -> Result<()> {
 }
 
 /// Consume an optional `:` separator if one is present.
-pub(crate) fn skip_optional_colon(input: &ParseBuffer<'_>) -> Result<()> {
+pub fn skip_optional_colon(input: &ParseBuffer<'_>) -> Result<()> {
     if input.peek(Token![:]) {
         input.parse::<Token![:]>()?;
     }

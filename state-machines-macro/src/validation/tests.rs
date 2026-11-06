@@ -7,7 +7,7 @@ fn validate(tokens: proc_macro2::TokenStream) -> Result<()> {
 
 /// Validate `event` inside a machine with a `Region { A }` superstate and a
 /// sibling leaf `B`, expecting an error mentioning `expected`.
-fn assert_region_event_rejected(event: proc_macro2::TokenStream, expected: &str) {
+fn assert_region_event_rejected(event: &proc_macro2::TokenStream, expected: &str) {
     let error = validate(quote! {
         name: Test, initial: A,
         states: [superstate Region { state A }, B],
@@ -174,7 +174,7 @@ fn rejects_unsupported_automatic_payloads_and_completion_scopes() {
             "scope",
         ),
     ] {
-        assert_region_event_rejected(event, expected);
+        assert_region_event_rejected(&event, expected);
     }
 }
 
@@ -209,7 +209,7 @@ fn rejects_ambiguous_hierarchy_policies_and_invalid_composite_kinds() {
             "conflicts",
         ),
     ] {
-        assert_region_event_rejected(event, expected);
+        assert_region_event_rejected(&event, expected);
     }
 }
 
@@ -220,7 +220,7 @@ fn factories_must_target_data_leaves_and_startup_name_is_reserved() {
         quote! { go { transition: { from: A, internal: true, data: own } } },
         quote! { go { transition: { from: B, to: Region, data: own } } },
     ] {
-        assert_region_event_rejected(event, "data");
+        assert_region_event_rejected(&event, "data");
     }
     let error = validate(quote! {
         name: Test, initial: A, states: [A],
