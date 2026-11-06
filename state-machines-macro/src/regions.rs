@@ -1,5 +1,6 @@
 //! Named orthogonal declarations compile into the existing Parallel/Runner driver.
 use crate::codegen::utils::to_pascal_case;
+use crate::parser::{skip_optional_colon, skip_optional_comma};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::HashSet;
@@ -51,9 +52,7 @@ impl Parse for Regions {
                     "duplicate region machine field",
                 ));
             }
-            if input.peek(Token![:]) {
-                input.parse::<Token![:]>()?;
-            }
+            skip_optional_colon(input)?;
             match key.to_string().as_str() {
                 "name" => name = Some(input.parse()?),
                 "snapshot" => snapshot = input.parse::<syn::LitBool>()?.value,
@@ -63,16 +62,12 @@ impl Parse for Regions {
                     braced!(content in input);
                     while !content.is_empty() {
                         events.push(content.parse()?);
-                        if content.peek(Token![,]) {
-                            content.parse::<Token![,]>()?;
-                        }
+                        skip_optional_comma(&content)?;
                     }
                 }
                 _ => return Err(syn::Error::new(key.span(), "unknown region machine field")),
             }
-            if input.peek(Token![,]) {
-                input.parse::<Token![,]>()?;
-            }
+            skip_optional_comma(input)?;
         }
         let name = name.ok_or_else(|| input.error("missing machine name"))?;
         let result = Self {

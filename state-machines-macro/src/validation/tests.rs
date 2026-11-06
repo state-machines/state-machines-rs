@@ -5,6 +5,18 @@ fn validate(tokens: proc_macro2::TokenStream) -> Result<()> {
     syn::parse2::<StateMachine>(tokens)?.validate()
 }
 
+/// Validate `event` inside a machine with a `Region { A }` superstate and a
+/// sibling leaf `B`, expecting an error mentioning `expected`.
+fn assert_region_event_rejected(event: proc_macro2::TokenStream, expected: &str) {
+    let error = validate(quote! {
+        name: Test, initial: A,
+        states: [superstate Region { state A }, B],
+        events { #event }
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains(expected), "{error}");
+}
+
 #[test]
 fn rejects_ambiguous_graphs() {
     for events in [
@@ -162,13 +174,7 @@ fn rejects_unsupported_automatic_payloads_and_completion_scopes() {
             "scope",
         ),
     ] {
-        let error = validate(quote! {
-            name: Test, initial: A,
-            states: [superstate Region { state A }, B],
-            events { #event }
-        })
-        .unwrap_err();
-        assert!(error.to_string().contains(expected), "{error}");
+        assert_region_event_rejected(event, expected);
     }
 }
 
@@ -203,13 +209,7 @@ fn rejects_ambiguous_hierarchy_policies_and_invalid_composite_kinds() {
             "conflicts",
         ),
     ] {
-        let error = validate(quote! {
-            name: Test, initial: A,
-            states: [superstate Region { state A }, B],
-            events { #event }
-        })
-        .unwrap_err();
-        assert!(error.to_string().contains(expected), "{error}");
+        assert_region_event_rejected(event, expected);
     }
 }
 
@@ -220,13 +220,7 @@ fn factories_must_target_data_leaves_and_startup_name_is_reserved() {
         quote! { go { transition: { from: A, internal: true, data: own } } },
         quote! { go { transition: { from: B, to: Region, data: own } } },
     ] {
-        let error = validate(quote! {
-            name: Test, initial: A,
-            states: [superstate Region { state A }, B],
-            events { #event }
-        })
-        .unwrap_err();
-        assert!(error.to_string().contains("data"), "{error}");
+        assert_region_event_rejected(event, "data");
     }
     let error = validate(quote! {
         name: Test, initial: A, states: [A],

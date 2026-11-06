@@ -91,18 +91,14 @@ impl MachineFields {
             }
             "events" => {
                 // Optional colon for backwards compatibility
-                if input.peek(Token![:]) {
-                    input.parse::<Token![:]>()?;
-                }
+                skip_optional_colon(input)?;
                 let block;
                 braced!(block in input);
                 self.events = Some(parse_events(&block)?);
             }
             "callbacks" => {
                 // Optional colon, mirroring `events`
-                if input.peek(Token![:]) {
-                    input.parse::<Token![:]>()?;
-                }
+                skip_optional_colon(input)?;
                 let block;
                 braced!(block in input);
                 self.callbacks = parse_global_callbacks(&block)?;
@@ -591,9 +587,7 @@ pub fn parse_global_callbacks(input: &ParseBuffer<'_>) -> Result<GlobalCallbacks
         };
 
         // Optional colon before the bracketed list
-        if input.peek(Token![:]) {
-            input.parse::<Token![:]>()?;
-        }
+        skip_optional_colon(input)?;
 
         let list;
         bracketed!(list in input);
@@ -768,9 +762,17 @@ impl Hooks {
 // ========== Helper Functions ==========
 
 /// Consume an optional trailing comma if one is present.
-fn skip_optional_comma(input: &ParseBuffer<'_>) -> Result<()> {
+pub(crate) fn skip_optional_comma(input: &ParseBuffer<'_>) -> Result<()> {
     if input.peek(Token![,]) {
         input.parse::<Token![,]>()?;
+    }
+    Ok(())
+}
+
+/// Consume an optional `:` separator if one is present.
+pub(crate) fn skip_optional_colon(input: &ParseBuffer<'_>) -> Result<()> {
+    if input.peek(Token![:]) {
+        input.parse::<Token![:]>()?;
     }
     Ok(())
 }
