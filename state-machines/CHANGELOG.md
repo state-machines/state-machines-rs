@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.34.2](https://github.com/state-machines/state-machines-rs/compare/state-machines-v0.34.1...state-machines-v0.34.2) (2026-11-16)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * state-machines-macro bumped from 0.34.1 to 0.34.2
+
 ## [0.34.1](https://github.com/state-machines/state-machines-rs/compare/state-machines-v0.34.0...state-machines-v0.34.1) (2026-11-06)
 
 
