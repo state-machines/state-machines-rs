@@ -1,7 +1,5 @@
 use crate::types::{StateMachine, TransitionEdge, TransitionKind};
-use harel_machines::{
-    Chart, Configuration, Error as ChartError, MAX_STATES, State, StateId, TransitionKind as Kind,
-};
+use harel_machines::{Chart, MAX_STATES, State, StateId, TransitionKind as Kind};
 use std::collections::HashMap;
 use syn::{Error, Ident, Result};
 
@@ -97,14 +95,11 @@ impl Tree {
         })
     }
 
-    fn resolve(
-        &self,
-        requests: &[Option<Request>],
-    ) -> std::result::Result<Vec<Resolved>, ChartError> {
+    fn resolve(&self, requests: &[Option<Request>]) -> std::result::Result<Vec<Resolved>, String> {
         match self.states.len() {
-            0..=64 => resolve_in::<64>(&self.states, requests),
-            65..=4096 => resolve_in::<4096>(&self.states, requests),
-            _ => resolve_in::<MAX_STATES>(&self.states, requests),
+            0..=64 => on_chart_stack::<64>(&self.states, requests),
+            65..=4096 => on_chart_stack::<4096>(&self.states, requests),
+            _ => on_chart_stack::<MAX_STATES>(&self.states, requests),
         }
     }
 
@@ -115,23 +110,44 @@ impl Tree {
     }
 }
 
+/// A `Chart<N>` keeps its state and scratch space on the stack: building one
+/// and resolving on it takes about 6 MiB at `MAX_STATES` in a debug build
+/// (harel-machines' measured figures), more than rustc promises a proc-macro.
+/// The work runs on a thread whose stack is sized from `N`.
+fn on_chart_stack<const N: usize>(
+    states: &[State],
+    requests: &[Option<Request>],
+) -> std::result::Result<Vec<Resolved>, String> {
+    const BASE: usize = 1 << 20;
+    const PER_STATE: usize = 160;
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name("harel-chart".into())
+            .stack_size(BASE + N * PER_STATE)
+            .spawn_scoped(scope, || resolve_in::<N>(states, requests))
+            .map_err(|error| format!("cannot start the chart thread: {error}"))?
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    })
+}
+
 fn resolve_in<const N: usize>(
     states: &[State],
     requests: &[Option<Request>],
-) -> std::result::Result<Vec<Resolved>, ChartError> {
-    let chart = Chart::<N>::new(std::array::from_fn(|index| {
-        states.get(index).copied().unwrap_or(State::atomic(None))
-    }));
+) -> std::result::Result<Vec<Resolved>, String> {
+    let chart = Chart::<N>::new(states).map_err(|error| error.to_string())?;
     requests
         .iter()
         .map(|request| {
             let Some(request) = request else {
                 return Ok((Vec::new(), Vec::new()));
             };
-            let mut configuration = Configuration::<N>::new();
-            configuration.insert(request.leaf);
-            let transition =
-                chart.resolve(&configuration, request.source, request.target, request.kind)?;
+            let transition = chart
+                .configuration(&[request.leaf])
+                .and_then(|configuration| {
+                    chart.resolve(&configuration, request.source, request.target, request.kind)
+                })
+                .map_err(|refusal| refusal.to_string())?;
             Ok((transition.exit().to_vec(), transition.entry().to_vec()))
         })
         .collect()
@@ -157,3 +173,6 @@ impl StateMachine {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;
