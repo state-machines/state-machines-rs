@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.34.2](https://github.com/state-machines/state-machines-rs/compare/state-machines-macro-v0.34.1...state-machines-macro-v0.34.2) (2026-11-16)
+
+
+### Bug Fixes
+
+* **macro:** resolve transition domains with harel-machines 0.3 ([46d8485](https://github.com/state-machines/state-machines-rs/commit/46d8485f410cec8a52f9037af06212a75e86cfc1))
+* **macro:** resolve transition domains with harel-machines 0.3 ([e1a479d](https://github.com/state-machines/state-machines-rs/commit/e1a479d8efe6aaafb102fd0c07fc5e0135e6f1a4))
+
 ## [0.34.1](https://github.com/state-machines/state-machines-rs/compare/state-machines-macro-v0.34.0...state-machines-macro-v0.34.1) (2026-11-06)
 
 
