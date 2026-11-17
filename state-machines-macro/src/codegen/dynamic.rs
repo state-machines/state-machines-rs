@@ -668,7 +668,8 @@ fn query_methods(machine: &StateMachine, names: &DynamicNames<'_>) -> TokenStrea
             }
         }
 
-        /// Drain notifications emitted by successful handle() calls.
+        /// Drain completion notifications queued by handle()/stabilize(), including
+        /// calls that entered a final state and then returned CommittedCallbackFailed.
         pub fn take_completion_events(&mut self) -> ::state_machines::__private::Vec<::state_machines::CompletionEvent> {
             ::core::mem::take(&mut self.completions)
         }

@@ -500,9 +500,14 @@ impl<E> DynamicError<E> {
         }
     }
 
-    /// Whether the machine changed state before this error: only
-    /// [`CommittedCallbackFailed`](Self::CommittedCallbackFailed). Every
-    /// other error leaves the last committed state in place.
+    /// Whether the failing step committed its state change before the error:
+    /// only [`CommittedCallbackFailed`](Self::CommittedCallbackFailed).
+    ///
+    /// This describes the failing transition, not the whole dispatch. A
+    /// `handle()` that commits one transition and then has a later automatic
+    /// microstep rejected returns a non-committed error while the machine sits
+    /// in that earlier committed state; read the current state, never infer it
+    /// from this flag, before retrying.
     #[must_use]
     pub const fn is_committed(&self) -> bool {
         matches!(self, Self::CommittedCallbackFailed { .. })

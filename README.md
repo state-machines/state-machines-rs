@@ -112,8 +112,9 @@ and rejects directly declared outgoing transitions. Inherited parent exits remai
 legal. `is_finished()` identifies a root final;
 `completion_events()` reports `CompletionEvent::Machine` or
 `CompletionEvent::Superstate("Parent")` for a nested final's immediate parent.
-Dynamic `take_completion_events()` drains notifications from successful
-`handle()`/`stabilize()` calls only; runtime-driven dispatch (`Runner`,
+Dynamic `take_completion_events()` drains the notifications `handle()`/`stabilize()`
+queue whenever they enter a final state, including calls that then return
+`CommittedCallbackFailed`; drain after errors too. Runtime-driven dispatch (`Runner`,
 `Parallel`, regions) does not queue them. A parent's `lifecycle: { Parent { complete: [notify] } }`
 hook runs after the ordinary transition callbacks. Completion does not
 implicitly mark every ancestor complete. Use parent completion triggers for
