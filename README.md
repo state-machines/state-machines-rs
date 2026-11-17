@@ -4,7 +4,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/state-machines.svg)](https://crates.io/crates/state-machines)
 [![Documentation](https://docs.rs/state-machines/badge.svg)](https://docs.rs/state-machines)
-[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](https://github.com/state-machines/state-machines-rs#license)
 [![GitHub](https://img.shields.io/badge/github-state--machines/state--machines--rs-blue)](https://github.com/state-machines/state-machines-rs)
 
 ## About This Project
@@ -1757,7 +1757,7 @@ Contributions are welcome! This is a learning project, so:
 
 Licensed under either of:
 
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0>)
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
+- Apache License, Version 2.0 ([LICENSE-APACHE](https://github.com/state-machines/state-machines-rs/blob/master/LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0>)
+- MIT license ([LICENSE-MIT](https://github.com/state-machines/state-machines-rs/blob/master/LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
 
 at your option.

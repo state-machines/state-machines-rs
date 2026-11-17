@@ -13,6 +13,8 @@ categories = ["command-line-utilities", "development-tools"]
 [[bin]]
 name = "state-machines"
 path = "src/main.rs"
+# Its docs would land on target/doc/state_machines/, overwriting the library's
+doc = false
 
 [dependencies]
 state-machines-core = { version = "0.14.0", path = "../state-machines-core", features = ["std"] }
