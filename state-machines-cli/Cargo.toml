@@ -1,6 +1,6 @@
 [package]
 name = "state-machines-cli"
-version = "0.1.9"
+version = "0.1.10"
 edition = "2024"
 rust-version.workspace = true
 authors = ["Abdelkader Boudih <terminale@gmail.com>"]
@@ -17,7 +17,7 @@ path = "src/main.rs"
 doc = false
 
 [dependencies]
-state-machines-core = { version = "0.14.0", path = "../state-machines-core", features = ["std"] }
+state-machines-core = { version = "0.15.0", path = "../state-machines-core", features = ["std"] }
 usage-rs = "7"
 
 # Not `workspace = true`: Cargo forbids mixing inherited and local entries, and

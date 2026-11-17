@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.15.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-core-v0.14.0...state-machines-core-v0.15.0) (2026-11-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* event methods of machines declaring `error: E` return `TransitionFailure<Self, Target, E>` instead of `(Self, EventError<E>)`. An around AfterSuccess Abort no longer fails the event, and a failing after callback, entry hook or completion hook keeps the target state (`TransitionFailure::Committed` / `DynamicError::CommittedCallbackFailed`) instead of reverting to the source state; on_error no longer runs for those failures.
+* callback order changes for machines with around callbacks, and schema JSON uses `callbacks` instead of `before`/`around`/`after`.
+
+### Features
+
+* make the state change the commit point, as in Ruby ([d6f1401](https://github.com/state-machines/state-machines-rs/commit/d6f1401132a81ea503b11d956305648dc293e712))
+* run transition callbacks in Ruby state_machines order ([2362bb3](https://github.com/state-machines/state-machines-rs/commit/2362bb32e041f989bb4b926fe126665ddb01a2ff))
+* **schema:** emit the machine-wide callbacks block ([de33a41](https://github.com/state-machines/state-machines-rs/commit/de33a41dc0847eb35938842d46f608a076825916))
+
+
+### Bug Fixes
+
+* **schema:** validate every field of orthogonal schemas ([6362f96](https://github.com/state-machines/state-machines-rs/commit/6362f96632ae3211e8b15902e6491d3d5253f6f2))
+
 ## [0.14.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-core-v0.13.1...state-machines-core-v0.14.0) (2026-10-31)
 
 
