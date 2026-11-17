@@ -147,11 +147,17 @@ fn exact_selected_domain_and_failed_transition_preserve_expected_visits() {
     machine.handle(ScopedEvent::Heartbeat).unwrap();
     machine.handle(ScopedEvent::Mixed).unwrap();
     assert_eq!(machine.scope_epoch("Parent"), Some(0));
-    assert_matches!(machine.handle(ScopedEvent::Broken), Err(_));
-    assert_eq!(machine.scope_epoch("Parent"), Some(0));
-    let typed = machine.into_b().unwrap();
+    // The after callback fails past the commit point: the external
+    // re-entry of Parent stands, so its epoch moves and A is current.
+    let err = machine.handle(ScopedEvent::Broken).unwrap_err();
+    assert!(err.is_committed());
+    assert_eq!(machine.current_state(), ScopedState::A);
+    assert_eq!(machine.scope_epoch("Parent"), Some(1));
+    let typed = machine.into_a().unwrap();
     typed.ctx.local.set(false);
+    // A fresh dynamic wrapper starts its scope epochs over.
     let mut machine = typed.into_dynamic();
+    assert_eq!(machine.scope_epoch("Parent"), Some(0));
     machine.handle(ScopedEvent::Mixed).unwrap();
     assert_eq!(machine.scope_epoch("Parent"), Some(1));
 }
