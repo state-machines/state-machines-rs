@@ -118,6 +118,12 @@ pub struct GlobalCallbacks {
 }
 
 impl GlobalCallbacks {
+    /// Append a later `callbacks:` block, keeping declaration order.
+    pub fn extend(&mut self, later: Self) {
+        self.transition.extend(later.transition);
+        self.on_error.extend(later.on_error);
+    }
+
     /// Every entry, transition callbacks first, for filter validation.
     pub fn all(&self) -> impl Iterator<Item = &GlobalCallback> {
         self.transition

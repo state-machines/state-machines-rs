@@ -1,4 +1,5 @@
 use super::*;
+use crate::types::CallbackKind;
 use quote::quote;
 
 fn validate(tokens: proc_macro2::TokenStream) -> Result<()> {
@@ -257,4 +258,56 @@ fn validates_runtime_declarations() {
     })
     .unwrap_err();
     assert!(error.to_string().contains("external"), "{error}");
+}
+
+#[test]
+fn repeated_blocks_append_in_declaration_order() {
+    let machine = syn::parse2::<StateMachine>(quote! {
+        name: Test, initial: A, states: [A, B],
+        events { go { transition: { from: A, to: B } } },
+        callbacks: { before_transition [{ name: first }] },
+        final_states: [B],
+        events { back { transition: { from: B, to: A } } },
+        callbacks: {
+            around_transition [{ name: second }],
+            error_transition [{ name: failed }],
+        },
+    })
+    .unwrap();
+    let events: Vec<_> = machine.events.iter().map(|e| e.name.to_string()).collect();
+    assert_eq!(events, ["go", "back"]);
+    let callbacks: Vec<_> = machine
+        .callbacks
+        .transition
+        .iter()
+        .map(|(kind, cb)| (*kind == CallbackKind::Before, cb.name.to_string()))
+        .collect();
+    assert_eq!(
+        callbacks,
+        [(true, "first".to_owned()), (false, "second".to_owned())]
+    );
+    assert_eq!(machine.callbacks.on_error[0].name, "failed");
+}
+
+#[test]
+fn single_valued_keys_refuse_a_repeat() {
+    for (repeat, key) in [
+        (quote! { name: Other, }, "name"),
+        (quote! { initial: B, }, "initial"),
+        (quote! { states: [A], }, "states"),
+        (quote! { dynamic: true, dynamic: false, }, "dynamic"),
+        (quote! { async: false, async: true, }, "async"),
+    ] {
+        let error = syn::parse2::<StateMachine>(quote! {
+            name: Test, initial: A, states: [A, B],
+            #repeat
+            events { go { transition: { from: A, to: B } } }
+        })
+        .map(|_| ())
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!("duplicate `{key}` field: it takes one value")
+        );
+    }
 }

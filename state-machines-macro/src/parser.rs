@@ -23,8 +23,14 @@ use syn::{
 
 /// The top-level fields of a `state_machine!` invocation, collected one
 /// `key: value` pair at a time and assembled once the input is exhausted.
+///
+/// A block that lists things (`events`, `callbacks`, `lifecycle`, `runtime`,
+/// `final_states`) may repeat; its entries append in declaration order. A
+/// single-valued key may appear once: a repeat is an error, not an overwrite.
 #[derive(Default)]
 struct MachineFields {
+    /// Single-valued keys already given.
+    seen: HashSet<String>,
     name: Option<Ident>,
     initial: Option<Ident>,
     context: Option<Type>,
@@ -45,12 +51,20 @@ struct MachineFields {
 impl MachineFields {
     /// Parse the value of one top-level `key` (already consumed) into place.
     fn parse_field(&mut self, key: &Ident, input: ParseStream<'_>) -> Result<()> {
-        match key.to_string().as_str() {
+        let key_str = key.to_string();
+        if matches!(
+            key_str.as_str(),
+            "dynamic" | "snapshot" | "name" | "initial" | "context" | "error" | "states"
+        ) {
+            self.once(&key_str, key.span())?;
+        }
+        match key_str.as_str() {
             "runtime" => {
                 input.parse::<Token![:]>()?;
                 let block;
                 braced!(block in input);
-                self.runtime_lifecycle = parse_runtime_lifecycle(&block)?;
+                self.runtime_lifecycle
+                    .extend(parse_runtime_lifecycle(&block)?);
             }
             "dynamic" => {
                 input.parse::<Token![:]>()?;
@@ -71,7 +85,7 @@ impl MachineFields {
             }
             "final_states" => {
                 input.parse::<Token![:]>()?;
-                self.final_states = parse_ident_list_value(input)?;
+                self.final_states.extend(parse_ident_list_value(input)?);
             }
             "context" => {
                 input.parse::<Token![:]>()?;
@@ -95,14 +109,16 @@ impl MachineFields {
                 skip_optional_colon(input)?;
                 let block;
                 braced!(block in input);
-                self.events = Some(parse_events(&block)?);
+                self.events
+                    .get_or_insert_with(Vec::new)
+                    .extend(parse_events(&block)?);
             }
             "callbacks" => {
                 // Optional colon, mirroring `events`
                 skip_optional_colon(input)?;
                 let block;
                 braced!(block in input);
-                self.callbacks = parse_global_callbacks(&block)?;
+                self.callbacks.extend(parse_global_callbacks(&block)?);
             }
             "lifecycle" => {
                 input.parse::<Token![:]>()?;
@@ -130,6 +146,18 @@ impl MachineFields {
             }
         }
         Ok(())
+    }
+
+    /// Refuse a second occurrence of a single-valued key.
+    fn once(&mut self, key: &str, span: Span) -> Result<()> {
+        if self.seen.insert(key.to_owned()) {
+            Ok(())
+        } else {
+            Err(syn::Error::new(
+                span,
+                format!("duplicate `{key}` field: it takes one value"),
+            ))
+        }
     }
 
     /// Build the `StateMachine`, returning errors for missing required fields.
@@ -179,7 +207,8 @@ impl Parse for StateMachine {
         while !input.is_empty() {
             // Handle the special case of `async` keyword
             if input.peek(Token![async]) {
-                let _: Token![async] = input.parse()?;
+                let token: Token![async] = input.parse()?;
+                fields.once("async", token.span)?;
                 input.parse::<Token![:]>()?;
                 let value: syn::LitBool = input.parse()?;
                 fields.async_mode = value.value();

@@ -238,6 +238,58 @@ fn the_schema_merges_machine_callbacks_as_generated_code_does() {
 }
 
 state_machine! {
+    name: Split,
+    initial: Left,
+    states: [Left, Right],
+    callbacks: {
+        before_transition [{ name: first }],
+    },
+    events {
+        go { before: [local], transition: { from: Left, to: Right } }
+    },
+    callbacks: {
+        around_transition [{ name: second }],
+        before_transition [{ name: third }],
+    },
+}
+
+impl<C, S> Split<C, S> {
+    fn first(&self) {
+        log("first");
+    }
+    fn third(&self) {
+        log("third");
+    }
+    fn local(&self) {
+        log("local");
+    }
+    fn second(&self, stage: AroundStage) -> AroundOutcome<Left> {
+        wrap(stage, "second enter", "second exit")
+    }
+}
+
+/// A repeated `callbacks:` block appends, like any repeated hook key: the
+/// earlier block's entries are kept, ahead of the later block's.
+#[test]
+fn repeated_callbacks_blocks_append() {
+    take_log();
+    Split::new(()).go().expect("go");
+    assert_eq!(
+        take_log(),
+        ["first", "second enter", "third", "local", "second exit"]
+    );
+    #[cfg(feature = "inspect")]
+    {
+        let names: Vec<_> = Split::<(), Left>::schema()
+            .callbacks
+            .into_iter()
+            .map(|cb| cb.name)
+            .collect();
+        assert_eq!(names, ["first", "second", "third"]);
+    }
+}
+
+state_machine! {
     name: Gate,
     initial: Closed,
     states: [Closed, Open, Jammed],
