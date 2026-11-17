@@ -11,7 +11,6 @@ fn automatic_step_arms(
     machine: &StateMachine,
     any: &Ident,
     await_: &TokenStream,
-    map_error: &TokenStream,
 ) -> Vec<TokenStream> {
     machine
         .states
@@ -44,22 +43,42 @@ fn automatic_step_arms(
                     };
                     let target = &edge.target;
                     let commit = super::scopes::commit(machine, edge);
+                    let committed = quote! {
+                        let previous_epoch = self.epoch;
+                        #commit
+                        let next = #any::#target(machine);
+                        self.last_state = next.state();
+                        self.inner = Some(next);
+                        if record { self.__sm_record_completions(previous_epoch); }
+                    };
+                    // A failure after the commit point keeps the target state.
+                    let failures = if machine.error.is_some() {
+                        quote! {
+                            Err(::state_machines::core::TransitionFailure::Rejected { machine, error }) => {
+                                self.inner = Some(#any::#source(machine));
+                                return Err(::state_machines::DynamicError::from_event_error(error));
+                            }
+                            Err(::state_machines::core::TransitionFailure::Committed { machine, error }) => {
+                                #committed
+                                return Err(::state_machines::DynamicError::from_committed_error(error));
+                            }
+                        }
+                    } else {
+                        quote! {
+                            Err((machine, error)) => {
+                                self.inner = Some(#any::#source(machine));
+                                return Err(::state_machines::DynamicError::from_guard_error(error));
+                            }
+                        }
+                    };
                     quote! {
                         if #history && (#enabled) {
                             match current.#helper() #await_ {
                                 Ok(machine) => {
-                                    let previous_epoch = self.epoch;
-                                    #commit
-                                    let next = #any::#target(machine);
-                                    self.last_state = next.state();
-                                    self.inner = Some(next);
-                                    if record { self.__sm_record_completions(previous_epoch); }
+                                    #committed
                                     return Ok(true);
                                 }
-                                Err((machine, error)) => {
-                                    self.inner = Some(#any::#source(machine));
-                                    return Err(#map_error);
-                                }
+                                #failures
                             }
                         }
                     }
@@ -119,12 +138,7 @@ pub fn dynamic_methods(machine: &StateMachine) -> TokenStream {
         || quote! { ::state_machines::DynamicError },
         |ty| quote! { ::state_machines::DynamicError::<#ty> },
     );
-    let map_error = if machine.error.is_some() {
-        quote! { ::state_machines::DynamicError::from_event_error(error) }
-    } else {
-        quote! { ::state_machines::DynamicError::from_guard_error(error) }
-    };
-    let step_arms = automatic_step_arms(machine, &any, &await_, &map_error);
+    let step_arms = automatic_step_arms(machine, &any, &await_);
     let available_arms = automatic_available_arms(machine, &any, &await_);
     quote! {
         #async_ fn __sm_has_automatic(&self) -> bool {
@@ -142,7 +156,8 @@ pub fn dynamic_methods(machine: &StateMachine) -> TokenStream {
             match current { #( #step_arms, )* }
         }
         /// Run enabled eventless transitions to stability, bounded by `max_steps`.
-        /// Failure retains the last committed state; a limit is not poisoning.
+        /// Failure retains the last committed state, including a microstep that
+        /// committed before its after callback failed; a limit is not poisoning.
         pub #async_ fn stabilize(&mut self, max_steps: usize) -> Result<usize, #error_ty> {
             self.__sm_settle(max_steps, true) #await_
         }

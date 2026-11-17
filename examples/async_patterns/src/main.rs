@@ -50,7 +50,9 @@
 //! 2. **Async Guards** - Guard functions that can await
 //! 3. **Async Callbacks** - Before/after callbacks with async operations
 //! 4. **Blocking vs Async** - When to use which pattern
-//! 5. **Error Handling** - Fallible callbacks can return `Result<(), E>` and prevent state advancement
+//! 5. **Error Handling** - Fallible callbacks can return `Result<(), E>`: a failing `before`
+//!    rejects the event (`TransitionFailure::Rejected`, source machine back), a failing
+//!    `after` runs once the state changed (`TransitionFailure::Committed`, target machine)
 //!
 //! ## Caveats & Flow
 //!
@@ -129,7 +131,7 @@
 //! - Timeouts can occur at any stage
 
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use state_machines::{EventError, state_machine};
+use state_machines::{EventError, TransitionFailure, state_machine};
 use std::task::Poll;
 
 mod invocation;
@@ -332,8 +334,10 @@ fn print_async_error(err: EventError<DroneError>) {
     }
 }
 
-type StepResult<From, To> =
-    Result<DroneScout<(), To>, (DroneScout<(), From>, EventError<DroneError>)>;
+type StepResult<From, To> = Result<
+    DroneScout<(), To>,
+    TransitionFailure<DroneScout<(), From>, DroneScout<(), To>, DroneError>,
+>;
 
 fn nominal_step<From, To>(result: StepResult<From, To>, state: &str) -> DroneScout<(), To> {
     match result {
@@ -341,9 +345,15 @@ fn nominal_step<From, To>(result: StepResult<From, To>, state: &str) -> DroneSco
             println!("✓ Transitioned to {state}\n");
             drone
         }
-        Err((_drone, error)) => {
+        // The state change is the commit point: before it the event is
+        // rejected and the source machine comes back; after it an `after`
+        // callback can still fail, but the drone is already in `state`.
+        Err(TransitionFailure::Rejected { error, .. }) => {
             print_async_error(error);
-            panic!("nominal transition to {state} failed");
+            panic!("nominal transition to {state} was rejected");
+        }
+        Err(TransitionFailure::Committed { error, .. }) => {
+            panic!("reached {state}, then {error}");
         }
     }
 }
@@ -385,11 +395,14 @@ fn main() {
     pollster::block_on(async {
         match drone.lock().await {
             Ok(_) => println!("✗ ERROR: Should have failed!"),
-            Err((_drone, err)) => {
+            Err(TransitionFailure::Rejected { error: err, .. }) => {
                 println!("✓ Guard correctly prevented transition");
                 print_async_error(err);
                 println!("  Drone remains in Scanning state");
                 println!("  Can retry after signal improves or timeout\n");
+            }
+            Err(TransitionFailure::Committed { .. }) => {
+                println!("✗ ERROR: lock has no fallible after callback");
             }
         }
     });
@@ -411,11 +424,18 @@ fn main() {
                 println!("✗ ERROR: Should have failed!");
                 Err(())
             }
-            Err((drone, err)) => {
-                println!("✓ Callback error prevented state advance");
-                print_async_error(err);
+            Err(TransitionFailure::Rejected {
+                machine: drone,
+                error,
+            }) => {
+                println!("✓ Before-callback error prevented state advance");
+                print_async_error(error);
                 println!("  Drone remains in SignalLock and can retry\n");
                 Ok(drone)
+            }
+            Err(TransitionFailure::Committed { .. }) => {
+                println!("✗ ERROR: transmit has no fallible after callback");
+                Err(())
             }
         }
     })
@@ -431,7 +451,8 @@ fn main() {
     println!("✓ All guards and callbacks become async fn");
     println!("✓ Must .await every transition");
     println!("✓ Can use async I/O in guards (scan_for_signal, etc.)");
-    println!("✓ Callback errors return the original machine for retry");
+    println!("✓ Before-callback errors return the source machine for retry");
+    println!("✓ After-callback errors keep the new state (TransitionFailure::Committed)");
     println!("✓ Executor choice determines whether a future/context must be Send");
     println!("✓ Don't use blocking operations in async guards");
 

@@ -102,7 +102,10 @@
 //! }
 //! ```
 //!
-//! Abort at Before stage prevents transition. `AfterSuccess` only runs if transition succeeds.
+//! Abort at Before stage prevents transition. `AfterSuccess` only runs once the state
+//! changed, and that change is the commit point: an `Abort` there cannot undo it. It
+//! skips the remaining around exits and after callbacks, and the event still succeeds
+//! (an around halting after its yield behaves the same in Ruby).
 //!
 //! ### Caveat 4: Callback Execution Order Follows Ruby's
 //!
@@ -110,7 +113,7 @@
 //! 1. Guards (an around never runs when they reject)
 //! 2. Before callbacks and Around Before stages, in one declaration-ordered
 //!    list: an around wraps everything declared after it
-//! 3. Transition (state change)
+//! 3. Transition (state change) - the commit point
 //! 4. Around AfterSuccess (innermost to outermost)
 //! 5. After callbacks (in declaration order)
 //! ```
@@ -224,12 +227,14 @@ state_machine! {
 
 impl<C, S> RocketEngine<C, S> {
     // === AROUND CALLBACKS ===
-    // Around callbacks wrap the entire transition with transaction semantics
+    // Around callbacks bracket the transition: Before can reject it,
+    // AfterSuccess runs once the state change is committed
 
     /// Around callback: Fuel valve transaction
     ///
     /// Opens valve before transition, ensures it stays open after.
-    /// In a real system, this would handle rollback on failure.
+    /// Aborting at Before rejects ignition; nothing after the state change
+    /// can roll it back.
     fn fuel_valve_transaction(&self, stage: AroundStage) -> AroundOutcome<Idle> {
         match stage {
             AroundStage::Before => {
@@ -420,6 +425,7 @@ fn main() {
     println!("✓ Before callbacks run after guards, before state change");
     println!("✓ After callbacks run after successful state change");
     println!("✓ Around::Before can abort transitions");
+    println!("✓ The state change is the commit point: AfterSuccess cannot undo it");
     println!("✓ Callbacks execute in fixed order (can't be changed)");
     println!("✓ All callbacks take &self (immutable access)");
 

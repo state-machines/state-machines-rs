@@ -342,6 +342,44 @@ fn handle_success(
     }
 }
 
+/// The `Err` arms of one dispatch in `__sm_handle_one`.
+///
+/// A rejection restores the source machine and returns the error. A failure
+/// after the commit point keeps the target machine: `success` commits it as
+/// usual, and the error is parked in `__sm_committed` to be returned once the
+/// wrapper recorded the new state.
+fn failure_arms(
+    machine: &StateMachine,
+    any_state_name: &Ident,
+    source_state: &Ident,
+    success: &TokenStream2,
+) -> TokenStream2 {
+    let restore = quote! {
+        self.inner = ::core::option::Option::Some(#any_state_name::#source_state(old_machine));
+    };
+    if machine.error.is_some() {
+        quote! {
+            Err(::state_machines::core::TransitionFailure::Rejected { machine: old_machine, error: err }) => {
+                #restore
+                return Err(state_machines::DynamicError::from_event_error(err));
+            }
+            Err(::state_machines::core::TransitionFailure::Committed { machine: new_machine, error: err }) => {
+                __sm_committed = ::core::option::Option::Some(
+                    state_machines::DynamicError::from_committed_error(err),
+                );
+                #success
+            }
+        }
+    } else {
+        quote! {
+            Err((old_machine, err)) => {
+                #restore
+                return Err(state_machines::DynamicError::from_guard_error(err));
+            }
+        }
+    }
+}
+
 /// One `(state, event)` match arm per transition group for `__sm_handle_one`.
 fn handle_match_arms(machine: &StateMachine, names: &DynamicNames<'_>) -> Vec<TokenStream2> {
     let DynamicNames {
@@ -350,11 +388,6 @@ fn handle_match_arms(machine: &StateMachine, names: &DynamicNames<'_>) -> Vec<To
         maybe_await,
         ..
     } = names;
-    let map_event_error = if machine.error.is_some() {
-        quote! { state_machines::DynamicError::from_event_error(err) }
-    } else {
-        quote! { state_machines::DynamicError::from_guard_error(err) }
-    };
 
     let mut match_arms = Vec::new();
 
@@ -383,14 +416,12 @@ fn handle_match_arms(machine: &StateMachine, names: &DynamicNames<'_>) -> Vec<To
                     } else {
                         (quote! {}, quote! {})
                     };
+                    let failures = failure_arms(machine, any_state_name, source_state, &success);
                     let arm = quote! {
                         (#any_state_name::#source_state(m), #event_name::#event_pascal #payload_pattern) => {
                             match m.#dispatch_method(#payload_arg) #maybe_await {
                                 Ok(new_machine) => #success,
-                                Err((old_machine, err)) => {
-                                    self.inner = ::core::option::Option::Some(#any_state_name::#source_state(old_machine));
-                                    return Err(#map_event_error);
-                                }
+                                #failures
                             }
                         }
                     };
@@ -419,8 +450,12 @@ fn handle_method(names: &DynamicNames<'_>, settle: &TokenStream2) -> TokenStream
         ///
         /// Returns an error if:
         /// - The event is not valid from the current state
-        /// - A guard callback fails
-        /// - An action callback fails
+        /// - A guard, around `Before` stage, before callback or exit hook
+        ///   rejects it; the machine stays in its source state
+        /// - An entry hook, after callback or completion hook fails after the
+        ///   state changed (`DynamicError::CommittedCallbackFailed`); the
+        ///   machine stays in the target state and automatic transitions are
+        ///   not settled, call `stabilize` to settle them
         pub #maybe_async fn handle(&mut self, event: #event_name) -> Result<(), #error_ty> {
             self.__sm_handle_one(event, true) #maybe_await?;
             #settle
@@ -452,6 +487,23 @@ fn handle_one_method(machine: &StateMachine, names: &DynamicNames<'_>) -> TokenS
         }
     };
 
+    // Only a declared error type lets a callback fail after the commit point.
+    let (committed_slot, committed_return) = if machine.error.is_some() {
+        (
+            quote! {
+                #[allow(unused_mut)]
+                let mut __sm_committed: ::core::option::Option<#error_ty> = ::core::option::Option::None;
+            },
+            quote! {
+                if let ::core::option::Option::Some(error) = __sm_committed {
+                    return Err(error);
+                }
+            },
+        )
+    } else {
+        (quote! {}, quote! {})
+    };
+
     quote! {
         #maybe_async fn __sm_handle_one(&mut self, event: #event_name, record: bool) -> Result<(), #error_ty> {
             let previous_epoch = self.epoch;
@@ -460,6 +512,7 @@ fn handle_one_method(machine: &StateMachine, names: &DynamicNames<'_>) -> TokenS
                 from: self.last_state.name(),
                 event: event.name(),
             })?;
+            #committed_slot
 
             let new_state = match (current, event) {
                 #(#match_arms)*
@@ -469,6 +522,7 @@ fn handle_one_method(machine: &StateMachine, names: &DynamicNames<'_>) -> TokenS
             self.last_state = new_state.state();
             self.inner = ::core::option::Option::Some(new_state);
             if record { self.__sm_record_completions(previous_epoch); }
+            #committed_return
             Ok(())
         }
     }

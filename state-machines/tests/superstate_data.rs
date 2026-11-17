@@ -49,7 +49,7 @@ state_machine! {
             transition: { from: Executing, to: Verifying }
         }
         pause {
-            after: [confirm_pause],
+            before: [confirm_pause],
             transition: { from: Mission, to: Idle }
         }
         resume_deep {
@@ -117,9 +117,14 @@ fn superstate_data_lifecycle() {
     );
     runner.mission_data_mut().unwrap().entries = 9;
 
-    // Failed exits must not replace remembered Verifying with Executing.
+    // Rejected exits must not replace remembered Verifying with Executing.
     FAIL_PAUSE.store(true, Ordering::SeqCst);
-    let (runner, _) = runner.pause().unwrap_err();
+    let state_machines::TransitionFailure::Rejected {
+        machine: runner, ..
+    } = runner.pause().unwrap_err()
+    else {
+        panic!("a failing before callback rejects the exit");
+    };
     assert_eq!(runner.mission_data().unwrap().entries, 9);
     let runner = {
         #[cfg(feature = "serde")]
@@ -205,9 +210,9 @@ mod initial_inside_superstate {
     }
 }
 
-mod rollback_preserves_superstate_data {
+mod post_commit_failure_keeps_superstate_data {
     use super::MissionLog;
-    use state_machines::state_machine;
+    use state_machines::{TransitionFailure, state_machine};
     use std::sync::atomic::{AtomicBool, Ordering};
 
     static FAIL_AFTER: AtomicBool = AtomicBool::new(false);
@@ -245,7 +250,7 @@ mod rollback_preserves_superstate_data {
     }
 
     #[test]
-    fn failed_after_callback_rolls_back_without_losing_superstate_data() {
+    fn failed_after_callback_commits_without_losing_superstate_data() {
         FAIL_AFTER.store(true, Ordering::SeqCst);
 
         let runner = FallibleRunner::new(());
@@ -253,12 +258,14 @@ mod rollback_preserves_superstate_data {
         runner.mission_data_mut().unwrap().entries = 7;
 
         // The after callback fails on an intra-superstate transition; the
-        // machine rolls back to Planning and must keep the mission data.
-        let (runner, _err) = runner.execute().expect_err("after callback fails");
-        assert_eq!(runner.mission_data().unwrap().entries, 7);
-
-        FAIL_AFTER.store(false, Ordering::SeqCst);
-        let runner = runner.execute().expect("execute succeeds now");
+        // state change stands, and the superstate data travels with it.
+        let TransitionFailure::Committed { machine, error } =
+            runner.execute().expect_err("after callback fails")
+        else {
+            panic!("an after callback runs after the commit point");
+        };
+        let runner: FallibleRunner<(), Executing> = machine;
+        assert_eq!(error.source, "telemetry offline");
         assert_eq!(runner.mission_data().unwrap().entries, 7);
     }
 }

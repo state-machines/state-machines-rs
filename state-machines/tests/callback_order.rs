@@ -480,18 +480,31 @@ impl<C, S> Fallible<C, S> {
     }
 }
 
-/// A failure stops the run where it happens: an around entered before it
-/// never exits (as in Ruby, a halt unwinds through the around's yield), and
-/// no after callback runs.
+/// A failure before the state change stops the run where it happens: an
+/// around entered before it never exits (as in Ruby, a halt unwinds through
+/// the around's yield), and no after callback runs.
 #[test]
 fn a_failure_inside_an_around_skips_its_exit_and_the_afters() {
     take_log();
-    let (machine, error) = Fallible::new(()).go().expect_err("before fails");
+    let failure = Fallible::new(()).go().expect_err("before fails");
+    let state_machines::TransitionFailure::Rejected {
+        machine: Fallible { .. },
+        error,
+    } = failure
+    else {
+        panic!("a before callback runs ahead of the state change");
+    };
     assert_matches!(error, state_machines::EventError::Callback(_));
     assert_eq!(take_log(), ["outer enter", "failing before", "on_error"]);
+}
 
-    let (_machine, _error) = machine.finish().expect_err("around exit aborts");
-    assert_eq!(take_log(), ["exit enter", "exit aborts", "on_error"]);
+/// An around halting after its yield keeps the transition, as in Ruby: the
+/// afters are skipped, nothing is reported as failed.
+#[test]
+fn an_around_halting_after_yield_keeps_the_transition() {
+    take_log();
+    let _spent: Fallible<(), Spent> = Fallible::new(()).finish().expect("transition stands");
+    assert_eq!(take_log(), ["exit enter", "exit aborts"]);
 }
 
 state_machine! {

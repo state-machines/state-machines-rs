@@ -1,5 +1,6 @@
 //! History remembers control state, not suspended data. Its optional Copy
-//! fields add no allocation and are updated only after a successful exit.
+//! fields add no allocation and are updated when an exit commits, before any
+//! post-commit callback can fail.
 
 use crate::types::{HistoryChoice, HistoryMode, StateMachine, Transition, TransitionEdge};
 use proc_macro2::TokenStream;

@@ -115,6 +115,34 @@ pub fn transition_error_ty(machine: &StateMachine) -> TokenStream2 {
     )
 }
 
+/// The `Err` side of a consuming event method from `Self` into `target`.
+///
+/// Without a declared error type nothing can fail once the state changed,
+/// so a rejection is the only failure: `(Self, GuardError)`. With `error: E`
+/// a post-commit callback can fail too, and `TransitionFailure` tells the
+/// two apart, carrying the source or the target machine.
+pub fn transition_failure_ty(machine: &StateMachine, target: &TokenStream2) -> TokenStream2 {
+    machine.error.as_ref().map_or_else(
+        || quote! { (Self, ::state_machines::core::GuardError) },
+        |ty| quote! { ::state_machines::core::TransitionFailure<Self, #target, #ty> },
+    )
+}
+
+/// The `Err` payload for an event rejected before the state changed.
+pub fn rejected(
+    machine: &StateMachine,
+    owner: &TokenStream2,
+    error: &TokenStream2,
+) -> TokenStream2 {
+    if machine.error.is_some() {
+        quote! {
+            ::state_machines::core::TransitionFailure::Rejected { machine: #owner, error: #error }
+        }
+    } else {
+        quote! { (#owner, #error) }
+    }
+}
+
 /// Type arguments of the machine struct in `state`: `<state>` with a
 /// concrete context, `<C, state>` with a generic one.
 pub fn machine_params(machine: &StateMachine, state: impl ToTokens) -> TokenStream2 {

@@ -122,6 +122,18 @@ mod validation;
 /// and the after callbacks run in declaration order. A key may repeat to
 /// interleave befores and arounds.
 ///
+/// The state change is the commit point. A guard, around `Before` abort,
+/// before callback or exit hook failing rejects the event and hands back the
+/// source machine, after running the `on_error` hooks. Once the state changed
+/// the machine stays in the target state: an around `AfterSuccess` abort
+/// skips the remaining around exits and after callbacks and the event still
+/// succeeds; a fallible entry hook, after callback or completion hook error
+/// is returned as `TransitionFailure::Committed` with the target machine.
+/// Machines that declare `error: E` return
+/// `Result<Target, TransitionFailure<Self, Target, E>>` from event methods;
+/// the others, which cannot fail after the commit point, return
+/// `Result<Target, (Self, GuardError)>`.
+///
 /// The `callbacks:` block counts as declared first, then event-level hooks,
 /// then transition-level hooks: a global around wraps every local callback,
 /// and global afters run before local ones. Global filters accept

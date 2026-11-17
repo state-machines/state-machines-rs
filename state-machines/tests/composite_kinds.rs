@@ -34,12 +34,18 @@ fn local_preserves_parent_but_external_resets_it() {
     let machine = machine.local().unwrap();
     assert_eq!(machine.running_data().unwrap().0, 42);
     assert_eq!(*machine.ctx.0.borrow(), ["enter"]);
-    let (machine, _) = machine.broken().unwrap_err();
+    let state_machines::TransitionFailure::Committed { machine, .. } =
+        machine.broken().unwrap_err()
+    else {
+        panic!("an after callback fails after the commit point");
+    };
     assert_eq!(
         machine.running_data().unwrap().0,
-        42,
-        "rollback preserves old data"
+        0,
+        "the external re-entry committed and reset the data"
     );
+    let mut machine = machine;
+    machine.running_data_mut().unwrap().0 = 42;
     let machine = machine.reset().unwrap();
     assert_eq!(machine.running_data().unwrap().0, 0);
     assert_eq!(

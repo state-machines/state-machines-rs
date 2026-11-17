@@ -43,7 +43,7 @@ While learning Rust, I chose to port something familiar and widely used—so I c
 
 **Global Filtered Callbacks** – Machine-wide `callbacks:` block with `from`/`to`/`on` filters; filtering on `to:`/`from:` doubles as state enter/exit hooks
 
-**Around Callbacks** – Wrap transitions with Before/AfterSuccess stages for transaction-like semantics, ordered with `before` callbacks exactly as Ruby's `state_machines` orders them
+**Around Callbacks** – Bracket transitions with Before/AfterSuccess stages, ordered with `before` callbacks exactly as Ruby's `state_machines` orders them
 
 **Async Support** – First-class `async`/`await` for guards and callbacks
 
@@ -75,12 +75,22 @@ declaration order with its `from`/`to`/`on` filters;
 `schema.transition_callbacks(event, transition, source, target)` merges the
 matching ones ahead of the event's and transition's own, as generated code does.
 
+**Commit Point** – The state change is the commit point, as in Ruby
+`state_machines`. A guard, around `Before` stage, before callback or exit hook
+that fails rejects the event: the caller gets the source machine back. Once
+the state changed the machine stays in the target state: an around returning
+`Abort` at `AfterSuccess` only skips the remaining around exits and after
+callbacks, and a fallible entry hook, after callback or completion hook error
+comes back as `TransitionFailure::Committed` with the target machine (see
+[Failure Semantics](#failure-semantics)).
+
 **Failure Hooks** – Event/transition `on_error: [cleanup]` and global
 `callbacks: { error_transition [{ name: cleanup }] }` run once on the recovered
-source machine when a guard, around callback, or fallible callback rejects.
-Hooks take `&GuardError` (or `&EventError<E>` with `error: E`) and return `()`;
-async machines await them. They do not run for panics, cancellation, or invalid
-dynamic events, and do not undo external side effects.
+source machine when a guard, around `Before` stage, before callback or exit
+hook rejects the event. Hooks take `&GuardError` (or `&EventError<E>` with
+`error: E`) and return `()`; async machines await them. They do not run for
+failures after the state changed, panics, cancellation, or invalid dynamic
+events, and do not undo external side effects.
 
 **Internal Transitions** – `transition: { from: [Active, Idle], internal: true }`
 handles an event without changing state or resetting state data. Omit `to`;
@@ -92,8 +102,9 @@ transition is external and resets leaf data.
 After guards and before callbacks, exit hooks run inner-to-outer; after the
 state/data change, enter hooks run outer-to-inner before after callbacks.
 Common ancestors stay active; external self-transitions re-enter the leaf,
-internal transitions run neither. Hooks take no payload, support async and
-fallible returns like event callbacks, and participate in failure recovery.
+internal transitions run neither. Hooks take no payload and support async and
+fallible returns like event callbacks. A failing exit hook rejects the event;
+a failing entry hook fails after the commit point and keeps the target state.
 `new()` remains an infallible constructor and does not invoke entry hooks.
 
 **Final States and Completion** – `final_states: [Done]` declares terminal leaves
@@ -357,7 +368,7 @@ cargo add state-machines --features async
 The typestate pattern works seamlessly with async Rust:
 
 ```rust,ignore
-use state_machines::state_machine;
+use state_machines::{EventError, TransitionFailure, state_machine};
 
 state_machine! {
     name: HttpRequest,
@@ -424,9 +435,14 @@ async fn main() {
     // Type: HttpRequest<Success>
     let request = request.succeed().await.unwrap();
 
-    // `before`/`after` callback failures do not advance the state.
+    // A failing `before` callback rejects the event: the machine handed
+    // back is still in `RefreshToken`. An `after` callback failing would
+    // return `TransitionFailure::Committed` with the machine in `Done`.
     match AuthRecovery::new(()).refresh().await {
-        Err((_machine, state_machines::EventError::Callback(err))) => {
+        Err(TransitionFailure::Rejected {
+            machine: _refresh_token,
+            error: EventError::Callback(err),
+        }) => {
             assert_eq!(err.action, "refresh_token");
             assert_eq!(err.source, HttpError::Timeout);
         }
@@ -611,7 +627,7 @@ Rust's typestate pattern makes this compile-time safe with zero runtime overhead
 
 ### Around Callbacks
 
-Around callbacks wrap transitions with **transaction-like semantics**, providing Before and `AfterSuccess` hooks that bracket the entire transition execution:
+Around callbacks bracket the transition with a Before and an `AfterSuccess` stage:
 
 ```rust
 use state_machines::{state_machine, core::{AroundStage, AroundOutcome}};
@@ -671,12 +687,46 @@ fn main() {
 Repeat a key to interleave: `before: [audit], around: [wrap], before: [lock]`
 runs `audit`, enters `wrap`, runs `lock`. The `callbacks:` block counts as
 declared before event-level hooks, and those before transition-level hooks.
-A failure stops the run where it happens: an around that already entered does
-not get its `AfterSuccess` stage, and no after callback runs.
+A failure before the state change stops the run where it happens: an around
+that already entered does not get its `AfterSuccess` stage, and no after
+callback runs.
+
+### Failure Semantics
+
+The state change is the commit point, as in Ruby `state_machines`.
+
+| Fails at | Machine afterwards | Caller sees | `on_error` |
+|----------|--------------------|-------------|------------|
+| Guard / `unless` | source state | `Err((source, GuardError))`, or `TransitionFailure::Rejected` with `error: E` | runs |
+| Around `Before` returns `Abort` | source state | same | runs |
+| Before callback / exit hook returns `Err` | source state | `TransitionFailure::Rejected` | runs |
+| Around `AfterSuccess` returns `Abort` | **target state** | `Ok(target)`; the remaining around exits and after callbacks are skipped | no |
+| Entry hook / after callback / completion hook returns `Err` | **target state** | `TransitionFailure::Committed { machine: target, error }`; every callback still to run is skipped | no |
+
+Side effects of the callbacks that already ran happened, so nothing after the
+commit point pretends to revert them. A machine without `error:` can only be
+rejected, so its event methods keep returning `Result<Target, (Self, GuardError)>`.
+With `error: E` they return:
+
+```rust,ignore
+Result<Target, TransitionFailure<Self, Target, E>>
+
+pub enum TransitionFailure<Source, Target, E> {
+    Rejected { machine: Source, error: EventError<E> },
+    Committed { machine: Target, error: CallbackError<E> },
+}
+```
+
+A branching event's `Target` is its outcome enum. Dynamic dispatch reports a
+post-commit failure as `DynamicError::CommittedCallbackFailed`
+(`error.is_committed()` is `true`): the wrapper already moved to the target
+state, and automatic transitions are left for the next `stabilize`/`drain`.
 
 **Aborting Transitions:**
 
-Around callbacks at the Before stage can abort transitions by returning `AroundOutcome::Abort`:
+Around callbacks at the Before stage can abort transitions by returning `AroundOutcome::Abort`.
+At `AfterSuccess` the state already changed, so `Abort` there only halts the
+remaining around exits and after callbacks; the event still succeeds:
 
 ```rust
 use state_machines::{
@@ -1068,6 +1118,9 @@ fn handle_network_events(conn: &mut DynamicConnection<()>) {
             Err(DynamicError::CallbackFailed { action, event, source }) => {
                 eprintln!("Callback {} failed for {}: {:?}", action, event, source);
             }
+            Err(DynamicError::CommittedCallbackFailed { action, event, source }) => {
+                eprintln!("{} committed, then callback {} failed: {:?}", event, action, source);
+            }
             Err(DynamicError::WrongState { expected, actual, operation }) => {
                 eprintln!("Operation {} expected state {}, but in {}", operation, expected, actual);
             }
@@ -1099,12 +1152,15 @@ pub enum DynamicError<E = ()> {
     GuardFailed { guard: &'static str, event: &'static str },
     ActionFailed { action: &'static str, event: &'static str },
     CallbackFailed { action: &'static str, event: &'static str, source: E },
+    CommittedCallbackFailed { action: &'static str, event: &'static str, source: E },
     WrongState { expected: &'static str, actual: &'static str, operation: &'static str },
 }
 ```
 
 If your machine declares `error: AuthError`, dynamic dispatch uses `DynamicError<AuthError>`.
-Guard and callback failures leave the wrapper in its source state.
+Failures before the state change leave the wrapper in its source state;
+`CommittedCallbackFailed` means it changed state, then an entry hook, after
+callback or completion hook failed (see [Failure Semantics](#failure-semantics)).
 
 Every public error type implements `Display` and `core::error::Error` (also in
 `no_std`), so `?` converts them into `anyhow::Error` or `Box<dyn Error>`.
@@ -1635,7 +1691,9 @@ separate owned events to both, without requiring cloned payloads.
 
 This is deterministic **logical** parallelism: left dispatch precedes right,
 including async effects. If right rejects, `ParallelError::Right` reports whether
-left dispatched successfully; committed effects are not rolled back. Completion
+left dispatched successfully; committed effects are not rolled back. A region
+error that `is_committed()` (a post-commit callback failure) left that region
+in its new state. Completion
 requires every region to finish; `take_join()` returns each newly completed
 configuration once. Construction from already-final regions remains inert.
 

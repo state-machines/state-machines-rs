@@ -2,9 +2,10 @@
 //! guards once, and only the selected candidate runs transition callbacks.
 
 use super::utils::{
-    ctx_generics, event_pascal, machine_params, maybe_async, maybe_await, transition_error_ty,
+    ctx_generics, event_pascal, machine_params, maybe_async, maybe_await, rejected,
+    transition_failure_ty,
 };
-use crate::types::{Hooks, StateMachine, TransitionEdge};
+use crate::types::{Event, Hooks, StateMachine, TransitionEdge};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
@@ -104,6 +105,42 @@ pub fn condition_on(
     quote! { true #( && #guards )* #( && #unless )* }
 }
 
+/// Reject a branching event before any candidate was selected: no guard
+/// enabled one, or an event-level guard failed. Matching machine-wide
+/// `on_error` hooks (those not filtered on a target) and the event's own run
+/// on the source machine, which is handed back.
+fn selection_failure(
+    machine: &StateMachine,
+    event: &Event,
+    source: &Ident,
+    error: &TokenStream,
+) -> TokenStream {
+    let await_ = maybe_await(machine.async_mode);
+    let error = if machine.error.is_some() {
+        quote! { ::state_machines::EventError::Guard(#error) }
+    } else {
+        error.clone()
+    };
+    let globals = machine.callbacks.on_error.iter().filter(|cb| {
+        cb.to.is_none()
+            && cb.matches(
+                &machine.hierarchy,
+                &machine.states,
+                source,
+                source,
+                &event.name,
+            )
+    });
+    let hooks = globals.map(|cb| &cb.name).chain(&event.hooks.on_error);
+    let calls = hooks.map(|cb| quote! { let (): () = self.#cb(&error) #await_; });
+    let payload = rejected(machine, &quote! { self }, &quote! { error });
+    quote! {
+        let error = #error;
+        #( #calls )*
+        return Err(#payload);
+    }
+}
+
 pub fn methods(machine: &StateMachine, source: &Ident, edges: &[&TransitionEdge]) -> TokenStream {
     let event = machine.event(&edges[0].event);
     let name = &event.name;
@@ -129,23 +166,20 @@ pub fn methods(machine: &StateMachine, source: &Ident, edges: &[&TransitionEdge]
     } else {
         quote! {}
     };
-    let error_ty = transition_error_ty(machine);
-    let failure = |error: TokenStream| {
-        let error = if machine.error.is_some() {
-            quote! { ::state_machines::EventError::Guard(#error) }
-        } else {
-            error
-        };
-        let globals = machine.callbacks.on_error.iter().filter(|cb| {
-            cb.to.is_none() && cb.matches(&machine.hierarchy, &machine.states, source, source, name)
-        });
-        let hooks = globals.map(|cb| &cb.name).chain(&event.hooks.on_error);
-        let calls = hooks.map(|cb| quote! { let (): () = self.#cb(&error) #await_; });
-        quote! {
-            let error = #error;
-            #( #calls )*
-            return Err((self, error));
-        }
+    let failure_ty = transition_failure_ty(machine, &quote! { #outcome #generics });
+    let selected_failure_ty =
+        transition_failure_ty(machine, &quote! { (#outcome #generics, usize) });
+    let failure = |error: TokenStream| selection_failure(machine, event, source, &error);
+    // A candidate that committed and then failed still reports its outcome.
+    let (map_selected, map_public) = if machine.error.is_some() {
+        (
+            Some(|selected: TokenStream| {
+                quote! { .map_err(|failure| failure.map_committed(|machine| #selected)) }
+            }),
+            quote! { .map_err(|failure| failure.map_committed(|(outcome, _)| outcome)) },
+        )
+    } else {
+        (None, quote! {})
     };
     let event_guards = event.hooks.guards.iter().map(|guard| (guard, quote! { ! }))
         .chain(event.hooks.unless.iter().map(|guard| (guard, quote! {}))).map(|(guard, negation)| {
@@ -166,9 +200,13 @@ pub fn methods(machine: &StateMachine, source: &Ident, edges: &[&TransitionEdge]
         let enabled = condition(machine, &edge.selection, &payload_ref);
         let history = super::history::condition(edge);
         let target = &edge.target;
+        let selected = quote! { (#outcome::#target(machine), #index) };
+        let map_err = map_selected.map(|map| map(selected.clone()));
         choices.push(quote! {
             if #history && (#enabled) {
-                return self.#helper(#payload_arg) #await_.map(|machine| (#outcome::#target(machine), #index));
+                return self.#helper(#payload_arg) #await_
+                    .map(|machine| #selected)
+                    #map_err;
             }
         });
     }
@@ -183,10 +221,10 @@ pub fn methods(machine: &StateMachine, source: &Ident, edges: &[&TransitionEdge]
     });
     quote! {
         #( #helpers )*
-        pub #async_ fn #name(self #param) -> Result<#outcome #generics, (Self, #error_ty)> {
-            self.#select_name(#payload_arg) #await_.map(|(outcome, _)| outcome)
+        pub #async_ fn #name(self #param) -> Result<#outcome #generics, #failure_ty> {
+            self.#select_name(#payload_arg) #await_.map(|(outcome, _)| outcome) #map_public
         }
-        #async_ fn #select_name(mut self #param) -> Result<(#outcome #generics, usize), (Self, #error_ty)> {
+        #async_ fn #select_name(mut self #param) -> Result<(#outcome #generics, usize), #selected_failure_ty> {
             #( #event_guards )*
             #( #choices )*
             #no_match

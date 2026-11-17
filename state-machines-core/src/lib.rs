@@ -158,10 +158,12 @@ impl fmt::Display for TransitionErrorKind {
     }
 }
 
-/// Error returned when a guard or around callback fails in typestate mode.
+/// Error returned when a guard or an around `Before` stage rejects an event
+/// in typestate mode.
 ///
-/// In typestate machines, guards and around callbacks can fail even though the transition is valid.
-/// The machine is returned along with this error so the caller can retry or handle it.
+/// In typestate machines, guards and around callbacks can reject an event even though the
+/// transition is valid. The source machine is returned along with this error so the caller
+/// can retry or handle it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GuardError {
     pub guard: &'static str,
@@ -196,7 +198,9 @@ impl fmt::Display for GuardError {
 }
 impl core::error::Error for GuardError {}
 
-/// Error returned when a before/after callback returns a user-defined error.
+/// Error returned when a fallible callback or lifecycle hook returns a
+/// user-defined error, before or after the state change (see
+/// [`TransitionFailure`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CallbackError<E> {
     pub action: &'static str,
@@ -227,7 +231,9 @@ impl<E: Debug> fmt::Display for CallbackError<E> {
 }
 impl<E: Debug> core::error::Error for CallbackError<E> {}
 
-/// Error returned from typestate event methods.
+/// Why a machine that declares `error: E` rejected an event before the
+/// state changed: carried by [`TransitionFailure::Rejected`] and passed to
+/// `on_error` hooks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EventError<E> {
     Guard(GuardError),
@@ -254,6 +260,70 @@ impl<E: Debug> fmt::Display for EventError<E> {
     }
 }
 impl<E: Debug> core::error::Error for EventError<E> {}
+
+/// Error returned from the typestate event methods of a machine that
+/// declares `error: E`.
+///
+/// The state change is the commit point, as in Ruby `state_machines`:
+///
+/// - Before it, guards, before callbacks, around `Before` stages and exit
+///   hooks may reject the event. Nothing changed state, the `on_error` hooks
+///   ran, and [`Rejected`](Self::Rejected) hands back the source-state
+///   machine so the caller can retry.
+/// - After it, the machine is in the target state whatever happens next. A
+///   fallible entry hook, after callback or completion hook that returns an
+///   error stops the remaining post-commit callbacks, and
+///   [`Committed`](Self::Committed) hands back the target-state machine with
+///   that error. Side effects already happened, so nothing is reverted and
+///   the `on_error` hooks do not run.
+///
+/// `Source` and `Target` are the typed machines; a branching event's target
+/// is its outcome enum.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TransitionFailure<Source, Target, E> {
+    /// The event was rejected before the state changed.
+    Rejected {
+        machine: Source,
+        error: EventError<E>,
+    },
+    /// The state changed, then a post-commit callback failed.
+    Committed {
+        machine: Target,
+        error: CallbackError<E>,
+    },
+}
+
+impl<Source, Target, E> TransitionFailure<Source, Target, E> {
+    /// Whether the state change happened before the failure.
+    #[must_use]
+    pub const fn is_committed(&self) -> bool {
+        matches!(self, Self::Committed { .. })
+    }
+
+    /// Map the committed machine, leaving a rejection untouched.
+    pub fn map_committed<U>(self, f: impl FnOnce(Target) -> U) -> TransitionFailure<Source, U, E> {
+        match self {
+            Self::Rejected { machine, error } => TransitionFailure::Rejected { machine, error },
+            Self::Committed { machine, error } => TransitionFailure::Committed {
+                machine: f(machine),
+                error,
+            },
+        }
+    }
+}
+
+impl<Source, Target, E: Debug> fmt::Display for TransitionFailure<Source, Target, E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Rejected { error, .. } => fmt::Display::fmt(error, f),
+            Self::Committed { error, .. } => write!(f, "transition committed, then {error}"),
+        }
+    }
+}
+impl<Source: Debug, Target: Debug, E: Debug> core::error::Error
+    for TransitionFailure<Source, Target, E>
+{
+}
 
 #[doc(hidden)]
 pub trait FallibleCallbackReturn<E> {
@@ -329,8 +399,18 @@ pub enum DynamicError<E = ()> {
         action: &'static str,
         event: &'static str,
     },
-    /// A before/after callback returned a user-defined error.
+    /// A before callback or exit hook returned a user-defined error before
+    /// the state changed; the machine stays in its source state.
     CallbackFailed {
+        action: &'static str,
+        event: &'static str,
+        source: E,
+    },
+    /// The state changed, then an entry hook, after callback or completion
+    /// hook returned a user-defined error. The machine is in the target
+    /// state; the remaining post-commit callbacks and automatic settling
+    /// were skipped.
+    CommittedCallbackFailed {
         action: &'static str,
         event: &'static str,
         source: E,
@@ -409,6 +489,24 @@ impl<E> DynamicError<E> {
             EventError::Callback(err) => Self::callback_failed(err.action, err.event, err.source),
         }
     }
+
+    /// Convert a post-commit callback failure (see
+    /// [`TransitionFailure::Committed`]).
+    pub fn from_committed_error(err: CallbackError<E>) -> Self {
+        Self::CommittedCallbackFailed {
+            action: err.action,
+            event: err.event,
+            source: err.source,
+        }
+    }
+
+    /// Whether the machine changed state before this error: only
+    /// [`CommittedCallbackFailed`](Self::CommittedCallbackFailed). Every
+    /// other error leaves the last committed state in place.
+    #[must_use]
+    pub const fn is_committed(&self) -> bool {
+        matches!(self, Self::CommittedCallbackFailed { .. })
+    }
 }
 
 impl<E: Debug> fmt::Display for DynamicError<E> {
@@ -441,6 +539,14 @@ impl<E: Debug> fmt::Display for DynamicError<E> {
                 event,
                 source,
             } => write!(f, "callback `{action}` failed for `{event}`: {source:?}"),
+            Self::CommittedCallbackFailed {
+                action,
+                event,
+                source,
+            } => write!(
+                f,
+                "transition committed, then callback `{action}` failed for `{event}`: {source:?}"
+            ),
             Self::WrongState {
                 expected,
                 actual,
@@ -465,9 +571,19 @@ pub enum AroundStage {
     /// Entering: runs in declaration order with the before callbacks.
     Before,
     /// Exiting after the state changed; skipped when the transition failed.
+    /// The state change is already committed here: returning
+    /// [`AroundOutcome::Abort`] cannot undo it, it halts the remaining around
+    /// exits and the after callbacks, as an around halting after its yield
+    /// does in Ruby. The event still succeeds.
     AfterSuccess,
 }
 
+/// What an around callback returns at each [`AroundStage`].
+///
+/// [`Abort`](Self::Abort) at [`AroundStage::Before`] rejects the event and
+/// hands its error to the caller with the source-state machine. At
+/// [`AroundStage::AfterSuccess`] it only halts the callbacks still to run;
+/// the error is discarded because the transition stands.
 #[derive(Debug, Clone)]
 pub enum AroundOutcome<S>
 where

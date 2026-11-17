@@ -221,9 +221,16 @@ pub struct TransitionSchema {
 /// 2. [`Before`](Self::Before) and [`Around`](Self::Around) callbacks run in
 ///    one list, in declaration order: a before runs where it was declared,
 ///    an around enters there and wraps everything declared after it.
-/// 3. The state changes.
+/// 3. The state changes. This is the commit point.
 /// 4. The arounds exit, innermost (last declared) first.
 /// 5. [`After`](Self::After) callbacks run in declaration order.
+///
+/// A failure before the commit point rejects the event: the machine stays in
+/// its source state and the `on_error` callbacks run. After it the machine
+/// stays in the target state: an around aborting on exit skips the remaining
+/// around exits and after callbacks, and an after callback returning an error
+/// skips the rest and is reported with the target-state machine; `on_error`
+/// does not run.
 ///
 /// Event-level callbacks count as declared before transition-level ones.
 /// With `before a, around w1, before b, around w2, after z` a transition
@@ -410,8 +417,9 @@ impl MachineSchema {
     }
 
     /// The failure callbacks generated code runs when `transition` of
-    /// `event` from `source` to `target` fails after it was selected:
-    /// matching machine-wide ones, then the event's, then the transition's.
+    /// `event` from `source` to `target` is rejected after it was selected
+    /// and before the state changed (see [`CallbackKind`]): matching
+    /// machine-wide ones, then the event's, then the transition's.
     #[must_use]
     pub fn transition_error_callbacks<'a>(
         &'a self,

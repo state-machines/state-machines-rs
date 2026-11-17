@@ -9,7 +9,7 @@ use std::{
 };
 
 use pollster::block_on;
-use state_machines::{DynamicError, EventError, state_machine};
+use state_machines::{DynamicError, EventError, TransitionFailure, state_machine};
 
 static BEFORE_FAILS: AtomicBool = AtomicBool::new(false);
 static AFTER_FAILS: AtomicBool = AtomicBool::new(false);
@@ -104,7 +104,13 @@ fn async_before_callback_failure_returns_source_machine() {
             .await
             .expect_err("before callback should fail");
 
-        let (machine, err) = err;
+        let TransitionFailure::Rejected {
+            machine,
+            error: err,
+        } = err
+        else {
+            panic!("a before callback runs ahead of the state change");
+        };
         match err {
             EventError::Callback(err) => {
                 assert_eq!(err.action, "refresh_token");
@@ -129,39 +135,60 @@ fn async_before_callback_failure_returns_source_machine() {
 }
 
 #[test]
-fn async_after_callback_failure_rolls_back_transition() {
+fn async_entry_hook_failure_keeps_the_committed_target() {
     let _guard = TEST_LOCK.lock().unwrap();
     reset_flags();
     AFTER_FAILS.store(true, Ordering::SeqCst);
 
     block_on(async {
         let machine = AuthRecovery::new(());
-        let err = machine
-            .refresh()
-            .await
-            .expect_err("after callback should fail");
+        let err = machine.refresh().await.expect_err("entry hook should fail");
 
-        let (machine, err) = err;
-        match err {
-            EventError::Callback(err) => {
-                assert_eq!(err.action, "record_completion");
-                assert_eq!(err.event, "refresh");
-                assert_eq!(err.source, AuthError::Audit);
-            }
-            EventError::Guard(other) => panic!("expected callback error, got {other:?}"),
-        }
+        let TransitionFailure::Committed { machine, error } = err else {
+            panic!("entry hooks run after the state change");
+        };
+        assert_eq!(error.action, "record_completion");
+        assert_eq!(error.event, "refresh");
+        assert_eq!(error.source, AuthError::Audit);
+        let AuthRecoveryRefreshTokenRefreshOutcome::Done(done) = machine else {
+            panic!("the selected branch committed to Done");
+        };
 
         assert!(BEFORE_CALLED.load(Ordering::SeqCst));
         assert!(AFTER_CALLED.load(Ordering::SeqCst));
+        // The completion hook comes after the failing entry hook: skipped.
         assert!(!COMPLETED.load(Ordering::SeqCst));
-        assert_eq!(*ERRORS.lock().unwrap(), ["record_completion"]);
+        // Nothing was rejected, so on_error does not run.
+        assert!(ERRORS.lock().unwrap().is_empty());
+        assert!(done.is_finished());
+    });
+}
 
-        AFTER_FAILS.store(false, Ordering::SeqCst);
-        let _done = machine
-            .refresh()
+#[test]
+fn async_dynamic_entry_hook_failure_commits() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    reset_flags();
+    AFTER_FAILS.store(true, Ordering::SeqCst);
+
+    block_on(async {
+        let mut machine = DynamicAuthRecovery::new(());
+        let err = machine
+            .handle(AuthRecoveryEvent::Refresh)
             .await
-            .expect("machine should still be in RefreshToken after rollback");
-        assert!(COMPLETED.load(Ordering::SeqCst));
+            .expect_err("entry hook should fail");
+        assert_eq!(
+            err,
+            DynamicError::CommittedCallbackFailed {
+                action: "record_completion",
+                event: "refresh",
+                source: AuthError::Audit,
+            }
+        );
+        assert_eq!(machine.current_state(), AuthRecoveryState::Done);
+        assert_eq!(
+            machine.take_completion_events(),
+            [state_machines::CompletionEvent::Machine]
+        );
     });
 }
 

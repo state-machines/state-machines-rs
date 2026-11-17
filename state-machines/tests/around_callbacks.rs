@@ -271,7 +271,7 @@ fn around_callback_preserves_action_failed_error() {
 }
 
 #[test]
-fn after_success_abort_rolls_back_to_source_state() {
+fn after_success_abort_keeps_the_target_state() {
     state_machine! {
         name: AfterFail,
         initial: Start,
@@ -295,11 +295,7 @@ fn after_success_abort_rolls_back_to_source_state() {
         }
     }
 
+    // The state change is the commit point: halting after it cannot undo it.
     let machine = AfterFail::new(());
-    let result = machine.go();
-    assert!(result.is_err());
-
-    let (_machine, err) = result.unwrap_err();
-    assert_eq!(err.guard, "after_fail");
-    assert_eq!(err.event, "go");
+    let _end: AfterFail<(), End> = machine.go().expect("the transition stands");
 }

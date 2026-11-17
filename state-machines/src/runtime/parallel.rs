@@ -14,7 +14,9 @@ pub enum ParallelEvent<L, R> {
 pub enum ParallelError<L, R> {
     Left(L),
     /// `left_committed` means the left dispatch succeeded in this fork.
-    /// It does not promise that a failed right dispatch had no partial effects.
+    /// It does not promise that a failed right dispatch had no partial effects:
+    /// a machine error reporting a post-commit callback failure (for example
+    /// `DynamicError::is_committed`) means that region changed state.
     Right {
         error: R,
         left_committed: bool,

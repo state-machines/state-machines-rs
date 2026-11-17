@@ -40,7 +40,8 @@
 
 use crate::codegen::utils::{
     async_lint_allows, ctx_generics, ctx_ty, empty_storage_inits, machine_params, maybe_async,
-    maybe_await, to_snake_case, to_snake_case_ident, transition_error_ty,
+    maybe_await, rejected, to_snake_case, to_snake_case_ident, transition_error_ty,
+    transition_failure_ty,
 };
 use crate::types::{CallbackKind, StateMachine, StateStorageSpec, TransitionEdge};
 use proc_macro2::TokenStream as TokenStream2;
@@ -176,9 +177,11 @@ fn generate_machine_struct(machine: &StateMachine) -> TokenStream2 {
 /// Each transition method:
 /// 1. Checks guards (event-level and transition-level)
 /// 2. Executes before callbacks and around `Before` stages in declaration order
-/// 3. Creates new machine with target state
+/// 3. Commits: creates the new machine in the target state
 /// 4. Executes around `AfterSuccess` stages innermost first, then after callbacks
-/// 5. Returns Result with new typed machine or original machine with error
+/// 5. Returns the new typed machine, the source machine when a guard, before
+///    callback, around `Before` stage or exit hook rejected the event, or the
+///    target machine with a post-commit error
 fn generate_state_impls(machine: &StateMachine) -> Vec<TokenStream2> {
     let mut impls = Vec::new();
     let machine_name = &machine.name;
@@ -403,28 +406,6 @@ fn storage_transfers(
         .collect()
 }
 
-/// Fields whose previous value is moved into the new machine (superstate
-/// data on an intra-superstate transition). Rollback paths must rebind
-/// these from the new machine, since the `__sm_prev_*` local was consumed.
-fn preserved_storage_fields(
-    machine: &StateMachine,
-    source_state: &Ident,
-    target_state: &Ident,
-    edge: &TransitionEdge,
-) -> Vec<Ident> {
-    machine
-        .state_storage
-        .iter()
-        .filter(|spec| {
-            machine.hierarchy.is_superstate(&spec.state_name)
-                && !edge.exit.contains(&spec.state_name)
-                && spec_covers(machine, spec, source_state)
-                && spec_covers(machine, spec, target_state)
-        })
-        .map(|spec| spec.field.clone())
-        .collect()
-}
-
 /// How storage and history fields travel from the source machine into the
 /// target machine of one transition method.
 struct StoragePlan {
@@ -432,8 +413,6 @@ struct StoragePlan {
     source_bindings: Vec<TokenStream2>,
     /// Field initialisers for `new_machine`.
     transfers: Vec<TokenStream2>,
-    /// Bindings rollback paths recover from `new_machine`.
-    preserved_rebinds: Vec<TokenStream2>,
     /// `let __sm_entry_data = self.factory(..);` when the edge declares `data`.
     factory: Option<TokenStream2>,
 }
@@ -484,37 +463,41 @@ fn storage_plan(
         transfers[index] = quote! { #field: Some(__sm_entry_data) };
     }
 
-    // Superstate data carried into the new machine consumed its __sm_prev_*
-    // local; rollback paths recover it from the new machine by rebinding
-    // the same local name in the destructuring pattern.
-    let preserved_rebinds: Vec<_> = if edge.internal {
-        source_bindings.clone()
-    } else {
-        preserved_storage_fields(machine, source_state, target_state, edge)
-            .iter()
-            .map(prev_binding)
-            .collect()
-    };
-
     StoragePlan {
         source_bindings,
         transfers,
-        preserved_rebinds,
         factory,
     }
 }
 
-/// One side of a transition method: before the machine is moved into its
-/// target state, or after.
-struct Phase {
-    /// The machine callbacks are invoked on.
-    receiver: TokenStream2,
-    /// The `AroundStage` variant passed to around callbacks.
-    stage: TokenStream2,
-    /// Statements that rebuild `owner` before an early return.
-    rollback: TokenStream2,
-    /// The pre-transition machine handed back in the `Err` tuple.
-    owner: TokenStream2,
+/// Which side of the commit point a callback runs on.
+///
+/// The state change is the commit point, as in Ruby `state_machines`.
+/// Before it, callbacks run on `self` and a failure rejects the event: the
+/// `on_error` hooks run and the source machine is handed back. After it,
+/// callbacks run on `new_machine`, which is in the target state whatever
+/// they do: an around `AfterSuccess` abort halts the remaining around exits
+/// and after callbacks, and a fallible callback's error is returned with the
+/// target machine, skipping every callback still to run.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    PreCommit,
+    PostCommit,
+}
+
+impl Phase {
+    fn receiver(self) -> TokenStream2 {
+        match self {
+            Self::PreCommit => quote! { self },
+            Self::PostCommit => quote! { new_machine },
+        }
+    }
+}
+
+/// Label of the block holding the around exits and after callbacks; an
+/// around halting after its yield breaks out of it.
+fn halt_label() -> syn::Lifetime {
+    syn::Lifetime::new("'__sm_after_callbacks", proc_macro2::Span::call_site())
 }
 
 /// What every guard, callback and around step of one transition method
@@ -561,7 +544,7 @@ impl<'a> TransitionCtx<'a> {
         }
     }
 
-    /// The error an aborting around callback is translated into.
+    /// The error an around rejecting at its `Before` stage is translated into.
     fn kind_error(&self) -> TokenStream2 {
         let core_path = &self.core_path;
         let event_name = &self.edge.event;
@@ -570,19 +553,24 @@ impl<'a> TransitionCtx<'a> {
         })
     }
 
-    /// Cleanup is infallible and runs on the recovered source machine. It
-    /// cannot replace the original error or silently claim an external
-    /// transaction was rolled back.
-    fn failure(&self, owner: &TokenStream2, error: &TokenStream2) -> TokenStream2 {
+    /// Reject the event before the state changed. Cleanup is infallible and
+    /// runs on the source machine. It cannot replace the original error or
+    /// silently claim an external transaction was rolled back.
+    fn reject(&self, error: &TokenStream2) -> TokenStream2 {
         let maybe_await = &self.maybe_await;
         let notifications = self.edge.hooks.on_error.iter().map(|callback| {
             quote! { let (): () = failed_machine.#callback(&failure) #maybe_await; }
         });
+        let payload = rejected(
+            self.machine,
+            &quote! { failed_machine },
+            &quote! { failure },
+        );
         quote! {
-            let mut failed_machine = #owner;
+            let mut failed_machine = self;
             let failure = #error;
             #( #notifications )*
-            return ::core::result::Result::Err((failed_machine, failure));
+            return ::core::result::Result::Err(#payload);
         }
     }
 
@@ -595,7 +583,7 @@ impl<'a> TransitionCtx<'a> {
         let guard_error = self.wrap_guard_error(quote! {
             #core_path::GuardError::new(stringify!(#guard), stringify!(#event_name))
         });
-        let fail = self.failure(&quote! { self }, &guard_error);
+        let fail = self.reject(&guard_error);
         quote! {
             if #reject_when self.#guard(&self.ctx #guard_args) #maybe_await {
                 #fail
@@ -621,13 +609,8 @@ impl<'a> TransitionCtx<'a> {
 
     /// Global callbacks are always invoked without the payload so one method
     /// can serve every event its filters match, payload-carrying or not.
-    fn callback_step(&self, phase: &Phase, callback: &Ident, use_payload: bool) -> TokenStream2 {
-        let Phase {
-            receiver,
-            rollback,
-            owner,
-            ..
-        } = phase;
+    fn callback_step(&self, phase: Phase, callback: &Ident, use_payload: bool) -> TokenStream2 {
+        let receiver = phase.receiver();
         let core_path = &self.core_path;
         let event_name = &self.edge.event;
         let maybe_await = &self.maybe_await;
@@ -637,54 +620,64 @@ impl<'a> TransitionCtx<'a> {
             quote! {}
         };
         let call = quote! { #receiver.#callback(#args) #maybe_await };
-        self.machine.error.as_ref().map_or_else(
-            || {
-                quote! {
-                    let (): () = #call;
-                }
+        let Some(error_ty) = self.machine.error.as_ref() else {
+            return quote! { let (): () = #call; };
+        };
+        let fail = match phase {
+            Phase::PreCommit => self.reject(&quote! {
+                #core_path::EventError::callback(
+                    stringify!(#callback), stringify!(#event_name), source,
+                )
+            }),
+            Phase::PostCommit => quote! {
+                return ::core::result::Result::Err(#core_path::TransitionFailure::Committed {
+                    machine: new_machine,
+                    error: #core_path::CallbackError::new(
+                        stringify!(#callback), stringify!(#event_name), source,
+                    ),
+                });
             },
-            |error_ty| {
-                let fail = self.failure(
-                    owner,
-                    &quote! {
-                        #core_path::EventError::callback(
-                            stringify!(#callback), stringify!(#event_name), source,
-                        )
-                    },
-                );
-                quote! {
-                    let callback_result: ::core::result::Result<(), #error_ty> =
-                        #core_path::FallibleCallbackReturn::into_result(#call);
-                    if let Err(source) = callback_result {
-                        #rollback
-                        #fail
-                    }
-                }
-            },
-        )
+        };
+        quote! {
+            let callback_result: ::core::result::Result<(), #error_ty> =
+                #core_path::FallibleCallbackReturn::into_result(#call);
+            if let Err(source) = callback_result {
+                #fail
+            }
+        }
     }
 
-    fn around_step(&self, phase: &Phase, callback: &Ident) -> TokenStream2 {
-        let Phase {
-            receiver,
-            stage,
-            rollback,
-            owner,
-        } = phase;
+    fn around_step(&self, phase: Phase, callback: &Ident) -> TokenStream2 {
         let core_path = &self.core_path;
         let maybe_await = &self.maybe_await;
-        let fail = self.failure(owner, &self.kind_error());
-        quote! {
-            match #receiver.#callback(#core_path::AroundStage::#stage) #maybe_await {
-                #core_path::AroundOutcome::Proceed => {},
-                #core_path::AroundOutcome::Abort(err) => {
-                    let callback_name = match &err.kind {
-                        #core_path::TransitionErrorKind::GuardFailed { guard } => *guard,
-                        #core_path::TransitionErrorKind::ActionFailed { action } => *action,
-                        #core_path::TransitionErrorKind::InvalidTransition => stringify!(#callback),
-                    };
-                    #rollback
-                    #fail
+        match phase {
+            Phase::PreCommit => {
+                let fail = self.reject(&self.kind_error());
+                quote! {
+                    match self.#callback(#core_path::AroundStage::Before) #maybe_await {
+                        #core_path::AroundOutcome::Proceed => {},
+                        #core_path::AroundOutcome::Abort(err) => {
+                            let callback_name = match &err.kind {
+                                #core_path::TransitionErrorKind::GuardFailed { guard } => *guard,
+                                #core_path::TransitionErrorKind::ActionFailed { action } => *action,
+                                #core_path::TransitionErrorKind::InvalidTransition => stringify!(#callback),
+                            };
+                            #fail
+                        }
+                    }
+                }
+            }
+            // The transition stands: an abort halts what is left of the
+            // around exits and after callbacks, as an around halting after
+            // its yield does in Ruby.
+            Phase::PostCommit => {
+                let label = halt_label();
+                quote! {
+                    if let #core_path::AroundOutcome::Abort(_) =
+                        new_machine.#callback(#core_path::AroundStage::AfterSuccess) #maybe_await
+                    {
+                        break #label;
+                    }
                 }
             }
         }
@@ -694,8 +687,8 @@ impl<'a> TransitionCtx<'a> {
     /// `state_machines` order: guards select the transition first, so an
     /// around never runs when they reject; then before callbacks and around
     /// `Before` stages in declaration order, each around wrapping everything
-    /// declared after it; then exit hooks, part of the state change.
-    fn pre_transition_calls(&self, before: &Phase, check_guards: bool) -> Vec<TokenStream2> {
+    /// declared after it; then exit hooks. Any failure here rejects the event.
+    fn pre_commit_calls(&self, check_guards: bool) -> Vec<TokenStream2> {
         let edge = self.edge;
         let (exit_hooks, _) = self.machine.lifecycle_callbacks(edge);
         let guard_checks = if check_guards {
@@ -709,9 +702,9 @@ impl<'a> TransitionCtx<'a> {
             .iter()
             .filter_map(|callback| match callback.kind {
                 CallbackKind::Before => {
-                    Some(self.callback_step(before, &callback.name, !callback.global))
+                    Some(self.callback_step(Phase::PreCommit, &callback.name, !callback.global))
                 }
-                CallbackKind::Around => Some(self.around_step(before, &callback.name)),
+                CallbackKind::Around => Some(self.around_step(Phase::PreCommit, &callback.name)),
                 CallbackKind::After => None,
             });
         guard_checks
@@ -720,15 +713,17 @@ impl<'a> TransitionCtx<'a> {
             .chain(
                 exit_hooks
                     .iter()
-                    .map(|cb| self.callback_step(before, cb, false)),
+                    .map(|cb| self.callback_step(Phase::PreCommit, cb, false)),
             )
             .collect()
     }
 
-    /// Statements run on `new_machine` once it exists: entry hooks (the rest
-    /// of the state change), around `AfterSuccess` stages innermost first,
-    /// after callbacks in declaration order, then completion hooks.
-    fn post_transition_calls(&self, after: &Phase) -> Vec<TokenStream2> {
+    /// Statements run on `new_machine` once the state changed: entry hooks,
+    /// around `AfterSuccess` stages innermost first, after callbacks in
+    /// declaration order, then completion hooks. An around abort skips the
+    /// rest of the around exits and the afters, never the completion hooks:
+    /// the target state was reached either way.
+    fn post_commit_calls(&self) -> Vec<TokenStream2> {
         let edge = self.edge;
         let machine = self.machine;
         let (_, enter_hooks) = machine.lifecycle_callbacks(edge);
@@ -743,21 +738,32 @@ impl<'a> TransitionCtx<'a> {
                     .filter(move |hooks| &hooks.state == *scope)
             })
             .flat_map(|hooks| &hooks.complete);
+        let around_exits: Vec<_> = edge
+            .hooks
+            .of_kind(CallbackKind::Around)
+            .rev()
+            .map(|cb| self.around_step(Phase::PostCommit, &cb.name))
+            .collect();
+        let afters = edge
+            .hooks
+            .of_kind(CallbackKind::After)
+            .map(|cb| self.callback_step(Phase::PostCommit, &cb.name, !cb.global));
+        let transition_callbacks = if around_exits.is_empty() {
+            afters.collect()
+        } else {
+            let label = halt_label();
+            vec![quote! {
+                #label: {
+                    #( #around_exits )*
+                    #( #afters )*
+                }
+            }]
+        };
         enter_hooks
             .iter()
-            .map(|cb| self.callback_step(after, cb, false))
-            .chain(
-                edge.hooks
-                    .of_kind(CallbackKind::Around)
-                    .rev()
-                    .map(|cb| self.around_step(after, &cb.name)),
-            )
-            .chain(
-                edge.hooks
-                    .of_kind(CallbackKind::After)
-                    .map(|cb| self.callback_step(after, &cb.name, !cb.global)),
-            )
-            .chain(complete_hooks.map(|cb| self.callback_step(after, cb, false)))
+            .map(|cb| self.callback_step(Phase::PostCommit, cb, false))
+            .chain(transition_callbacks)
+            .chain(complete_hooks.map(|cb| self.callback_step(Phase::PostCommit, cb, false)))
             .collect()
     }
 }
@@ -767,14 +773,20 @@ impl<'a> TransitionCtx<'a> {
 /// The method signature depends on:
 /// - Payload type (adds parameter if present)
 /// - Async mode (makes method async if enabled)
+/// - Declared error type: without one the method returns
+///   `Result<Target, (Self, GuardError)>`; with `error: E` it returns
+///   `Result<Target, TransitionFailure<Self, Target, E>>`
 ///
-/// The method body:
-/// 1. Evaluates event-level guards
-/// 2. Evaluates transition-level guards
-/// 3. Runs before callbacks and around `Before` stages in declaration order
-/// 4. Creates new machine with target state
-/// 5. Runs around `AfterSuccess` stages innermost first, then after callbacks
-/// 6. Returns `Ok(new_machine)` or Err((self, `GuardError`))
+/// The method body, in Ruby `state_machines` order:
+/// 1. Evaluates event-level and transition-level guards
+/// 2. Runs before callbacks and around `Before` stages in declaration order
+/// 3. Runs exit hooks
+/// 4. Commits: moves the machine into the target state and records history
+/// 5. Runs entry hooks, around `AfterSuccess` stages innermost first, after
+///    callbacks, then completion hooks
+///
+/// A failure in steps 1-3 returns the source machine; after step 4 the
+/// machine stays in the target state (see [`Phase`]).
 ///
 /// # Example Output
 ///
@@ -811,7 +823,6 @@ pub(super) fn generate_transition_method(
     let target_state = &edge.target;
     let maybe_async = maybe_async(machine.async_mode);
     let ctx = TransitionCtx::new(machine, edge);
-    let core_path = &ctx.core_path;
 
     // Guards and local callbacks borrow the payload; the method takes it by value.
     let mutability = edge.data.as_ref().map(|_| quote! { mut });
@@ -821,43 +832,19 @@ pub(super) fn generate_transition_method(
     );
     let method_sig = quote! { #visibility #maybe_async fn #method_name(mut self #payload_param) };
 
-    let return_error_ty = machine.error.as_ref().map_or_else(
-        || quote! { #core_path::GuardError },
-        |error_ty| quote! { #core_path::EventError<#error_ty> },
-    );
     let target_params = machine_params(machine, target_state);
-    let return_type = quote! {
-        ::core::result::Result<#machine_name #target_params, (Self, #return_error_ty)>
-    };
+    let target_ty = quote! { #machine_name #target_params };
+    let failure_ty = transition_failure_ty(machine, &target_ty);
+    let return_type = quote! { ::core::result::Result<#target_ty, #failure_ty> };
 
     let StoragePlan {
         source_bindings,
         transfers,
-        preserved_rebinds,
         factory,
     } = storage_plan(machine, source_state, target_state, edge, &ctx.maybe_await);
 
-    let before = Phase {
-        receiver: quote! { self },
-        stage: quote! { Before },
-        rollback: quote! {},
-        owner: quote! { self },
-    };
-    let after = Phase {
-        receiver: quote! { new_machine },
-        stage: quote! { AfterSuccess },
-        rollback: quote! {
-            let #machine_name { ctx, #( #preserved_rebinds, )* .. } = new_machine;
-            let old_machine = #machine_name {
-                ctx,
-                _state: ::core::marker::PhantomData,
-                #( #source_bindings, )*
-            };
-        },
-        owner: quote! { old_machine },
-    };
-    let pre_calls = ctx.pre_transition_calls(&before, check_guards);
-    let post_calls = ctx.post_transition_calls(&after);
+    let pre_calls = ctx.pre_commit_calls(check_guards);
+    let post_calls = ctx.post_commit_calls();
     let history_update = super::history::record_exit(machine, source_state, edge);
 
     quote! {
@@ -871,14 +858,15 @@ pub(super) fn generate_transition_method(
                 #( #source_bindings, )*
             } = self;
 
+            // Commit point: from here on the machine is in the target state.
             let mut new_machine = #machine_name {
                 ctx,
                 _state: ::core::marker::PhantomData,
                 #( #transfers, )*
             };
+            #history_update
 
             #( #post_calls )*
-            #history_update
 
             ::core::result::Result::Ok(new_machine)
         }
