@@ -1,4 +1,5 @@
-target/
+# Build output; no trailing slash so a target symlink is ignored too
+target
 # Cargo/Build
 **/Cargo.lock
 
