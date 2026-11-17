@@ -53,7 +53,7 @@
 //!
 //! ## Key Concepts Demonstrated
 //!
-//! 1. **Execution Order** - Around Before → Guards → Before → Transition → After → Around `AfterSuccess`
+//! 1. **Execution Order** - Guards → Before/Around Before (declaration order) → Transition → Around `AfterSuccess` → After
 //! 2. **Around Callbacks** - Transaction-like semantics, can abort transitions
 //! 3. **Multiple Callbacks** - All execute in order
 //! 4. **State Access** - Callbacks receive `&self` (read-only)
@@ -83,7 +83,8 @@
 //! }
 //! ```
 //!
-//! Can't have different callbacks for different source states on same event.
+//! For callbacks that depend on the source state, declare them on the
+//! `transition:` instead; they run after the event-level ones.
 //!
 //! ### Caveat 3: Around Callbacks Can Abort Transitions
 //!
@@ -103,18 +104,19 @@
 //!
 //! Abort at Before stage prevents transition. `AfterSuccess` only runs if transition succeeds.
 //!
-//! ### Caveat 4: Callback Execution Order is Fixed
+//! ### Caveat 4: Callback Execution Order Follows Ruby's
 //!
 //! ```text
-//! 1. Around Before (outermost to innermost if multiple)
-//! 2. Guards
-//! 3. Before callbacks (in declaration order)
-//! 4. Transition (state change)
+//! 1. Guards (an around never runs when they reject)
+//! 2. Before callbacks and Around Before stages, in one declaration-ordered
+//!    list: an around wraps everything declared after it
+//! 3. Transition (state change)
+//! 4. Around AfterSuccess (innermost to outermost)
 //! 5. After callbacks (in declaration order)
-//! 6. Around AfterSuccess (innermost to outermost if multiple)
 //! ```
 //!
-//! Can't change this order. Design your callbacks accordingly.
+//! Declaration order is the lever: `before: [a], around: [w], before: [b]`
+//! runs `a` outside `w` and `b` inside it.
 //!
 //! ## The Flow: Rocket Engine Ignition Sequence
 //!
@@ -375,9 +377,9 @@ fn main() {
     println!("  2. Before::check_fuel_pressure");
     println!("  3. Before::pre_ignition_checks");
     println!("  4. [STATE TRANSITION: Idle → Armed]");
-    println!("  5. After::log_armed_status");
-    println!("  6. After::send_telemetry");
-    println!("  7. Around::AfterSuccess (fuel_valve_transaction)");
+    println!("  5. Around::AfterSuccess (fuel_valve_transaction)");
+    println!("  6. After::log_armed_status");
+    println!("  7. After::send_telemetry");
 
     // Scenario 3: Around callback abort
     println!("\n\n--- Scenario 2: Around Callback Abort ---");
