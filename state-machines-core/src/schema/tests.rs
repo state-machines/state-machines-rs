@@ -293,3 +293,70 @@ fn machine_callback_filters_must_name_declared_states_and_events() {
         ]
     );
 }
+
+fn orthogonal_schema() -> MachineSchema {
+    MachineSchema {
+        name: "Pair".into(),
+        regions: vec![
+            RegionSchema {
+                name: "left".into(),
+                machine: "Airlock".into(),
+            },
+            RegionSchema {
+                name: "right".into(),
+                machine: "Airlock".into(),
+            },
+        ],
+        region_events: vec![RegionEventSchema {
+            name: "cycle".into(),
+            payload: None,
+            regions: vec!["left".into(), "right".into()],
+        }],
+        ..Default::default()
+    }
+}
+
+/// The `regions` macro composes whole machines: it has no states, events or
+/// machine-wide callbacks of its own, so an orthogonal schema declaring any of
+/// them describes nothing the runtime does, and is refused.
+#[test]
+fn orthogonal_schemas_refuse_exclusive_fields() {
+    assert_eq!(orthogonal_schema().validate(), []);
+
+    let mut schema = orthogonal_schema();
+    schema.callbacks = vec![machine_callback(
+        CallbackKind::Before,
+        "",
+        Some(&["Nowhere"]),
+        None,
+    )];
+    schema.on_error = vec![MachineErrorCallbackSchema {
+        name: "alarm".into(),
+        from: None,
+        to: None,
+        on: None,
+    }];
+    schema.initial = "Pressurized".into();
+    schema.lifecycle = vec![StateLifecycleSchema {
+        state: "Pressurized".into(),
+        ..Default::default()
+    }];
+    let messages: Vec<_> = schema.validate().into_iter().map(|d| d.message).collect();
+    assert_eq!(
+        messages,
+        [
+            "orthogonal schema cannot declare `initial`",
+            "orthogonal schema cannot declare `lifecycle`",
+            "orthogonal schema cannot declare `callbacks`",
+            "orthogonal schema cannot declare `on_error`",
+        ]
+    );
+}
+
+#[test]
+fn region_events_need_regions() {
+    let mut schema = sample_schema();
+    schema.region_events = orthogonal_schema().region_events;
+    let messages: Vec<_> = schema.validate().into_iter().map(|d| d.message).collect();
+    assert_eq!(messages, ["region events need orthogonal regions"]);
+}

@@ -478,6 +478,12 @@ impl MachineSchema {
             self.validate_regions(&mut report);
             return diagnostics;
         }
+        if !self.region_events.is_empty() {
+            report(
+                DiagnosticLevel::Error,
+                "region events need orthogonal regions".into(),
+            );
+        }
         let names = self.validate_states(&mut report);
         self.validate_runtime_rules(&names, &mut report);
         self.validate_machine_callbacks(&names, &mut report);
@@ -487,19 +493,33 @@ impl MachineSchema {
         diagnostics
     }
 
-    /// Orthogonal schemas only carry regions and routed region events.
+    /// Orthogonal schemas only carry regions and routed region events: the
+    /// `regions` macro composes whole machines and has no states, events,
+    /// lifecycle or machine-wide callbacks of its own (each region's machine
+    /// keeps its own schema). Any of those fields is refused, not ignored.
     fn validate_regions(&self, report: &mut impl FnMut(DiagnosticLevel, String)) {
+        let exclusive = [
+            ("initial", !self.initial.is_empty()),
+            ("states", !self.states.is_empty()),
+            ("superstates", !self.superstates.is_empty()),
+            ("events", !self.events.is_empty()),
+            ("lifecycle", !self.lifecycle.is_empty()),
+            ("runtime", !self.runtime.is_empty()),
+            ("final_states", !self.final_states.is_empty()),
+            ("callbacks", !self.callbacks.is_empty()),
+            ("on_error", !self.on_error.is_empty()),
+        ];
+        for (field, _) in exclusive.iter().filter(|(_, declared)| *declared) {
+            report(
+                DiagnosticLevel::Error,
+                format!("orthogonal schema cannot declare `{field}`"),
+            );
+        }
         let names: BTreeSet<_> = self.regions.iter().map(|region| &region.name).collect();
         if self.regions.len() < 2 || names.len() != self.regions.len() {
             report(
                 DiagnosticLevel::Error,
                 "invalid or duplicate orthogonal regions".into(),
-            );
-        }
-        if !self.states.is_empty() || !self.events.is_empty() {
-            report(
-                DiagnosticLevel::Error,
-                "orthogonal schema cannot also declare exclusive states/events".into(),
             );
         }
         let mut events = BTreeSet::new();
