@@ -1,5 +1,8 @@
 {
-  "plugins": ["cargo-workspace"],
+  "plugins": [
+    "cargo-workspace"
+  ],
+  "bump-minor-pre-major": true,
   "packages": {
     "state-machines": {
       "release-type": "rust",
