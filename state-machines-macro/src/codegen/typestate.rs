@@ -42,7 +42,7 @@ use crate::codegen::utils::{
     async_lint_allows, ctx_generics, ctx_ty, empty_storage_inits, machine_params, maybe_async,
     maybe_await, to_snake_case, to_snake_case_ident, transition_error_ty,
 };
-use crate::types::{StateMachine, StateStorageSpec, TransitionEdge};
+use crate::types::{CallbackKind, StateMachine, StateStorageSpec, TransitionEdge};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::Ident;
@@ -175,9 +175,9 @@ fn generate_machine_struct(machine: &StateMachine) -> TokenStream2 {
 ///
 /// Each transition method:
 /// 1. Checks guards (event-level and transition-level)
-/// 2. Executes before callbacks
+/// 2. Executes before callbacks and around `Before` stages in declaration order
 /// 3. Creates new machine with target state
-/// 4. Executes after callbacks on new machine
+/// 4. Executes around `AfterSuccess` stages innermost first, then after callbacks
 /// 5. Returns Result with new typed machine or original machine with error
 fn generate_state_impls(machine: &StateMachine) -> Vec<TokenStream2> {
     let mut impls = Vec::new();
@@ -690,8 +690,11 @@ impl<'a> TransitionCtx<'a> {
         }
     }
 
-    /// Statements run on `self` before it is torn down: around callbacks,
-    /// guards, global and local before callbacks, then exit hooks.
+    /// Statements run on `self` before it is torn down, in Ruby
+    /// `state_machines` order: guards select the transition first, so an
+    /// around never runs when they reject; then before callbacks and around
+    /// `Before` stages in declaration order, each around wrapping everything
+    /// declared after it; then exit hooks, part of the state change.
     fn pre_transition_calls(&self, before: &Phase, check_guards: bool) -> Vec<TokenStream2> {
         let edge = self.edge;
         let (exit_hooks, _) = self.machine.lifecycle_callbacks(edge);
@@ -700,22 +703,20 @@ impl<'a> TransitionCtx<'a> {
         } else {
             Vec::new()
         };
-        edge.hooks
-            .around
+        let wrapping = edge
+            .hooks
+            .callbacks
             .iter()
-            .map(|cb| self.around_step(before, cb))
-            .chain(guard_checks)
-            .chain(
-                edge.global_before
-                    .iter()
-                    .map(|cb| self.callback_step(before, cb, false)),
-            )
-            .chain(
-                edge.hooks
-                    .before
-                    .iter()
-                    .map(|cb| self.callback_step(before, cb, true)),
-            )
+            .filter_map(|callback| match callback.kind {
+                CallbackKind::Before => {
+                    Some(self.callback_step(before, &callback.name, !callback.global))
+                }
+                CallbackKind::Around => Some(self.around_step(before, &callback.name)),
+                CallbackKind::After => None,
+            });
+        guard_checks
+            .into_iter()
+            .chain(wrapping)
             .chain(
                 exit_hooks
                     .iter()
@@ -724,8 +725,9 @@ impl<'a> TransitionCtx<'a> {
             .collect()
     }
 
-    /// Statements run on `new_machine` once it exists: entry hooks, local and
-    /// global after callbacks, around callbacks, then completion hooks.
+    /// Statements run on `new_machine` once it exists: entry hooks (the rest
+    /// of the state change), around `AfterSuccess` stages innermost first,
+    /// after callbacks in declaration order, then completion hooks.
     fn post_transition_calls(&self, after: &Phase) -> Vec<TokenStream2> {
         let edge = self.edge;
         let machine = self.machine;
@@ -746,20 +748,14 @@ impl<'a> TransitionCtx<'a> {
             .map(|cb| self.callback_step(after, cb, false))
             .chain(
                 edge.hooks
-                    .after
-                    .iter()
-                    .map(|cb| self.callback_step(after, cb, true)),
-            )
-            .chain(
-                edge.global_after
-                    .iter()
-                    .map(|cb| self.callback_step(after, cb, false)),
+                    .of_kind(CallbackKind::Around)
+                    .rev()
+                    .map(|cb| self.around_step(after, &cb.name)),
             )
             .chain(
                 edge.hooks
-                    .around
-                    .iter()
-                    .map(|cb| self.around_step(after, cb)),
+                    .of_kind(CallbackKind::After)
+                    .map(|cb| self.callback_step(after, &cb.name, !cb.global)),
             )
             .chain(complete_hooks.map(|cb| self.callback_step(after, cb, false)))
             .collect()
@@ -775,9 +771,9 @@ impl<'a> TransitionCtx<'a> {
 /// The method body:
 /// 1. Evaluates event-level guards
 /// 2. Evaluates transition-level guards
-/// 3. Runs before callbacks
+/// 3. Runs before callbacks and around `Before` stages in declaration order
 /// 4. Creates new machine with target state
-/// 5. Runs after callbacks
+/// 5. Runs around `AfterSuccess` stages innermost first, then after callbacks
 /// 6. Returns `Ok(new_machine)` or Err((self, `GuardError`))
 ///
 /// # Example Output

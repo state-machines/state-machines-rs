@@ -15,9 +15,9 @@ pub mod schema;
 
 #[cfg(feature = "inspect")]
 pub use schema::{
-    DeadlineSchema, DiagnosticLevel, EventSchema, Inspectable, MachineSchema, RegionEventSchema,
-    RegionSchema, RuntimeLifecycleSchema, SchemaDiagnostic, StateLifecycleSchema, SuperstateSchema,
-    TransitionSchema,
+    CallbackKind, CallbackSchema, DeadlineSchema, DiagnosticLevel, EventSchema, Inspectable,
+    MachineSchema, RegionEventSchema, RegionSchema, RuntimeLifecycleSchema, SchemaDiagnostic,
+    StateLifecycleSchema, SuperstateSchema, TransitionSchema,
 };
 
 /// Marker trait for states used by the generated state machines.
@@ -453,9 +453,17 @@ impl<E: Debug> fmt::Display for DynamicError<E> {
 }
 impl<E: Debug> core::error::Error for DynamicError<E> {}
 
+/// The point of a transition an around callback is called at.
+///
+/// An around enters where it was declared among the before callbacks, after
+/// the guards passed, and exits once the state has changed, innermost first
+/// and before any after callback (the schema's `CallbackKind` lists the full
+/// order).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AroundStage {
+    /// Entering: runs in declaration order with the before callbacks.
     Before,
+    /// Exiting after the state changed; skipped when the transition failed.
     AfterSuccess,
 }
 

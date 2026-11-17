@@ -8,9 +8,10 @@
 //! - Helper utilities for parsing lists and sets
 
 use crate::types::{
-    Deadline, Event, GlobalCallback, GlobalCallbacks, Hierarchy, HistoryMode, Hooks, ParsedStates,
-    RuntimeLifecycle, StateLifecycle, StateMachine, StateStorageSpec, SuperstateParseResult,
-    Transition, TransitionEdge, TransitionGraph, TransitionKind,
+    Callback, CallbackKind, Deadline, Event, GlobalCallback, GlobalCallbacks, Hierarchy,
+    HistoryMode, Hooks, ParsedStates, RuntimeLifecycle, StateLifecycle, StateMachine,
+    StateStorageSpec, SuperstateParseResult, Transition, TransitionEdge, TransitionGraph,
+    TransitionKind,
 };
 use proc_macro2::Span;
 use quote::format_ident;
@@ -565,6 +566,10 @@ pub fn parse_events(input: &ParseBuffer<'_>) -> Result<Vec<Event>> {
 /// Each hook key takes a bracketed list of `{ name: ..., from: ..., to: ..., on: ... }`
 /// entries. `name` is required; the filters are optional and accept a single
 /// identifier or a bracketed list. `from`/`to` may name superstates.
+///
+/// A key may repeat. Before, around and after entries keep their
+/// declaration order across keys, which decides where a before runs
+/// relative to the arounds (see [`CallbackKind`]).
 pub fn parse_global_callbacks(input: &ParseBuffer<'_>) -> Result<GlobalCallbacks> {
     let mut callbacks = GlobalCallbacks::default();
 
@@ -572,11 +577,11 @@ pub fn parse_global_callbacks(input: &ParseBuffer<'_>) -> Result<GlobalCallbacks
         let key: Ident = input.parse()?;
         let key_str = key.to_string();
 
-        let bucket = match key_str.as_str() {
-            "before_transition" => &mut callbacks.before,
-            "after_transition" => &mut callbacks.after,
-            "around_transition" => &mut callbacks.around,
-            "error_transition" => &mut callbacks.on_error,
+        let kind = match key_str.as_str() {
+            "before_transition" => Some(CallbackKind::Before),
+            "around_transition" => Some(CallbackKind::Around),
+            "after_transition" => Some(CallbackKind::After),
+            "error_transition" => None,
             _ => {
                 return Err(unexpected_key_in(
                     &key,
@@ -594,7 +599,11 @@ pub fn parse_global_callbacks(input: &ParseBuffer<'_>) -> Result<GlobalCallbacks
         while !list.is_empty() {
             let entry;
             braced!(entry in list);
-            bucket.push(parse_global_callback_entry(&entry)?);
+            let callback = parse_global_callback_entry(&entry)?;
+            match kind {
+                Some(kind) => callbacks.transition.push((kind, callback)),
+                None => callbacks.on_error.push(callback),
+            }
             skip_optional_comma(&list)?;
         }
 
@@ -740,23 +749,39 @@ pub fn parse_transition(input: &ParseBuffer<'_>) -> Result<Transition> {
 }
 
 impl Hooks {
-    /// Parse the value of a hook-list key into its slot.
+    /// Append the value of a hook-list key to its list.
+    ///
+    /// A key may repeat; its entries are appended, never replaced. `before`,
+    /// `around` and `after` entries share one list in declaration order, so
+    /// `before: a, around: w, before: b` runs `a`, enters `w`, then runs `b`.
     ///
     /// Returns `false` without consuming input when `key` is not one of
-    /// `guards`, `unless`, `before`, `after`, or `around`.
+    /// `guards`, `unless`, `before`, `around`, `after`, or `on_error`.
     fn parse_field(&mut self, key: &str, input: &ParseBuffer<'_>) -> Result<bool> {
-        let slot = match key {
-            "guards" => &mut self.guards,
-            "unless" => &mut self.unless,
-            "before" => &mut self.before,
-            "after" => &mut self.after,
-            "around" => &mut self.around,
-            "on_error" => &mut self.on_error,
+        let kind = match key {
+            "guards" => return append(&mut self.guards, input),
+            "unless" => return append(&mut self.unless, input),
+            "on_error" => return append(&mut self.on_error, input),
+            "before" => CallbackKind::Before,
+            "around" => CallbackKind::Around,
+            "after" => CallbackKind::After,
             _ => return Ok(false),
         };
-        *slot = parse_ident_list_value(input)?;
+        let names = parse_ident_list_value(input)?;
+        self.callbacks
+            .extend(names.into_iter().map(|name| Callback {
+                kind,
+                name,
+                global: false,
+            }));
         Ok(true)
     }
+}
+
+/// Append an identifier-list value to `slot`; always a recognised key.
+fn append(slot: &mut Vec<Ident>, input: &ParseBuffer<'_>) -> Result<bool> {
+    slot.extend(parse_ident_list_value(input)?);
+    Ok(true)
 }
 
 // ========== Helper Functions ==========
@@ -894,35 +919,40 @@ impl StateMachine {
                                 resolved_target.clone()
                             };
                             // Global callbacks whose filters match this concrete
-                            // edge. Around callbacks take no payload, so global
-                            // ones can share the around list; they are prepended
-                            // so machine-wide wrappers run outermost.
-                            let matching_globals = |bucket: &[GlobalCallback]| -> Vec<Ident> {
-                                bucket
-                                    .iter()
-                                    .filter(|cb| {
-                                        cb.matches(
-                                            &self.hierarchy,
-                                            &self.states,
-                                            actual_source,
-                                            &resolved_target,
-                                            &event.name,
-                                        )
-                                    })
-                                    .map(|cb| cb.name.clone())
-                                    .collect()
+                            // edge count as declared before the event's own, so
+                            // they are prepended: a global around wraps every
+                            // local callback, a global after runs first.
+                            let matches = |cb: &GlobalCallback| {
+                                cb.matches(
+                                    &self.hierarchy,
+                                    &self.states,
+                                    actual_source,
+                                    &resolved_target,
+                                    &event.name,
+                                )
                             };
-
-                            let global_before = matching_globals(&self.callbacks.before);
-                            let global_after = matching_globals(&self.callbacks.after);
-
-                            let mut edge_hooks = hooks.clone();
-                            edge_hooks
-                                .around
-                                .splice(0..0, matching_globals(&self.callbacks.around));
-                            edge_hooks
-                                .on_error
-                                .splice(0..0, matching_globals(&self.callbacks.on_error));
+                            let globals = Hooks {
+                                callbacks: self
+                                    .callbacks
+                                    .transition
+                                    .iter()
+                                    .filter(|(_, cb)| matches(cb))
+                                    .map(|(kind, cb)| Callback {
+                                        kind: *kind,
+                                        name: cb.name.clone(),
+                                        global: true,
+                                    })
+                                    .collect(),
+                                on_error: self
+                                    .callbacks
+                                    .on_error
+                                    .iter()
+                                    .filter(|cb| matches(cb))
+                                    .map(|cb| cb.name.clone())
+                                    .collect(),
+                                ..Hooks::default()
+                            };
+                            let edge_hooks = globals.merged(&hooks);
 
                             self.transition_graph.add_edge(
                                 actual_source,
@@ -933,8 +963,6 @@ impl StateMachine {
                                     target: resolved_target.clone(),
                                     event: event.name.clone(),
                                     hooks: edge_hooks,
-                                    global_before,
-                                    global_after,
                                     payload: event.payload.clone(),
                                     internal: transition.internal,
                                     selection: transition.hooks.clone(),

@@ -123,35 +123,35 @@ fn around_callback_with_guards_and_callbacks() {
 
     impl<C, S> OrderTest<C, S> {
         fn check_guard(&self, _ctx: &C) -> bool {
-            // Should run after around Before
-            assert_eq!(EXECUTION_ORDER.fetch_add(1, Ordering::SeqCst), 1);
+            // Guards select the transition before any callback runs
+            assert_eq!(EXECUTION_ORDER.fetch_add(1, Ordering::SeqCst), 0);
             true
         }
 
         fn wrapper(&self, stage: AroundStage) -> AroundOutcome<A> {
             match stage {
                 AroundStage::Before => {
-                    // Should run first
-                    assert_eq!(EXECUTION_ORDER.fetch_add(1, Ordering::SeqCst), 0);
+                    // Declared before `before_cb`, so it wraps it
+                    assert_eq!(EXECUTION_ORDER.fetch_add(1, Ordering::SeqCst), 1);
                 }
                 AroundStage::AfterSuccess => {
-                    // Should run last
-                    assert_eq!(EXECUTION_ORDER.fetch_add(1, Ordering::SeqCst), 4);
+                    // Exits once the state has changed, before the afters
+                    assert_eq!(EXECUTION_ORDER.fetch_add(1, Ordering::SeqCst), 3);
                 }
             }
             AroundOutcome::Proceed
         }
 
         fn before_cb(&self) {
-            // Should run after guards, before transition
+            // Runs inside the around, before the transition
             assert_eq!(EXECUTION_ORDER.fetch_add(1, Ordering::SeqCst), 2);
         }
     }
 
     impl<C> OrderTest<C, B> {
         fn after_cb(&self) {
-            // Should run after transition, before around AfterSuccess
-            assert_eq!(EXECUTION_ORDER.fetch_add(1, Ordering::SeqCst), 3);
+            // Runs last, once every around has exited
+            assert_eq!(EXECUTION_ORDER.fetch_add(1, Ordering::SeqCst), 4);
         }
     }
 

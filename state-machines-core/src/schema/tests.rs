@@ -1,4 +1,5 @@
 use super::*;
+use alloc::string::ToString;
 use alloc::vec;
 
 fn sample_schema() -> MachineSchema {
@@ -20,16 +21,12 @@ fn sample_schema() -> MachineSchema {
                     history: None,
                     guards: vec![],
                     unless: vec![],
-                    before: vec![],
-                    after: vec![],
-                    around: vec![],
+                    callbacks: vec![],
                     on_error: vec![],
                 }],
                 guards: vec![],
                 unless: vec![],
-                before: vec![],
-                after: vec![],
-                around: vec![],
+                callbacks: vec![],
                 on_error: vec![],
                 payload: None,
                 branching: false,
@@ -49,16 +46,12 @@ fn sample_schema() -> MachineSchema {
                     history: None,
                     guards: vec![],
                     unless: vec![],
-                    before: vec![],
-                    after: vec![],
-                    around: vec![],
+                    callbacks: vec![],
                     on_error: vec![],
                 }],
                 guards: vec![],
                 unless: vec![],
-                before: vec![],
-                after: vec![],
-                around: vec![],
+                callbacks: vec![],
                 on_error: vec![],
                 payload: None,
                 branching: false,
@@ -135,4 +128,60 @@ fn validates_expanded_superstate_sources() {
     schema.events[0].transitions[0].guards = vec!["ready".into()];
     schema.events[0].transitions[1].fallback = true;
     assert_eq!(schema.validate(), []);
+}
+
+#[test]
+fn callbacks_serialize_in_declaration_order_with_their_kind() {
+    let mut schema = sample_schema();
+    schema.events[0].callbacks = vec![
+        CallbackSchema::new(CallbackKind::Before, "before1"),
+        CallbackSchema::new(CallbackKind::Around, "around1"),
+        CallbackSchema::new(CallbackKind::Before, "before2"),
+        CallbackSchema::new(CallbackKind::Around, "around2"),
+        CallbackSchema::new(CallbackKind::After, "after1"),
+    ];
+    let json = schema.to_json();
+    assert!(json.contains(
+        r#""callbacks":[{"kind":"before","name":"before1"},{"kind":"around","name":"around1"},{"kind":"before","name":"before2"},{"kind":"around","name":"around2"},{"kind":"after","name":"after1"}]"#
+    ));
+    let parsed: MachineSchema = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed, schema);
+    assert_eq!(parsed.validate(), []);
+}
+
+#[test]
+fn the_old_split_callback_arrays_are_refused() {
+    let json = r#"{"name":"M","initial":"A","states":["A","B"],"events":[{"name":"go",
+        "transitions":[{"sources":["A"],"target":"B","before":["log"],"around":["wrap"]}]}]}"#;
+    let error = serde_json::from_str::<MachineSchema>(json).unwrap_err();
+    assert!(
+        error.to_string().contains("unknown field `before`"),
+        "{error}"
+    );
+}
+
+#[test]
+fn unknown_callback_kinds_are_refused() {
+    let json = r#"{"name":"M","initial":"A","states":["A","B"],"events":[{"name":"go",
+        "callbacks":[{"kind":"during","name":"log"}],
+        "transitions":[{"sources":["A"],"target":"B"}]}]}"#;
+    let error = serde_json::from_str::<MachineSchema>(json).unwrap_err();
+    assert!(
+        error.to_string().contains("unknown variant `during`"),
+        "{error}"
+    );
+}
+
+#[test]
+fn unnamed_callbacks_are_errors() {
+    let mut schema = sample_schema();
+    schema.events[1].transitions[0].callbacks =
+        vec![CallbackSchema::new(CallbackKind::Around, " ")];
+    let diagnostics = schema.validate();
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].level, DiagnosticLevel::Error);
+    assert_eq!(
+        diagnostics[0].message,
+        "unnamed around callback on `repressurize`"
+    );
 }

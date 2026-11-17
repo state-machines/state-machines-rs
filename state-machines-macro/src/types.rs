@@ -107,12 +107,47 @@ pub struct GlobalCallback {
 
 /// The `callbacks:` block: machine-wide callbacks applied to every
 /// transition that matches their filters.
+///
+/// `transition` keeps `before_transition`, `around_transition` and
+/// `after_transition` entries in one list, in declaration order, because a
+/// before runs where it was declared relative to the arounds.
 #[derive(Default)]
 pub struct GlobalCallbacks {
-    pub before: Vec<GlobalCallback>,
-    pub after: Vec<GlobalCallback>,
-    pub around: Vec<GlobalCallback>,
+    pub transition: Vec<(CallbackKind, GlobalCallback)>,
     pub on_error: Vec<GlobalCallback>,
+}
+
+impl GlobalCallbacks {
+    /// Every entry, transition callbacks first, for filter validation.
+    pub fn all(&self) -> impl Iterator<Item = &GlobalCallback> {
+        self.transition
+            .iter()
+            .map(|(_, callback)| callback)
+            .chain(&self.on_error)
+    }
+}
+
+/// When a transition callback runs, as Ruby's `state_machines` defines it.
+///
+/// Before and around callbacks share one list in declaration order: a
+/// before runs where it was declared, an around enters there and wraps
+/// everything declared after it. The state changes innermost, the arounds
+/// exit innermost first, then the after callbacks run in declaration order.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CallbackKind {
+    Before,
+    Around,
+    After,
+}
+
+/// One transition callback, in declaration order among its siblings.
+#[derive(Clone)]
+pub struct Callback {
+    pub kind: CallbackKind,
+    pub name: Ident,
+    /// Declared in the `callbacks:` block: invoked without the payload so
+    /// one method can serve every event its filters match.
+    pub global: bool,
 }
 
 impl GlobalCallback {
@@ -158,13 +193,11 @@ pub struct TransitionGraph {
 
 /// A single edge in the transition graph.
 ///
-/// `hooks` merges event- and transition-level lists; its `before`/`after`
-/// callbacks receive the event payload when one is declared.
-/// `global_before`/`global_after` hold matching callbacks from the
-/// `callbacks:` block; those are always invoked without a payload so a single
-/// method can serve every matching event. Matching global around callbacks
-/// are merged into `hooks.around` directly, since around callbacks never
-/// receive payloads.
+/// `hooks` merges, in this order, the matching entries of the `callbacks:`
+/// block, the event-level hooks and the transition-level hooks, so the
+/// machine-wide callbacks count as declared first. Local before/after
+/// callbacks receive the event payload when one is declared; global ones
+/// never do (see [`Callback::global`]).
 #[derive(Clone)]
 pub struct TransitionEdge {
     pub scope: Ident,
@@ -173,8 +206,6 @@ pub struct TransitionEdge {
     pub target: Ident,
     pub event: Ident,
     pub hooks: Hooks,
-    pub global_before: Vec<Ident>,
-    pub global_after: Vec<Ident>,
     pub payload: Option<Type>,
     pub internal: bool,
     pub selection: Hooks,
@@ -216,8 +247,7 @@ impl TransitionGraph {
 /// Events are the triggers that cause state transitions. Each event can have:
 /// - Multiple transitions (from different source states to different targets)
 /// - Guards that must pass before any transition can occur
-/// - Before/after callbacks that run around transitions
-/// - Around callbacks that wrap the entire transition
+/// - Before, around and after callbacks, in declaration order
 /// - An optional payload type for passing data
 pub struct Event {
     pub completion: Option<Ident>,
@@ -257,26 +287,31 @@ pub enum TransitionKind {
 pub struct Hooks {
     pub guards: Vec<Ident>,
     pub unless: Vec<Ident>,
-    pub before: Vec<Ident>,
-    pub after: Vec<Ident>,
-    pub around: Vec<Ident>,
+    /// `before`, `around` and `after` entries in declaration order.
+    pub callbacks: Vec<Callback>,
     pub on_error: Vec<Ident>,
 }
 
 impl Hooks {
     /// These hooks followed by `inner`'s, list by list, so event-level
-    /// entries run before transition-level ones.
+    /// entries count as declared before transition-level ones.
     pub fn merged(&self, inner: &Self) -> Self {
-        let concat =
-            |outer: &[Ident], inner: &[Ident]| outer.iter().chain(inner).cloned().collect();
+        fn concat<T: Clone>(outer: &[T], inner: &[T]) -> Vec<T> {
+            outer.iter().chain(inner).cloned().collect()
+        }
         Self {
             guards: concat(&self.guards, &inner.guards),
             unless: concat(&self.unless, &inner.unless),
-            before: concat(&self.before, &inner.before),
-            after: concat(&self.after, &inner.after),
-            around: concat(&self.around, &inner.around),
+            callbacks: concat(&self.callbacks, &inner.callbacks),
             on_error: concat(&self.on_error, &inner.on_error),
         }
+    }
+
+    /// The callbacks of one kind, in declaration order.
+    pub fn of_kind(&self, kind: CallbackKind) -> impl DoubleEndedIterator<Item = &Callback> {
+        self.callbacks
+            .iter()
+            .filter(move |callback| callback.kind == kind)
     }
 }
 

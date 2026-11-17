@@ -38,6 +38,22 @@ fn validate_scopes<'a>(
     }
 }
 
+/// A callback names the function it runs, so an empty name is no callback.
+fn validate_callbacks(
+    event: &str,
+    callbacks: &[CallbackSchema],
+    report: &mut impl FnMut(DiagnosticLevel, String),
+) {
+    for callback in callbacks {
+        if callback.name.trim().is_empty() {
+            report(
+                DiagnosticLevel::Error,
+                format!("unnamed {} callback on `{event}`", callback.kind.as_str()),
+            );
+        }
+    }
+}
+
 /// Per-event bookkeeping while validating its transitions in declaration order.
 #[derive(Default)]
 struct EventCoverage<'a> {
@@ -50,7 +66,11 @@ struct EventCoverage<'a> {
 }
 
 /// Serializable representation of a state machine.
+///
+/// Every schema struct refuses unknown fields, so a document written for
+/// another schema version fails to parse instead of silently losing data.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct MachineSchema {
     pub name: String,
     pub initial: String,
@@ -73,11 +93,13 @@ pub struct MachineSchema {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct RegionSchema {
     pub name: String,
     pub machine: String,
 }
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct RegionEventSchema {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -86,6 +108,7 @@ pub struct RegionEventSchema {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct RuntimeLifecycleSchema {
     pub state: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -96,12 +119,14 @@ pub struct RuntimeLifecycleSchema {
     pub defer: Vec<String>,
 }
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct DeadlineSchema {
     pub delay: u64,
     pub event: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct StateLifecycleSchema {
     pub state: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -114,6 +139,7 @@ pub struct StateLifecycleSchema {
 
 /// Serializable representation of a superstate (hierarchical state).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct SuperstateSchema {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
@@ -124,6 +150,7 @@ pub struct SuperstateSchema {
 
 /// Serializable representation of an event.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct EventSchema {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completion: Option<String>,
@@ -137,12 +164,10 @@ pub struct EventSchema {
     pub guards: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unless: Vec<String>,
+    /// Before, around and after callbacks in declaration order; see
+    /// [`CallbackKind`] for the order they run in.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub before: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub after: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub around: Vec<String>,
+    pub callbacks: Vec<CallbackSchema>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub on_error: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -153,6 +178,7 @@ pub struct EventSchema {
 
 /// Serializable representation of a transition.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct TransitionSchema {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
@@ -170,14 +196,66 @@ pub struct TransitionSchema {
     pub guards: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unless: Vec<String>,
+    /// Before, around and after callbacks in declaration order; see
+    /// [`CallbackKind`] for the order they run in.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub before: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub after: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub around: Vec<String>,
+    pub callbacks: Vec<CallbackSchema>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub on_error: Vec<String>,
+}
+
+/// When a transition callback runs. The semantics are Ruby
+/// `state_machines`', which this crate ports:
+///
+/// 1. Guards are checked first, to select the transition. No callback runs
+///    when they reject, arounds included.
+/// 2. [`Before`](Self::Before) and [`Around`](Self::Around) callbacks run in
+///    one list, in declaration order: a before runs where it was declared,
+///    an around enters there and wraps everything declared after it.
+/// 3. The state changes.
+/// 4. The arounds exit, innermost (last declared) first.
+/// 5. [`After`](Self::After) callbacks run in declaration order.
+///
+/// Event-level callbacks count as declared before transition-level ones.
+/// With `before a, around w1, before b, around w2, after z` a transition
+/// runs: `a`, `w1` enter, `b`, `w2` enter, state change, `w2` exit, `w1`
+/// exit, `z`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CallbackKind {
+    Before,
+    Around,
+    After,
+}
+
+impl CallbackKind {
+    /// The serialized name: `before`, `around` or `after`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Before => "before",
+            Self::Around => "around",
+            Self::After => "after",
+        }
+    }
+}
+
+/// One transition callback: the function `name`, run as `kind`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CallbackSchema {
+    pub kind: CallbackKind,
+    pub name: String,
+}
+
+impl CallbackSchema {
+    #[must_use]
+    pub fn new(kind: CallbackKind, name: impl Into<String>) -> Self {
+        Self {
+            kind,
+            name: name.into(),
+        }
+    }
 }
 
 /// Trait for types that can provide their schema for introspection.
@@ -433,8 +511,10 @@ impl MachineSchema {
                     format!("event `{}` has no transitions", event.name),
                 );
             }
+            validate_callbacks(&event.name, &event.callbacks, report);
             let mut coverage = EventCoverage::default();
             for transition in &event.transitions {
+                validate_callbacks(&event.name, &transition.callbacks, report);
                 let target = self.validate_transition_target(event, transition, report);
                 self.validate_transition_sources(
                     event,

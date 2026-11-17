@@ -4,7 +4,7 @@
 //! provide their schema as JSON or Mermaid diagrams at runtime.
 
 use crate::codegen::utils::machine_params;
-use crate::types::{HistoryMode, Hooks, StateMachine, Transition, TransitionKind};
+use crate::types::{CallbackKind, HistoryMode, Hooks, StateMachine, Transition, TransitionKind};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
@@ -32,16 +32,22 @@ fn string_vec<T: ToString>(items: impl IntoIterator<Item = T>) -> TokenStream2 {
 fn hook_schema_fields(hooks: &Hooks) -> TokenStream2 {
     let guards = string_vec(&hooks.guards);
     let unless = string_vec(&hooks.unless);
-    let before = string_vec(&hooks.before);
-    let after = string_vec(&hooks.after);
-    let around = string_vec(&hooks.around);
+    let callbacks = hooks.callbacks.iter().map(|callback| {
+        let kind = match callback.kind {
+            CallbackKind::Before => quote! { Before },
+            CallbackKind::Around => quote! { Around },
+            CallbackKind::After => quote! { After },
+        };
+        let name = callback.name.to_string();
+        quote! {
+            ::state_machines::CallbackSchema::new(::state_machines::CallbackKind::#kind, #name)
+        }
+    });
     let on_error = string_vec(&hooks.on_error);
     quote! {
         guards: #guards,
         unless: #unless,
-        before: #before,
-        after: #after,
-        around: #around,
+        callbacks: ::state_machines::__private::vec![ #( #callbacks, )* ],
         on_error: #on_error,
     }
 }

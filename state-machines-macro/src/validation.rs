@@ -413,13 +413,7 @@ impl StateMachine {
     /// leaf or superstate, and every event in an `on` filter must be a
     /// declared event. Otherwise a typo would silently never match.
     fn validate_global_callbacks(&self) -> Result<()> {
-        let buckets = [
-            &self.callbacks.before,
-            &self.callbacks.after,
-            &self.callbacks.around,
-            &self.callbacks.on_error,
-        ];
-        for callback in buckets.iter().copied().flatten() {
+        for callback in self.callbacks.all() {
             for filter in [&callback.from, &callback.to].into_iter().flatten() {
                 for state in filter {
                     let is_leaf = self.states.iter().any(|s| s == state);

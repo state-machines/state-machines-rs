@@ -43,7 +43,7 @@ While learning Rust, I chose to port something familiar and widely used—so I c
 
 **Global Filtered Callbacks** – Machine-wide `callbacks:` block with `from`/`to`/`on` filters; filtering on `to:`/`from:` doubles as state enter/exit hooks
 
-**Around Callbacks** – Wrap transitions with Before/AfterSuccess stages for transaction-like semantics
+**Around Callbacks** – Wrap transitions with Before/AfterSuccess stages for transaction-like semantics, ordered with `before` callbacks exactly as Ruby's `state_machines` orders them
 
 **Async Support** – First-class `async`/`await` for guards and callbacks
 
@@ -65,7 +65,11 @@ While learning Rust, I chose to port something familiar and widely used—so I c
 **Graph Validation** – `schema().validate()` reports invalid references and ambiguous
 transitions as errors, and unreachable states/dead ends as warnings. The CLI's
 `validate` command runs these checks too. Reachability is structural, not a
-prediction of user guards.
+prediction of user guards. Schema JSON refuses unknown fields. Events and
+transitions list their callbacks in one ordered array,
+`"callbacks": [{"kind": "before", "name": "audit"}, {"kind": "around", "name": "wrap"}]`,
+with `kind` one of `before`, `around` or `after`, because a before's position
+relative to the arounds decides whether they wrap it.
 
 **Failure Hooks** – Event/transition `on_error: [cleanup]` and global
 `callbacks: { error_transition [{ name: cleanup }] }` run once on the recovered
@@ -652,14 +656,19 @@ fn main() {
 }
 ```
 
-**Execution Order:**
+**Execution Order** (Ruby `state_machines`' order):
 
-1. **Around Before** – Runs first, can abort the entire transition
-2. **Guards** – Event/transition guards evaluated
-3. **Before callbacks** – Event-level before hooks
-4. **State transition** – Actual state change occurs
-5. **After callbacks** – Event-level after hooks
-6. **Around `AfterSuccess`** – Runs last, guaranteed to execute after successful transition
+1. **Guards** – Event/transition guards select the transition. When they reject, no callback runs, arounds included
+2. **Before callbacks and Around `Before`** – One list in declaration order: a before runs where it was declared, an around enters there and wraps everything declared after it
+3. **State transition** – Exit hooks, the state change, entry hooks
+4. **Around `AfterSuccess`** – Innermost (last declared) first
+5. **After callbacks** – In declaration order, once every around has exited
+
+Repeat a key to interleave: `before: [audit], around: [wrap], before: [lock]`
+runs `audit`, enters `wrap`, runs `lock`. The `callbacks:` block counts as
+declared before event-level hooks, and those before transition-level hooks.
+A failure stops the run where it happens: an around that already entered does
+not get its `AfterSuccess` stage, and no after callback runs.
 
 **Aborting Transitions:**
 
@@ -784,7 +793,7 @@ fn main() {
 
 **Multiple Around Callbacks:**
 
-You can specify multiple around callbacks that all execute in order:
+Multiple around callbacks nest in declaration order:
 
 ```rust,ignore
 state_machine! {
@@ -800,7 +809,7 @@ state_machine! {
 }
 ```
 
-All Before stages run in order, then the transition, then all `AfterSuccess` stages.
+The Before stages run in declaration order, then the transition, then the `AfterSuccess` stages in reverse: `transaction_wrapper` exits first, `logging_wrapper` last.
 
 **Performance:**
 

@@ -84,8 +84,9 @@ mod validation;
 ///             guards: [guard1],     // Optional: event-level guards
 ///             unless: [guard2],     // Optional: inverted guards
 ///             before: [callback1],  // Optional: before callbacks
-///             after: [callback2],   // Optional: after callbacks
 ///             around: [wrapper],    // Optional: around callbacks
+///             before: [callback3],  // Keys repeat; runs inside `wrapper`
+///             after: [callback2],   // Optional: after callbacks
 ///
 ///             transition: {
 ///                 from: SourceState,    // Leaf, superstate, or [list]
@@ -113,12 +114,20 @@ mod validation;
 /// }
 /// ```
 ///
-/// Global callbacks run outermost: matching `before_transition` entries run
-/// before event/transition `before` callbacks, and `after_transition`
-/// entries run after the local `after` callbacks. Their filters accept
-/// superstates (matching any descendant), and they are always invoked
-/// without the event payload. Filtering on `to:` / `from:` provides state
-/// enter/exit hooks.
+/// Callbacks run in Ruby `state_machines`' order. Guards are checked first;
+/// when they reject, no callback runs. Before callbacks and around `Before`
+/// stages then run in one list, in declaration order: a before runs where it
+/// was declared, an around enters there and wraps everything declared after
+/// it. The state changes, the arounds exit innermost first (`AfterSuccess`),
+/// and the after callbacks run in declaration order. A key may repeat to
+/// interleave befores and arounds.
+///
+/// The `callbacks:` block counts as declared first, then event-level hooks,
+/// then transition-level hooks: a global around wraps every local callback,
+/// and global afters run before local ones. Global filters accept
+/// superstates (matching any descendant), and global callbacks are always
+/// invoked without the event payload. Filtering on `to:` / `from:` provides
+/// state enter/exit hooks.
 ///
 /// # Features
 ///

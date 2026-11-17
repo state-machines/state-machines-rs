@@ -132,14 +132,15 @@ fn global_callbacks_fire_with_filters() {
 
     let mission = MissionControl::new(());
 
-    // launch: unfiltered before + from:Standby + around wrapper
+    // launch: unfiltered before + from:Standby, then the around wrapper,
+    // which `around_transition` declares after both
     let mission = mission.launch().expect("launch");
     assert_eq!(
         take_log(),
         vec![
-            "wrap_launch:before",
             "audit",
             "leaving_standby",
+            "wrap_launch:before",
             "enter_flight",
             "enter_powered",
             "enter_ascent",

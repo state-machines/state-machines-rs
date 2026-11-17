@@ -1,6 +1,6 @@
 #![cfg(feature = "inspect")]
 
-use state_machines::state_machine;
+use state_machines::{CallbackKind, CallbackSchema, state_machine};
 
 state_machine! {
     name: Probe,
@@ -13,8 +13,9 @@ state_machine! {
             guards: [power_ok],
             unless: [storm_active],
             before: [spin_up],
-            after: [log_scan],
             around: [wrap_scan],
+            before: [log_scan],
+            after: [log_scan],
             on_error: [report_error],
             transition: { from: Idle, to: Scanning }
         }
@@ -73,9 +74,17 @@ fn schema_exposes_guards_unless_and_callbacks() {
     let scan = schema.events.iter().find(|e| e.name == "scan").unwrap();
     assert_eq!(scan.guards, vec!["power_ok"]);
     assert_eq!(scan.unless, vec!["storm_active"]);
-    assert_eq!(scan.before, vec!["spin_up"]);
-    assert_eq!(scan.after, vec!["log_scan"]);
-    assert_eq!(scan.around, vec!["wrap_scan"]);
+    // One list in declaration order: a repeated key appends, and where the
+    // second before sits relative to the around is kept
+    assert_eq!(
+        scan.callbacks,
+        [
+            CallbackSchema::new(CallbackKind::Before, "spin_up"),
+            CallbackSchema::new(CallbackKind::Around, "wrap_scan"),
+            CallbackSchema::new(CallbackKind::Before, "log_scan"),
+            CallbackSchema::new(CallbackKind::After, "log_scan"),
+        ]
+    );
     assert_eq!(scan.on_error, ["report_error"]);
     assert_eq!(schema.final_states, ["Complete"]);
     assert_eq!(schema.lifecycle[0].state, "Active");

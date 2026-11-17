@@ -118,9 +118,9 @@ pub use state_machines_core::serde_json;
 
 #[cfg(feature = "inspect")]
 pub use state_machines_core::{
-    DeadlineSchema, DiagnosticLevel, EventSchema, Inspectable, MachineSchema, RegionEventSchema,
-    RegionSchema, RuntimeLifecycleSchema, SchemaDiagnostic, StateLifecycleSchema, SuperstateSchema,
-    TransitionSchema,
+    CallbackKind, CallbackSchema, DeadlineSchema, DiagnosticLevel, EventSchema, Inspectable,
+    MachineSchema, RegionEventSchema, RegionSchema, RuntimeLifecycleSchema, SchemaDiagnostic,
+    StateLifecycleSchema, SuperstateSchema, TransitionSchema,
 };
 
 /// Abort an around callback with a guard-style error.
