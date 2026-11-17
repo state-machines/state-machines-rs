@@ -188,6 +188,55 @@ fn nested_arounds_exit_innermost_first() {
     );
 }
 
+/// The schema keeps the `callbacks:` block whole and merges it per edge the
+/// way generated code does, so the merged list read through `CallbackKind`'s
+/// rules gives the trace above.
+#[cfg(feature = "inspect")]
+#[test]
+fn the_schema_merges_machine_callbacks_as_generated_code_does() {
+    use state_machines::{CallbackKind, CallbackSchema, MachineCallbackSchema};
+
+    let schema = Nested::<(), Parked>::schema();
+    let global = |kind, name: &str| MachineCallbackSchema {
+        kind,
+        name: name.into(),
+        from: None,
+        to: None,
+        on: None,
+    };
+    assert_eq!(
+        schema.callbacks,
+        [
+            global(CallbackKind::Around, "global_wrap"),
+            global(CallbackKind::Before, "global_before"),
+            global(CallbackKind::After, "global_after"),
+        ]
+    );
+    let event = &schema.events[0];
+    let step = CallbackSchema::new;
+    assert_eq!(
+        schema.transition_callbacks(event, &event.transitions[0], "Parked", "Moved"),
+        [
+            step(CallbackKind::Around, "global_wrap"),
+            step(CallbackKind::Before, "global_before"),
+            step(CallbackKind::After, "global_after"),
+            step(CallbackKind::Around, "event_outer"),
+            step(CallbackKind::Around, "event_inner"),
+            step(CallbackKind::After, "event_after"),
+            step(CallbackKind::Before, "transition_before"),
+            step(CallbackKind::Around, "transition_wrap"),
+            step(CallbackKind::After, "transition_after"),
+        ]
+    );
+    // Warnings (dead ends) are fine here; filters must all resolve
+    assert!(
+        schema
+            .validate()
+            .iter()
+            .all(|d| d.level == state_machines::DiagnosticLevel::Warning)
+    );
+}
+
 state_machine! {
     name: Gate,
     initial: Closed,

@@ -195,3 +195,68 @@ fn superstate_filter_matches_all_substates() {
         ]
     );
 }
+
+#[cfg(feature = "inspect")]
+#[test]
+fn schema_keeps_filters_and_merges_matching_callbacks_per_edge() {
+    use state_machines::{CallbackKind, CallbackSchema, MachineCallbackSchema};
+
+    let schema = MissionControl::<(), Standby>::schema();
+    let strings = |items: &[&str]| Some(items.iter().map(|&s| s.into()).collect::<Vec<String>>());
+    assert_eq!(
+        schema.callbacks[1],
+        MachineCallbackSchema {
+            kind: CallbackKind::Before,
+            name: "leaving_standby".into(),
+            from: strings(&["Standby"]),
+            to: None,
+            on: None,
+        }
+    );
+    assert_eq!(
+        schema.callbacks[3],
+        MachineCallbackSchema {
+            kind: CallbackKind::After,
+            name: "left_flight".into(),
+            from: strings(&["Flight"]),
+            to: None,
+            on: strings(&["abort"]),
+        }
+    );
+    let names = |event: &str, source: &str, target: &str| {
+        let event = schema.events.iter().find(|e| e.name == event).unwrap();
+        schema
+            .transition_callbacks(event, &event.transitions[0], source, target)
+            .into_iter()
+            .map(|CallbackSchema { kind, name }| format!("{} {name}", kind.as_str()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        names("launch", "Standby", "Ascent"),
+        [
+            "before audit_every_transition",
+            "before leaving_standby",
+            "around wrap_launch"
+        ]
+    );
+    assert_eq!(
+        names("burn", "Ascent", "Coast"),
+        [
+            "before audit_every_transition",
+            "after entered_coast",
+            "before record_burn"
+        ]
+    );
+    // `from: Flight` matches every Flight leaf
+    assert_eq!(
+        names("abort", "Ascent", "Aborted"),
+        ["before audit_every_transition", "after left_flight"]
+    );
+    // Warnings (dead ends) are fine here; filters must all resolve
+    assert!(
+        schema
+            .validate()
+            .iter()
+            .all(|d| d.level == state_machines::DiagnosticLevel::Warning)
+    );
+}

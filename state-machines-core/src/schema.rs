@@ -90,6 +90,15 @@ pub struct MachineSchema {
     pub regions: Vec<RegionSchema>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub region_events: Vec<RegionEventSchema>,
+    /// The machine-wide `callbacks:` block's before, around and after
+    /// callbacks, in declaration order. They count as declared before every
+    /// event's own; [`MachineSchema::transition_callbacks`] merges them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub callbacks: Vec<MachineCallbackSchema>,
+    /// The `callbacks:` block's `error_transition` entries, in declaration
+    /// order; see [`MachineSchema::transition_error_callbacks`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub on_error: Vec<MachineErrorCallbackSchema>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -258,6 +267,68 @@ impl CallbackSchema {
     }
 }
 
+/// A machine-wide callback: runs as `kind` on every transition its filters
+/// match.
+///
+/// A missing filter matches everything, an empty one nothing. `from`
+/// and `to` name leaves or superstates (a superstate matches each of its
+/// leaves); `on` names events.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MachineCallbackSchema {
+    pub kind: CallbackKind,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on: Option<Vec<String>>,
+}
+
+/// A machine-wide failure callback, filtered like [`MachineCallbackSchema`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MachineErrorCallbackSchema {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on: Option<Vec<String>>,
+}
+
+/// The `from`/`to`/`on` filters both machine-wide callback kinds carry.
+struct Filters<'a> {
+    name: &'a str,
+    from: Option<&'a [String]>,
+    to: Option<&'a [String]>,
+    on: Option<&'a [String]>,
+}
+
+impl MachineCallbackSchema {
+    fn filters(&self) -> Filters<'_> {
+        Filters {
+            name: &self.name,
+            from: self.from.as_deref(),
+            to: self.to.as_deref(),
+            on: self.on.as_deref(),
+        }
+    }
+}
+
+impl MachineErrorCallbackSchema {
+    fn filters(&self) -> Filters<'_> {
+        Filters {
+            name: &self.name,
+            from: self.from.as_deref(),
+            to: self.to.as_deref(),
+            on: self.on.as_deref(),
+        }
+    }
+}
+
 /// Trait for types that can provide their schema for introspection.
 pub trait Inspectable {
     /// Returns the schema describing this state machine.
@@ -287,6 +358,75 @@ impl MachineSchema {
             .iter()
             .position(|state| state == name)
             .map_or(&[], |index| &self.states[index..=index])
+    }
+
+    /// Whether a machine-wide callback's filters match the edge from leaf
+    /// `source` to leaf `target` on `event`, as generated code decides it.
+    fn filters_match(
+        &self,
+        filters: &Filters<'_>,
+        source: &str,
+        target: &str,
+        event: &str,
+    ) -> bool {
+        let state_matches = |filter: Option<&[String]>, leaf: &str| {
+            filter.is_none_or(|entries| {
+                entries
+                    .iter()
+                    .any(|entry| self.leaves(entry).iter().any(|l| l == leaf))
+            })
+        };
+        state_matches(filters.from, source)
+            && state_matches(filters.to, target)
+            && filters
+                .on
+                .is_none_or(|events| events.iter().any(|e| e == event))
+    }
+
+    /// The before, around and after callbacks generated code runs on
+    /// `transition` of `event` from leaf `source` to leaf `target`, merged in
+    /// declaration order: the machine-wide callbacks whose filters match,
+    /// then the event's, then the transition's. [`CallbackKind`] gives the
+    /// order they run in.
+    ///
+    /// `target` is the leaf entered: a superstate target's initial child (or
+    /// the restored leaf for a history target), `source` for an internal
+    /// transition.
+    #[must_use]
+    pub fn transition_callbacks(
+        &self,
+        event: &EventSchema,
+        transition: &TransitionSchema,
+        source: &str,
+        target: &str,
+    ) -> Vec<CallbackSchema> {
+        self.callbacks
+            .iter()
+            .filter(|cb| self.filters_match(&cb.filters(), source, target, &event.name))
+            .map(|cb| CallbackSchema::new(cb.kind, cb.name.clone()))
+            .chain(event.callbacks.iter().cloned())
+            .chain(transition.callbacks.iter().cloned())
+            .collect()
+    }
+
+    /// The failure callbacks generated code runs when `transition` of
+    /// `event` from `source` to `target` fails after it was selected:
+    /// matching machine-wide ones, then the event's, then the transition's.
+    #[must_use]
+    pub fn transition_error_callbacks<'a>(
+        &'a self,
+        event: &'a EventSchema,
+        transition: &'a TransitionSchema,
+        source: &str,
+        target: &str,
+    ) -> Vec<&'a str> {
+        self.on_error
+            .iter()
+            .filter(|cb| self.filters_match(&cb.filters(), source, target, &event.name))
+            .map(|cb| cb.name.as_str())
+            .chain(event.on_error.iter().map(String::as_str))
+            .chain(transition.on_error.iter().map(String::as_str))
+            .collect()
     }
 
     fn completed_scopes<'a>(&'a self, leaf: &'a String) -> Vec<&'a String> {
@@ -340,6 +480,7 @@ impl MachineSchema {
         }
         let names = self.validate_states(&mut report);
         self.validate_runtime_rules(&names, &mut report);
+        self.validate_machine_callbacks(&names, &mut report);
         let edges = self.validate_events(&mut report);
         self.validate_final_states(&names, &mut report);
         self.lint_reachability(&edges, &mut report);
@@ -460,6 +601,49 @@ impl MachineSchema {
                     report(
                         DiagnosticLevel::Error,
                         format!("invalid deferred event `{name}`"),
+                    );
+                }
+            }
+        }
+    }
+
+    /// Machine-wide callbacks are named, and their filters name declared
+    /// states and events; otherwise a typo would silently never match.
+    fn validate_machine_callbacks(
+        &self,
+        names: &BTreeSet<&String>,
+        report: &mut impl FnMut(DiagnosticLevel, String),
+    ) {
+        let filters = self
+            .callbacks
+            .iter()
+            .map(MachineCallbackSchema::filters)
+            .chain(
+                self.on_error
+                    .iter()
+                    .map(MachineErrorCallbackSchema::filters),
+            );
+        for filters in filters {
+            let name = filters.name;
+            if name.trim().is_empty() {
+                report(
+                    DiagnosticLevel::Error,
+                    "unnamed machine-wide callback".into(),
+                );
+            }
+            for state in filters.from.into_iter().chain(filters.to).flatten() {
+                if !names.contains(state) {
+                    report(
+                        DiagnosticLevel::Error,
+                        format!("callback `{name}` filters on unknown state `{state}`"),
+                    );
+                }
+            }
+            for event in filters.on.into_iter().flatten() {
+                if !self.events.iter().any(|e| &e.name == event) {
+                    report(
+                        DiagnosticLevel::Error,
+                        format!("callback `{name}` filters on unknown event `{event}`"),
                     );
                 }
             }

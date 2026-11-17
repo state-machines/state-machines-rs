@@ -16,8 +16,9 @@ pub mod schema;
 #[cfg(feature = "inspect")]
 pub use schema::{
     CallbackKind, CallbackSchema, DeadlineSchema, DiagnosticLevel, EventSchema, Inspectable,
-    MachineSchema, RegionEventSchema, RegionSchema, RuntimeLifecycleSchema, SchemaDiagnostic,
-    StateLifecycleSchema, SuperstateSchema, TransitionSchema,
+    MachineCallbackSchema, MachineErrorCallbackSchema, MachineSchema, RegionEventSchema,
+    RegionSchema, RuntimeLifecycleSchema, SchemaDiagnostic, StateLifecycleSchema, SuperstateSchema,
+    TransitionSchema,
 };
 
 /// Marker trait for states used by the generated state machines.

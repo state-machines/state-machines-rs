@@ -4,7 +4,9 @@
 //! provide their schema as JSON or Mermaid diagrams at runtime.
 
 use crate::codegen::utils::machine_params;
-use crate::types::{CallbackKind, HistoryMode, Hooks, StateMachine, Transition, TransitionKind};
+use crate::types::{
+    CallbackKind, GlobalCallback, HistoryMode, Hooks, StateMachine, Transition, TransitionKind,
+};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
@@ -33,11 +35,7 @@ fn hook_schema_fields(hooks: &Hooks) -> TokenStream2 {
     let guards = string_vec(&hooks.guards);
     let unless = string_vec(&hooks.unless);
     let callbacks = hooks.callbacks.iter().map(|callback| {
-        let kind = match callback.kind {
-            CallbackKind::Before => quote! { Before },
-            CallbackKind::Around => quote! { Around },
-            CallbackKind::After => quote! { After },
-        };
+        let kind = kind_variant(callback.kind);
         let name = callback.name.to_string();
         quote! {
             ::state_machines::CallbackSchema::new(::state_machines::CallbackKind::#kind, #name)
@@ -49,6 +47,67 @@ fn hook_schema_fields(hooks: &Hooks) -> TokenStream2 {
         unless: #unless,
         callbacks: ::state_machines::__private::vec![ #( #callbacks, )* ],
         on_error: #on_error,
+    }
+}
+
+/// `Some(vec![..])` for a declared filter, `None` for an absent one.
+fn optional_string_vec(filter: Option<&Vec<syn::Ident>>) -> TokenStream2 {
+    filter.map_or_else(
+        || quote! { None },
+        |entries| {
+            let entries = string_vec(entries);
+            quote! { Some(#entries) }
+        },
+    )
+}
+
+/// The `callbacks:` block: transition callbacks in declaration order, then
+/// the `error_transition` entries, each with its filters as declared.
+fn machine_callback_schemas(machine: &StateMachine) -> (Vec<TokenStream2>, Vec<TokenStream2>) {
+    let fields = |callback: &GlobalCallback| {
+        let name = callback.name.to_string();
+        let from = optional_string_vec(callback.from.as_ref());
+        let to = optional_string_vec(callback.to.as_ref());
+        let on = optional_string_vec(callback.on.as_ref());
+        quote! {
+            name: ::state_machines::__private::String::from(#name),
+            from: #from,
+            to: #to,
+            on: #on,
+        }
+    };
+    let callbacks = machine
+        .callbacks
+        .transition
+        .iter()
+        .map(|(kind, callback)| {
+            let kind = kind_variant(*kind);
+            let fields = fields(callback);
+            quote! {
+                ::state_machines::MachineCallbackSchema {
+                    kind: ::state_machines::CallbackKind::#kind,
+                    #fields
+                }
+            }
+        })
+        .collect();
+    let on_error = machine
+        .callbacks
+        .on_error
+        .iter()
+        .map(|callback| {
+            let fields = fields(callback);
+            quote! { ::state_machines::MachineErrorCallbackSchema { #fields } }
+        })
+        .collect();
+    (callbacks, on_error)
+}
+
+fn kind_variant(kind: CallbackKind) -> TokenStream2 {
+    match kind {
+        CallbackKind::Before => quote! { Before },
+        CallbackKind::Around => quote! { Around },
+        CallbackKind::After => quote! { After },
     }
 }
 
@@ -215,6 +274,7 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> TokenStream2 {
     let lifecycle = lifecycle_schemas(machine);
     let final_states = string_vec(&machine.final_states);
     let runtime = runtime_schemas(machine);
+    let (machine_callbacks, machine_on_error) = machine_callback_schemas(machine);
 
     // Generate a schema() function that's callable on the machine type.
     // We generate an impl block for all generic parameters that provides schema().
@@ -243,6 +303,8 @@ pub fn generate_inspectable_impl(machine: &StateMachine) -> TokenStream2 {
                         lifecycle: ::state_machines::__private::vec![ #( #lifecycle, )* ],
                         runtime: ::state_machines::__private::vec![#(#runtime),*],
                         final_states: #final_states,
+                        callbacks: ::state_machines::__private::vec![ #( #machine_callbacks, )* ],
+                        on_error: ::state_machines::__private::vec![ #( #machine_on_error, )* ],
                         ..::core::default::Default::default()
                     }
                 }

@@ -185,3 +185,111 @@ fn unnamed_callbacks_are_errors() {
         "unnamed around callback on `repressurize`"
     );
 }
+
+fn machine_callback(
+    kind: CallbackKind,
+    name: &str,
+    from: Option<&[&str]>,
+    on: Option<&[&str]>,
+) -> MachineCallbackSchema {
+    let strings = |items: &[&str]| items.iter().map(|&item| item.into()).collect();
+    MachineCallbackSchema {
+        kind,
+        name: name.into(),
+        from: from.map(strings),
+        to: None,
+        on: on.map(strings),
+    }
+}
+
+#[test]
+fn machine_callbacks_merge_first_and_match_by_filter() {
+    let mut schema = sample_schema();
+    schema.superstates.push(SuperstateSchema {
+        parent: None,
+        name: "Air".into(),
+        descendants: schema.states.clone(),
+        initial: schema.initial.clone(),
+    });
+    schema.callbacks = vec![
+        machine_callback(CallbackKind::Around, "wrap", None, None),
+        machine_callback(CallbackKind::Before, "from_air", Some(&["Air"]), None),
+        machine_callback(
+            CallbackKind::After,
+            "only_vent",
+            None,
+            Some(&["depressurize"]),
+        ),
+        machine_callback(CallbackKind::Before, "never", Some(&[]), None),
+    ];
+    schema.on_error = vec![MachineErrorCallbackSchema {
+        name: "alarm".into(),
+        from: None,
+        to: Some(vec!["Pressurized".into()]),
+        on: None,
+    }];
+    schema.events[0].callbacks = vec![CallbackSchema::new(CallbackKind::Before, "seal")];
+    schema.events[0].transitions[0].callbacks =
+        vec![CallbackSchema::new(CallbackKind::After, "log")];
+    schema.events[0].on_error = vec!["vent_failed".into()];
+    assert_eq!(schema.validate(), []);
+
+    let (vent, refill) = (&schema.events[0], &schema.events[1]);
+    assert_eq!(
+        schema.transition_callbacks(vent, &vent.transitions[0], "Pressurized", "Vacuum"),
+        [
+            CallbackSchema::new(CallbackKind::Around, "wrap"),
+            CallbackSchema::new(CallbackKind::Before, "from_air"),
+            CallbackSchema::new(CallbackKind::After, "only_vent"),
+            CallbackSchema::new(CallbackKind::Before, "seal"),
+            CallbackSchema::new(CallbackKind::After, "log"),
+        ]
+    );
+    assert_eq!(
+        schema.transition_callbacks(refill, &refill.transitions[0], "Vacuum", "Pressurized"),
+        [
+            CallbackSchema::new(CallbackKind::Around, "wrap"),
+            CallbackSchema::new(CallbackKind::Before, "from_air"),
+        ]
+    );
+    assert_eq!(
+        schema.transition_error_callbacks(vent, &vent.transitions[0], "Pressurized", "Vacuum"),
+        ["vent_failed"]
+    );
+    assert_eq!(
+        schema.transition_error_callbacks(refill, &refill.transitions[0], "Vacuum", "Pressurized"),
+        ["alarm"]
+    );
+
+    let json = schema.to_json();
+    assert!(json.contains(
+        r#""callbacks":[{"kind":"around","name":"wrap"},{"kind":"before","name":"from_air","from":["Air"]}"#
+    ));
+    assert_eq!(
+        serde_json::from_str::<MachineSchema>(&json).unwrap(),
+        schema
+    );
+}
+
+#[test]
+fn machine_callback_filters_must_name_declared_states_and_events() {
+    let mut schema = sample_schema();
+    schema.callbacks = vec![
+        machine_callback(
+            CallbackKind::Before,
+            "typo",
+            Some(&["Vaccum"]),
+            Some(&["vent"]),
+        ),
+        machine_callback(CallbackKind::After, "", None, None),
+    ];
+    let messages: Vec<_> = schema.validate().into_iter().map(|d| d.message).collect();
+    assert_eq!(
+        messages,
+        [
+            "callback `typo` filters on unknown state `Vaccum`",
+            "callback `typo` filters on unknown event `vent`",
+            "unnamed machine-wide callback",
+        ]
+    );
+}

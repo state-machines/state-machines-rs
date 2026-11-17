@@ -69,7 +69,11 @@ prediction of user guards. Schema JSON refuses unknown fields. Events and
 transitions list their callbacks in one ordered array,
 `"callbacks": [{"kind": "before", "name": "audit"}, {"kind": "around", "name": "wrap"}]`,
 with `kind` one of `before`, `around` or `after`, because a before's position
-relative to the arounds decides whether they wrap it.
+relative to the arounds decides whether they wrap it. The machine-wide
+`callbacks:` block is the schema's top-level `callbacks` (and `on_error`), in
+declaration order with its `from`/`to`/`on` filters;
+`schema.transition_callbacks(event, transition, source, target)` merges the
+matching ones ahead of the event's and transition's own, as generated code does.
 
 **Failure Hooks** – Event/transition `on_error: [cleanup]` and global
 `callbacks: { error_transition [{ name: cleanup }] }` run once on the recovered
