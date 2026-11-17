@@ -23,7 +23,7 @@ serde = { version = "1", default-features = false, features = ["derive", "alloc"
 benchit = "0.1"
 pollster = "1"
 serde_json = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "time"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 
 [[bench]]
 name = "typestate_transitions"

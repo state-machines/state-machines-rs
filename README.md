@@ -368,9 +368,11 @@ cargo add state-machines --features async
 
 The typestate pattern works seamlessly with async Rust:
 
-```rust,ignore
+```rust
+# #[cfg(feature = "async")]
 use state_machines::{EventError, TransitionFailure, state_machine};
 
+# #[cfg(feature = "async")]
 state_machine! {
     name: HttpRequest,
 
@@ -391,6 +393,7 @@ state_machine! {
     }
 }
 
+# #[cfg(feature = "async")]
 impl<C, S> HttpRequest<C, S> {
     async fn has_network(&self, _ctx: &C) -> bool {
         // Async guard checks network availability
@@ -400,11 +403,13 @@ impl<C, S> HttpRequest<C, S> {
 }
 
 // If callbacks can fail, declare an error type for the machine.
+# #[cfg(feature = "async")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HttpError {
     Timeout,
 }
 
+# #[cfg(feature = "async")]
 state_machine! {
     name: AuthRecovery,
     async: true,
@@ -419,12 +424,14 @@ state_machine! {
     }
 }
 
+# #[cfg(feature = "async")]
 impl<C, S> AuthRecovery<C, S> {
     async fn refresh_token(&self) -> Result<(), HttpError> {
         Err(HttpError::Timeout)
     }
 }
 
+# #[cfg(feature = "async")]
 #[tokio::main]
 async fn main() {
     // Type: HttpRequest<Idle>
@@ -450,6 +457,8 @@ async fn main() {
         _ => unreachable!(),
     }
 }
+# #[cfg(not(feature = "async"))]
+# fn main() {}
 ```
 
 ### Event Payloads
