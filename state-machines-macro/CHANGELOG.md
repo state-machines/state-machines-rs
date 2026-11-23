@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.32.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-macro-v0.31.0...state-machines-macro-v0.32.0) (2026-11-23)
+
+
+### ⚠ BREAKING CHANGES
+
+* event methods of machines declaring `error: E` return `TransitionFailure<Self, Target, E>` instead of `(Self, EventError<E>)`. An around AfterSuccess Abort no longer fails the event, and a failing after callback, entry hook or completion hook keeps the target state (`TransitionFailure::Committed` / `DynamicError::CommittedCallbackFailed`) instead of reverting to the source state; on_error no longer runs for those failures.
+* callback order changes for machines with around callbacks, and schema JSON uses `callbacks` instead of `before`/`around`/`after`.
+
+### Features
+
+* DynamicMachine trait for generic sync dispatch ([#22](https://github.com/state-machines/state-machines-rs/issues/22)) ([bbb4980](https://github.com/state-machines/state-machines-rs/commit/bbb498037132399649a2c9c4711228cfc8297ded))
+* **macro:** resolve transition domains with harel-machines ([650f18f](https://github.com/state-machines/state-machines-rs/commit/650f18f54369660af3ef5080c1c2f79c7f4e525d))
+* make the state change the commit point, as in Ruby ([d6f1401](https://github.com/state-machines/state-machines-rs/commit/d6f1401132a81ea503b11d956305648dc293e712))
+* re-export serde crates and hold every workspace to clippy pedantic ([49ab801](https://github.com/state-machines/state-machines-rs/commit/49ab8018ee51ae971c288f70689311398acec245))
+* run transition callbacks in Ruby state_machines order ([2362bb3](https://github.com/state-machines/state-machines-rs/commit/2362bb32e041f989bb4b926fe126665ddb01a2ff))
+* **schema:** emit the machine-wide callbacks block ([de33a41](https://github.com/state-machines/state-machines-rs/commit/de33a41dc0847eb35938842d46f608a076825916))
+
+
+### Bug Fixes
+
+* **deps:** build state-machines-macro on syn 3 ([cf0f1bd](https://github.com/state-machines/state-machines-rs/commit/cf0f1bd5f3e42350dc89917eeaa70bab55298d90))
+* **macro:** append repeated top-level blocks, refuse repeated keys ([7d05293](https://github.com/state-machines/state-machines-rs/commit/7d052934168761c1f1ba5ac29a24b1be105a1b28))
+* **macro:** build each active path once, without re-deduplicating scopes ([9f8300a](https://github.com/state-machines/state-machines-rs/commit/9f8300a33f476e6d3ec6690fc6dcb5390f016bbc))
+* **macro:** resolve transition domains with harel-machines 0.3 ([46d8485](https://github.com/state-machines/state-machines-rs/commit/46d8485f410cec8a52f9037af06212a75e86cfc1))
+* **macro:** resolve transition domains with harel-machines 0.3 ([e1a479d](https://github.com/state-machines/state-machines-rs/commit/e1a479d8efe6aaafb102fd0c07fc5e0135e6f1a4))
+* satisfy pedantic/nursery clippy in macro parser helpers ([f55f069](https://github.com/state-machines/state-machines-rs/commit/f55f069eb2ad5a755646d2c930affb7fa5fbf6cd))
+* share optional colon/comma skipping in macro parser ([4c0e015](https://github.com/state-machines/state-machines-rs/commit/4c0e015cd2c24ba5fbdf699c5a0ff1d1de2e2db3))
+
 ## [0.31.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-macro-v0.35.0...state-machines-macro-v0.31.0) (2026-11-23)
 
 
