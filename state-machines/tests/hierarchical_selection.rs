@@ -1,3 +1,5 @@
+#![cfg(feature = "alloc")]
+
 use state_machines::state_machine;
 use std::cell::Cell;
 #[derive(Debug, Default)]

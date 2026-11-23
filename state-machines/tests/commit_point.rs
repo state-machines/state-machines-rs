@@ -1,4 +1,5 @@
 //! The state change is the commit point, as in Ruby `state_machines`.
+#![cfg(feature = "alloc")]
 //!
 //! Before it (guards, before callbacks, around `Before` stages, exit hooks) a
 //! failure means no transition: the caller gets the source-state machine

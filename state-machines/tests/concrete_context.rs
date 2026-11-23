@@ -3,6 +3,8 @@
 //! This test verifies that when a concrete context type is specified in the macro,
 //! guards can directly access context fields without trait bounds.
 
+#![cfg(feature = "alloc")]
+
 use state_machines::state_machine;
 
 /// Concrete context type with hardware/sensor data

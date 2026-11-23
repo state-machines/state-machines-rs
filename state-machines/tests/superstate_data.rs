@@ -1,3 +1,5 @@
+#![cfg(feature = "alloc")]
+
 use state_machines::state_machine;
 use std::sync::atomic::{AtomicBool, Ordering};
 

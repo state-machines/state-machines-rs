@@ -1,4 +1,5 @@
 //! Callbacks run in Ruby `state_machines`' order: guards first; before and
+#![cfg(feature = "alloc")]
 //! around callbacks in one declaration-ordered list, an around wrapping
 //! everything declared after it; the state change; around exits innermost
 //! first; then after callbacks in declaration order.

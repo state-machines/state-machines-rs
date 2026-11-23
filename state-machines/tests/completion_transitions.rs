@@ -1,3 +1,5 @@
+#![cfg(feature = "alloc")]
+
 use state_machines::{CompletionEvent, state_machine};
 use std::cell::RefCell;
 #[derive(Debug, Default)]

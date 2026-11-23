@@ -1080,6 +1080,8 @@ if let Ok(typed) = dynamic.into_green() {
 A common pattern is using dynamic mode with external event sources:
 
 ```rust
+# #[cfg(feature = "alloc")]
+# mod example {
 use state_machines::{state_machine, DynamicError};
 
 state_machine! {
@@ -1144,10 +1146,15 @@ fn handle_network_events(conn: &mut DynamicConnection<()>) {
     }
 }
 
-fn main() {
+pub fn main() {
     let mut conn = DynamicConnection::new(());
     handle_network_events(&mut conn);
 }
+# }
+# fn main() {
+#     #[cfg(feature = "alloc")]
+#     example::main();
+# }
 ```
 
 ### Error Handling
@@ -1443,7 +1450,9 @@ fn embedded_main() {
 ```
 
 - Disable default features: `cargo add state-machines --no-default-features`
-- The library uses no allocator - purely stack-based with zero-sized state markers
+- Typestate-only machines can link without an allocator with default features
+  disabled. For explicit `dynamic: true`, enable `alloc` (or `dynamic`, which
+  also enables dynamic generation by default).
 - CI runs `cargo build --no-default-features` to prevent std regressions
 - See `examples/no_std_flight/` for a complete embedded example
 

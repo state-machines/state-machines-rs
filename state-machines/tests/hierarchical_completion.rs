@@ -1,3 +1,5 @@
+#![cfg(feature = "alloc")]
+
 use state_machines::{CompletionEvent, state_machine};
 use std::{assert_matches, cell::RefCell};
 

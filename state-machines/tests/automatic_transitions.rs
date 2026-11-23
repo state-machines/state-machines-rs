@@ -1,3 +1,5 @@
+#![cfg(feature = "alloc")]
+
 use state_machines::{DynamicError, state_machine};
 use std::assert_matches;
 use std::cell::Cell;

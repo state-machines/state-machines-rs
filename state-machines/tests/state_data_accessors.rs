@@ -1,3 +1,5 @@
+#![cfg(feature = "alloc")]
+
 use state_machines::state_machine;
 
 #[derive(Default, Debug, Clone, PartialEq)]

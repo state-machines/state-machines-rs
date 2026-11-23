@@ -2,6 +2,7 @@
 #![cfg_attr(test, allow(non_camel_case_types, non_snake_case))]
 #![doc = include_str!("../README.md")]
 
+#[cfg(feature = "alloc")]
 extern crate alloc;
 #[cfg(feature = "runtime-send")]
 extern crate std;
@@ -54,9 +55,13 @@ macro_rules! __sm_if_runtime {
 
 #[doc(hidden)]
 pub mod __private {
+    #[cfg(feature = "alloc")]
     pub use alloc::boxed::Box;
+    #[cfg(feature = "alloc")]
     pub use alloc::string::String;
+    #[cfg(feature = "alloc")]
     pub use alloc::vec;
+    #[cfg(feature = "alloc")]
     pub use alloc::vec::Vec;
     #[cfg(feature = "serde")]
     pub use serde;
