@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.35.1](https://github.com/state-machines/state-machines-rs/compare/state-machines-macro-v0.35.0...state-machines-macro-v0.35.1) (2026-11-23)
+
+
+### Bug Fixes
+
+* restore the published state-machines-macro 0.35 baseline ([160cc51](https://github.com/state-machines/state-machines-rs/commit/160cc51eabee8c428cf13dcd3230a2d4d81fbd54))
+
 ## [0.35.0](https://github.com/state-machines/state-machines-rs/compare/state-machines-macro-v0.34.2...state-machines-macro-v0.35.0) (2026-11-17)
 
 
