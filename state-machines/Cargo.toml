@@ -16,7 +16,7 @@ include = ["src/**/*", "Cargo.toml", "README.md", "LICENSE-MIT", "LICENSE-APACHE
 
 [dependencies]
 state-machines-core = { version = "0.16.0", path = "../state-machines-core" }
-state-machines-macro = { version = "0.31.0", path = "../state-machines-macro" }
+state-machines-macro = { version = "0.35.0", path = "../state-machines-macro" }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 
 [dev-dependencies]
